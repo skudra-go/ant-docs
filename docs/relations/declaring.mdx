@@ -1,0 +1,152 @@
+---
+title: Declaring relations
+description: A relation is a field, found by name or configured in Go.
+---
+
+A relation is just a field on the struct. `[]Post` is one-to-many, and `*User` is many-to-one or one-to-one. Most need no configuration at all, because ant finds the foreign key by name.
+
+## By convention
+
+```go
+type Person struct {
+	ID       int64
+	Name     string
+	// spot-start
+	Passport *Passport // one-to-one, through Passport.PersonID
+	Pets     []Pet     // one-to-many, through Pet.PersonID
+	// spot-end
+}
+
+type Passport struct {
+	ID       int64
+	PersonID int64
+	Number   string
+}
+
+type Pet struct {
+	ID       int64
+	PersonID int64
+	Name     string
+	// spot-next-line
+	Person   *Person // many-to-one, through Pet.PersonID
+}
+```
+
+Relation fields aren't columns, and a query leaves them empty until you [load them](/relations/loading). You can declare a relation on one side only.
+
+## Configuring a relation
+
+When names can't find the key, `Configure` names it. Either side can do this.
+
+```go
+type Author struct {
+	ID     int64
+	Handle string
+	Books  []Book
+}
+
+func (Author) Configure(b *ant.ModelBuilder[Author]) {
+	// spot-next-line
+	b.HasMany(&Au.Books).ForeignKey(&Bk.WriterID).OnDelete(ant.Cascade)
+}
+
+type Book struct {
+	ID       int64
+	WriterID int64
+	Title    string
+	Writer   *Author
+}
+
+func (Book) Configure(b *ant.ModelBuilder[Book]) {
+	// spot-next-line
+	b.BelongsTo(&Bk.Writer).ForeignKey(&Bk.WriterID)
+}
+
+var (
+	Au = ant.Fields[Author]()
+	Bk = ant.Fields[Book]()
+)
+```
+
+| Call | Declares |
+| --- | --- |
+| `b.HasMany(&U.Posts)` | one-to-many |
+| `b.HasOne(&U.Passport)` | one-to-one, key on the other side |
+| `b.BelongsTo(&P.User)` | many-to-one, key on this side |
+| `b.ManyToMany(&U.Roles)` | [through a join table](/relations/many-to-many) |
+
+A relation nothing connects returns `ant.ErrNoForeignKey` at the terminal call.
+
+## A key other than the primary key
+
+`References` points at another column, which must be unique.
+
+{/*
+```go
+type Author struct {
+	ID     int64
+	Handle string
+	Books  []Book
+	Quotes []Quote
+}
+```
+*/}
+
+```go
+type Quote struct {
+	ID           int64
+	AuthorHandle string
+	Text         string
+}
+
+func (Author) Configure(b *ant.ModelBuilder[Author]) {
+	// spot-next-line
+	b.HasMany(&Au.Quotes).ForeignKey(&Qt.AuthorHandle).References(&Au.Handle)
+}
+
+var Qt = ant.Fields[Quote]()
+```
+
+## What happens on delete
+
+Delete behavior is `NO ACTION` unless you set it, so nothing is removed that you didn't ask for.
+
+```go
+func (Post) Configure(b *ant.ModelBuilder[Post]) {
+	// spot-next-line
+	b.BelongsTo(&P.User).OnDelete(ant.Cascade).OnUpdate(ant.NoAction)
+}
+```
+
+The actions are `ant.Cascade`, `ant.SetNull`, `ant.Restrict`, and `ant.NoAction`. They become part of the foreign key in [migrations](/migrations/models-to-tables), and the database enforces them.
+
+## Other relation options
+
+```go
+func (Post) Configure(b *ant.ModelBuilder[Post]) {
+	// spot-start
+	b.BelongsTo(&P.User).NoForeignKey() // keep the relation, skip the constraint
+	b.BelongsTo(&P.User).NoIndex()      // skip the automatic index
+	// spot-end
+}
+```
+
+## A model that points at itself
+
+The parent is found through `ParentID`, and the children through the matching back-reference.
+
+```go
+type Folder struct {
+	ID       int64
+	// spot-start
+	ParentID *int64
+	Parent   *Folder
+	Children []Folder
+	// spot-end
+	Name     string
+}
+```
+
+Use a pointer key, so a root can have no parent.
+
+<Tests path="relations" />

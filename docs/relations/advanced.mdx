@@ -1,0 +1,175 @@
+---
+title: Advanced relations
+description: Through relations, polymorphism, scoped relations, and more.
+---
+
+These are the less common shapes a relation can take, each one configured in a single line.
+
+## Through another table
+
+`HasManyThrough` reaches across a table in the middle: a country's articles, by way of its members. It loads like any other relation, but it's never written, since those rows belong to the models in the middle.
+
+```go
+type Country struct {
+	ID       int64
+	Name     string
+	Articles []Article
+	Top      *Article
+}
+
+func (Country) Configure(b *ant.ModelBuilder[Country]) {
+	// spot-start
+	b.HasManyThrough(&Cn.Articles, &Mb.CountryID, &Ar.MemberID)
+	b.HasOneThrough(&Cn.Top, &Mb.CountryID, &Ar.MemberID)
+	// spot-end
+}
+
+type Member struct {
+	ID        int64
+	CountryID int64
+}
+
+type Article struct {
+	ID       int64
+	MemberID int64
+	Title    string
+}
+
+var (
+	Cn = ant.Fields[Country]()
+	Mb = ant.Fields[Member]()
+	Ar = ant.Fields[Article]()
+)
+
+countries, err := db.Countries.Include(&Cn.Articles).All(ctx)
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Countries ant.Table[Country]
+	Comments  ant.Table[Comment]
+	Novelists ant.Table[Novelist]
+	Answers   ant.Table[Answer]
+}
+```
+*/}
+
+## Polymorphic relations
+
+One foreign key for several tables, plus a second column saying which table. Essay 1 and Video 1 share a key, and each still sees only its own comments. Saving through the relation sets the type column for you.
+
+```go
+type Comment struct {
+	ID        int64
+	OwnerID   int64
+	OwnerType string
+	Text      string
+	Essay     *Essay
+	Video     *Video
+}
+
+func (Comment) Configure(b *ant.ModelBuilder[Comment]) {
+	// spot-start
+	b.BelongsTo(&Cm.Essay).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "essay")
+	b.BelongsTo(&Cm.Video).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "video")
+	// spot-end
+}
+
+type Essay struct {
+	ID       int64
+	Comments []Comment
+}
+
+func (Essay) Configure(b *ant.ModelBuilder[Essay]) {
+	// spot-next-line
+	b.HasMany(&Es.Comments).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "essay")
+}
+
+type Video struct {
+	ID       int64
+	Comments []Comment
+}
+
+var (
+	Cm = ant.Fields[Comment]()
+	Es = ant.Fields[Essay]()
+)
+```
+
+What's stored is the value you give `.Morph`, so renaming a Go type can't change your data. Migrations write no foreign key here, since one column can't point at several tables.
+
+## Scoped relations and latest of many
+
+A relation can carry a condition, or pick one row per parent.
+
+```go
+type Novelist struct {
+	ID     int64
+	Novels []Novel
+	Live   []Novel
+	Newest *Novel
+}
+
+func (Novelist) Configure(b *ant.ModelBuilder[Novelist]) {
+	// spot-start
+	b.HasMany(&Nv.Live).ForeignKey(&Nl.NovelistID).Where(ant.Eq(&Nl.Published, true))
+	b.HasOne(&Nv.Newest).ForeignKey(&Nl.NovelistID).Latest(&Nl.Year)
+	// spot-end
+}
+
+type Novel struct {
+	ID         int64
+	NovelistID int64
+	Year       int
+	Published  bool
+	Novelist   *Novelist
+}
+
+var (
+	Nv = ant.Fields[Novelist]()
+	Nl = ant.Fields[Novel]()
+)
+```
+
+Counts and `Has` follow the scope. `.Oldest` is the opposite of `.Latest`.
+
+## Filling the way back
+
+`Inverse` points each child at its parent, with no query.
+
+```go
+func (Novelist) Configure(b *ant.ModelBuilder[Novelist]) {
+	// spot-next-line
+	b.HasMany(&Nv.Novels).ForeignKey(&Nl.NovelistID).Inverse(&Nl.Novelist)
+}
+```
+
+After `Include(&Nv.Novels)`, `novels[0].Novelist` is the same instance as its parent.
+
+## Touching the parent
+
+`Touch` moves a parent's `UpdatedAt` when a child is written.
+
+```go
+type Answer struct {
+	ID           int64
+	DiscussionID int64
+	Discussion   *Discussion
+}
+
+func (Answer) Configure(b *ant.ModelBuilder[Answer]) {
+	// spot-next-line
+	b.BelongsTo(&An.Discussion).Touch()
+}
+
+type Discussion struct {
+	ID        int64
+	UpdatedAt time.Time
+}
+
+var An = ant.Fields[Answer]()
+```
+
+<Tests path="relations/advanced_test.go" />

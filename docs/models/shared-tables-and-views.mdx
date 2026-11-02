@@ -1,0 +1,100 @@
+---
+title: Shared tables and views
+description: Single-table inheritance, table splitting, views, and schemas.
+---
+
+A model usually has a table to itself. These are the cases where it doesn't.
+
+## One table, several models
+
+Go has no inheritance, so each model is its own plain struct, and a discriminator column says which rows belong to which. Inserts set it for you, and each model's queries only see its own rows.
+
+```go
+type Dog struct {
+	ID    int64
+	Kind  string
+	Name  string
+	Barks *int
+}
+
+func (Dog) Configure(b *ant.ModelBuilder[Dog]) {
+	// spot-start
+	b.Table("animals")
+	b.Discriminator(&DG.Kind, "dog")
+	// spot-end
+}
+
+type Cat struct {
+	ID    int64
+	Kind  string
+	Name  string
+	Lives *int
+}
+
+func (Cat) Configure(b *ant.ModelBuilder[Cat]) {
+	// spot-start
+	b.Table("animals")
+	b.Discriminator(&CT.Kind, "cat")
+	// spot-end
+}
+
+var (
+	DG = ant.Fields[Dog]()
+	CT = ant.Fields[Cat]()
+)
+```
+
+Migrations see one table, and a column only one model declares allows `NULL`.
+
+Models can also share a table with no discriminator, which is table splitting: a small model for the common read, and a full one for the rest.
+
+```go
+type UserName struct {
+	ID   int64
+	Name string
+}
+
+func (UserName) Configure(b *ant.ModelBuilder[UserName]) {
+	// spot-next-line
+	b.Table("users")
+}
+```
+
+For a separate table per type, embed a shared struct in each model. That's plain Go, and no ant feature is involved.
+
+## Views
+
+`b.View` maps a model to a view. It reads like a table, and refuses every write with `ant.ErrReadOnly`. Define the view itself in [`migrations/code`](/migrations/hand-written#views-and-functions).
+
+```go
+type ActiveUser struct {
+	ID   int64
+	Name string
+}
+
+func (ActiveUser) Configure(b *ant.ModelBuilder[ActiveUser]) {
+	// spot-next-line
+	b.View("active_users")
+}
+```
+
+## Schemas
+
+`b.Schema` places a table in a database schema. Migrations create the schema and qualify everything.
+
+```go
+func (Invoice) Configure(b *ant.ModelBuilder[Invoice]) {
+	// spot-next-line
+	b.Schema("billing")
+}
+```
+
+{/*
+```go
+type Invoice struct {
+	ID int64
+}
+```
+*/}
+
+<Tests path="model_definition/inheritance_test.go" />

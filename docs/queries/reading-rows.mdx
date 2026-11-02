@@ -1,0 +1,123 @@
+---
+title: Reading rows
+description: All, First, Single, Find, Each, and everything else that runs a query.
+---
+
+A query runs when you call one of these. Which one you pick says how many rows you expect back.
+
+## All
+
+Every matching row, as `[]*T`. No matches means an empty result, not an error.
+
+```go
+// spot-next-line
+users, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(ctx)
+if err != nil {
+	return err
+}
+
+for _, user := range users {
+	fmt.Println(user.Name)
+}
+```
+
+## First
+
+One row, or `ant.ErrNotFound`.
+
+```go
+// spot-next-line
+oldest, err := db.Users.OrderByDesc(&U.Age).First(ctx)
+if errors.Is(err, ant.ErrNotFound) {
+	return nil
+}
+```
+
+## Single
+
+Exactly one row. You get `ant.ErrNotFound` if there's none, and `ant.ErrMultipleRows` if there's more, which suits looking up something that should be unique.
+
+```go
+// spot-next-line
+user, err := db.Users.Where(ant.Eq(&U.Email, "ada@example.com")).Single(ctx)
+```
+
+## Find
+
+One row by primary key, or `ant.ErrNotFound`. For a composite key, use [`FindKey`](/models/keys#composite-keys).
+
+```go
+// spot-next-line
+user, err := db.Users.Find(ctx, id)
+```
+
+## Each
+
+Streams rows one at a time, for results too big to hold in memory. It's a Go iterator, and `break` releases the connection.
+
+```go
+// spot-next-line
+for user, err := range db.Users.OrderBy(&U.Name).Each(ctx) {
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(user.Name)
+}
+```
+
+If the query has a mistake, it arrives as the only item. `Each` yields values, so its rows aren't tracked, and it refuses `Include` because rows are still streaming in. Use [`Chunk`](/queries/ordering-and-paging#chunks) for that.
+
+## Counting and checking
+
+```go
+// spot-start
+n, err := db.Users.Where(ant.Gt(&U.Age, 18)).Count(ctx)
+found, err := db.Users.Where(ant.Eq(&U.Name, "Ada")).Exists(ctx)
+missing, err := db.Users.Where(ant.Eq(&U.Name, "Ada")).DoesNotExist(ctx)
+// spot-end
+```
+
+`Count` honors `Limit`, `Offset`, and `Distinct`.
+
+## One column
+
+`ant.Pluck` reads a single column into a slice of its type. With a pointer column, `NULL`s stay `nil`.
+
+```go
+// spot-start
+names, err := ant.Pluck(ctx, db.Users.OrderBy(&U.Name), &U.Name)
+bios, err := ant.Pluck(ctx, db.Users.Where(), &U.Bio)
+// spot-end
+```
+
+## Part of a row
+
+`Column` and `Omit` load only some columns. The other fields keep their zero value, which is why these rows are never tracked: they can't be saved by mistake.
+
+```go
+// spot-start
+names, err := db.Users.Column(&U.ID).Column(&U.Name).All(ctx)
+small, err := db.Users.Omit(&U.Bio).All(ctx)
+// spot-end
+```
+
+## Distinct
+
+```go
+// spot-next-line
+ages, err := db.Users.Column(&U.Age).Distinct().All(ctx)
+```
+
+## Skipping the tracker
+
+Results are tracked by default, so `SaveChanges` can see what you change. For reads you won't change, `NoTracking` skips the snapshot.
+
+```go
+// spot-next-line
+users, err := db.Users.NoTracking().Where(ant.Gt(&U.Age, 18)).All(ctx)
+```
+
+`NoTrackingResolved` skips it too, but still gives each row a single instance, which helps when a read returns the same parent many times.
+
+<Tests path="querying" />

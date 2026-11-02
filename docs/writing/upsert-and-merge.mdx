@@ -1,0 +1,114 @@
+---
+title: Upsert and merge
+description: Insert or update on a conflict, and MERGE for what upsert cannot do.
+---
+
+`Upsert` inserts a row, or follows your instructions if a unique constraint says it's already there.
+
+## Upsert
+
+```go
+user := &User{
+	Name:  "Ada",
+	Email: "ada@example.com",
+	Age:   36,
+}
+
+// spot-next-line
+wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&U.Email))
+```
+
+By default, every column except the key and the constraint's own is overwritten, and your struct receives the stored row, key included. A zero value overwrites too: no guessing here either.
+
+## Choosing what changes
+
+`DoUpdate` names the columns to overwrite, and `Set` assigns values, including ones based on the existing row.
+
+```go
+onEmail := ant.OnConflict(&U.Email)
+
+// spot-start
+wrote, err := db.Users.Upsert(ctx, user, onEmail.DoUpdate(ant.F(&U.Age)))
+
+wrote, err = db.Users.Upsert(ctx, user, onEmail.Set(ant.Inc(&U.Age, 1)))
+// spot-end
+```
+
+## Skipping existing rows
+
+`DoNothing` keeps the row and reports `false`, leaving your struct as it was.
+
+```go
+// spot-next-line
+wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&U.Email).DoNothing())
+```
+
+## A key on several columns
+
+`And` adds a column, for a constraint on more than one.
+
+```go
+// spot-next-line
+conflict := ant.OnConflict(&U.Email).And(ant.F(&U.Name))
+```
+
+## Many rows
+
+`InsertMany` takes a conflict too.
+
+```go
+// spot-next-line
+n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&U.Email).DoNothing()))
+```
+
+:::warning[On MySQL and MariaDB]
+
+`ON DUPLICATE KEY` has no target, so any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns, and reports that it wrote nothing. Name the only unique key that can collide. SQL Server has no upsert: use `ant.Merge`.
+
+:::
+
+## Merge
+
+`ant.Merge` decides, row by row, what a batch of source rows does to a table. One statement can update, insert, and delete, which `Upsert` can't. Clauses run in the order you add them, and the first one that fits a row wins. It needs PostgreSQL 15, or SQL Server.
+
+```go
+type Stock struct {
+	ID    int64
+	SKU   string `ant:"unique"`
+	Count int
+}
+
+type Staged struct {
+	ID    int64
+	SKU   string
+	Count int
+}
+
+var (
+	ST = ant.Fields[Stock]()
+	SG = ant.Fields[Staged]()
+)
+
+// spot-start
+changed, err := ant.Merge(&db.Stock, db.Staged.Query(), ant.EqCol(&ST.SKU, &SG.SKU)).
+	WhenMatchedIf(ant.Eq(&SG.Count, 0)).Delete().
+	WhenMatched(ant.SetExpr(&ST.Count, ant.Col(&SG.Count))).
+	WhenNotMatched(ant.Into(&ST.SKU, &SG.SKU), ant.Into(&ST.Count, &SG.Count)).
+	Exec(ctx)
+// spot-end
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users  ant.Table[User]
+	Stock  ant.Table[Stock]
+	Staged ant.Table[Staged]
+}
+```
+*/}
+
+Here a sold-out item is deleted, a known one is updated, and a new one is inserted.
+
+<Tests path="writing/upsert_test.go" />

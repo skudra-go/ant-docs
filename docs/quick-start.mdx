@@ -1,0 +1,174 @@
+---
+title: Quick start
+description: From an empty folder to a saved row with ant and PostgreSQL.
+---
+
+Let's go from an empty folder to a saved row on PostgreSQL. You'll need Go 1.27 or later, and Docker for the database.
+
+## Set up
+
+ant isn't tagged yet, so for now your module points at a copy of it sitting next to your project.
+
+```bash
+git clone https://github.com/skudra-go/ant
+mkdir hello && cd hello
+go mod init example.com/hello
+go mod edit -require=github.com/skudra-go/ant@v0.0.0 -replace=github.com/skudra-go/ant=../ant
+go get github.com/jackc/pgx/v5/stdlib
+```
+
+ant sits on top of `database/sql`, so the driver is your choice. For PostgreSQL, that's `pgx`.
+
+Then start a database:
+
+```bash
+docker run -d --name hello-db -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_PASSWORD=hello postgres:17
+```
+
+## Write the program
+
+Here's all of `main.go`. Every line that touches ant is lit, and the rest is everyday Go.
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	// spot-start
+	"github.com/skudra-go/ant"
+	"github.com/skudra-go/ant/dialect/postgres"
+	// spot-end
+)
+
+// spot-start
+type User struct {
+	ant.Base
+	Name  string
+	Email string `ant:"unique"`
+	Age   int
+	Posts []Post
+}
+
+type Post struct {
+	ant.Base
+	UserID int64
+	Title  string
+}
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+}
+
+var U = ant.Fields[User]()
+// spot-end
+
+func main() {
+	ctx := context.Background()
+	dsn := "postgres://postgres:hello@127.0.0.1:5432/postgres"
+
+	// spot-next-line
+	db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// spot-next-line
+	defer db.Close()
+
+	// Just for this first run. Real projects use migrations.
+	// spot-next-line
+	if err := db.EnsureCreated(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	// spot-start
+	alice := &User{
+		Name:  "Alice",
+		Email: "alice@example.com",
+		Age:   30,
+		Posts: []Post{{Title: "Hello"}, {Title: "Second post"}},
+	}
+
+	err = db.Users.Insert(ctx, alice)
+	// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// spot-start
+	adults, err := db.Users.
+		Where(ant.Gt(&U.Age, 18)).
+		Include(&U.Posts).
+		All(ctx)
+		// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(adults[0].Name, "has", len(adults[0].Posts), "posts")
+
+	// spot-start
+	adults[0].Age = 31
+
+	err = db.SaveChanges(ctx)
+	// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// spot-next-line
+	stored, err := db.Users.NoTracking().Find(ctx, alice.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(stored.Name, "is now", stored.Age)
+
+	// Clean up, so you can run this again.
+	// spot-next-line
+	if err := db.EnsureDeleted(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+## Run it
+
+```bash
+go mod tidy
+go run .
+```
+
+```text
+Alice has 2 posts
+Alice is now 31
+```
+
+## What just happened
+
+1. **`User` and `Post` are ordinary structs.** `ant.Base` gives each one `ID`, `CreatedAt`, and `UpdatedAt`. The `Posts` field is a relation, and ant finds it through `Post.UserID` by name.
+2. **`AppDB` is your database, as a Go type.** `ant.Open` fills in every table on it.
+3. **`U` is a field probe.** `&U.Age` stands for the `age` column, and the compiler checks whatever you compare it with.
+4. **`Insert` saved the whole graph.** Alice went in first, then her posts with `UserID` already filled in, and every new key landed back on the structs.
+5. **`Include` ran a single extra query** to fetch all the posts at once.
+6. **`SaveChanges` wrote one column.** ant compared Alice with what it had loaded, saw only `Age` had changed, and sent just this:
+
+```sql
+UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+`NoTracking().Find` reads straight from the database, past anything ant has in memory, which is how you can see that the change really landed.
+
+## Next
+
+- [Concepts](/concepts): the handful of ideas behind everything above.
+- [Migrations](/migrations/overview): swap `EnsureCreated` for SQL files you review.
+- [Example projects](https://github.com/skudra-go/ant-examples): a blog API, an audit service, and a ledger.

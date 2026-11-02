@@ -1,0 +1,99 @@
+---
+title: Concepts
+description: The five ideas ant is built on, and what the compiler cannot catch.
+---
+
+Almost everything in ant comes back to five ideas. Once they click, the rest of the API reads like plain English.
+
+## Models are plain structs
+
+There's no base type you have to embed, no generated code, and no schema file. A struct maps to a table, its fields map to columns, and the field names decide the column names. Most of the time, that's all the configuration you'll write.
+
+```go
+// spot-start
+type Book struct {
+	ID    int64
+	Title string
+	Pages int
+}
+// spot-end
+
+type LibraryDB struct {
+	ant.Context
+	Books ant.Table[Book]
+}
+```
+
+## A probe names a column
+
+`ant.Fields[T]()` gives you a `*T` that never holds any data. It's there so that `&B.Pages` is a pointer ant can recognise. The compiler sees a `*int`, so whatever you compare it with has to be an `int`.
+
+```go
+var B = ant.Fields[Book]()
+
+books, err := db.Books.
+	// spot-next-line
+	Where(ant.Gt(&B.Pages, 100)).
+	All(ctx)
+```
+
+There's more on this in [field probes](/models/field-probes).
+
+## The context is your database
+
+You declare a struct with an `ant.Table[T]` for each model, and `ant.Open` fills it in. Tables, transactions, and sessions all hand you back that same typed struct, so `db.Users` works the same everywhere.
+
+```go
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+}
+
+// spot-next-line
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
+```
+
+## Errors arrive at the last call
+
+Builder methods like `Where` and `OrderBy` never return an error, which keeps chains readable. Mistakes are collected along the way, and the call that actually runs the query hands them back. That call always takes a `context.Context` first.
+
+```go
+query := db.Users.
+	Where(ant.Gt(&U.Age, 18)).
+	OrderBy(&U.Name)
+
+// spot-next-line
+users, err := query.All(ctx) // runs here, and fails here
+```
+
+`All`, `First`, `Single`, `Find`, `Count`, `Exists`, `Each`, `Insert`, `Update`, `Delete`, `Exec`, and `SaveChanges` are the calls that run something. Everything before them just describes the query.
+
+## Nothing happens behind your back
+
+Reading a field never runs a query. A relation you didn't load stays `nil`, and one you loaded that has no rows is an empty slice, so you can always tell the two apart. Loading is something you ask for, and it's always batched.
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+// spot-next-line
+fmt.Println(user.Posts == nil) // true: not loaded, and no query ran
+
+// spot-start
+user, err = db.Users.Include(&U.Posts).Find(ctx, id)
+
+fmt.Println(user.Posts == nil) // false: loaded, even if there are none
+// spot-end
+```
+
+Writing is just as explicit: nothing is saved until you call `SaveChanges`.
+
+## What the compiler cannot catch
+
+Generics catch a lot, but not everything. These mistakes compile, and ant reports them when the query runs. [antvet](/tooling/antvet) catches them before you run anything at all.
+
+| Mistake | Example | Error |
+| --- | --- | --- |
+| A probe from the wrong model | `db.Posts.Where(ant.Gt(&U.Age, 18))` | `ant.ErrWrongModel` |
+| A pointer that isn't a probe | `ant.Gt(&age, 18)` | `ant.ErrNotProbe` |
+| A key of the wrong type | `db.Users.Find(ctx, "1")` | `ant.ErrKeyType` |

@@ -1,0 +1,59 @@
+---
+title: Configuration
+description: Everything has a default, and everything can be replaced.
+---
+
+Everything has a sensible default, and everything can be swapped out through `migrate.Config`, which you pass to `Main` or `Up`.
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `Dir` | `migrations` | The folder |
+| `VersionsDir`, `CodeDir` | `versions`, `code` | The two folders inside it |
+| `FS`, `Embedded` | none | Read from `go:embed`, always, or when the folder is missing |
+| `Source` | files | Replace storage entirely |
+| `PerDialect` | off | Keep each dialect's files in `Dir/<dialect>` |
+| `Name`, `Parse` | `0001_name.up.sql` | Write and read file names, with `migrate.Timestamped` built in |
+| `Render` | `schema.Script` | Replace how a plan becomes SQL |
+| `HistoryTable`, `HistorySchema` | `ant_migrations` | Where applied migrations are recorded |
+| `DSN` | none | The fallback after `--dsn` and `DATABASE_URL` |
+| `Skip` | none | Versions to leave unapplied |
+| `OutOfOrder` | off | Let an older pending migration run |
+| `Ignore` | none | Names for `drift` to overlook, such as `legacy_*` or `users.handmade_idx` |
+| `NoLock` | off | Turn off the migration lock |
+| `SeedHooks` | off | Run model hooks while seeding |
+| `Out`, `OnApply` | quiet in `Up` | Progress text, and a callback per migration |
+
+## Storage
+
+`Source` lists migrations from anywhere, such as a table or an object store. Implement `Store` as well for the commands that write.
+
+```go
+type Source interface {
+	// spot-start
+	List(ctx context.Context) ([]migrate.Migration, error)
+	Snapshot(ctx context.Context) ([]byte, error)
+	// spot-end
+}
+```
+
+## File names
+
+`Name` chooses a new file's name, and `Parse` reads a version and name back.
+
+## SQL
+
+`Render` receives the plan, as data, and can wrap the default.
+
+```go
+config := migrate.Config{
+	// spot-start
+	Render: func(plan *schema.Plan, d schema.Dialect) (string, error) {
+		text, err := schema.Script(d, plan)
+
+		return "SET lock_timeout = '5s';\n\n" + text, err
+	},
+	// spot-end
+}
+```
+
+<Tests path="migrations/source_test.go" />

@@ -1,0 +1,158 @@
+---
+title: SaveChanges
+description: Change what you loaded, and ant writes only the differences.
+---
+
+Change what you loaded, then call `SaveChanges`. ant compares each entity with a snapshot it took when loading it, and writes one minimal `UPDATE` per changed entity, all in one transaction.
+
+## The basics
+
+```go
+user, err := db.Users.Find(ctx, id)
+if err != nil {
+	return err
+}
+
+// spot-start
+user.Age++
+
+err = db.SaveChanges(ctx)
+// spot-end
+```
+
+```sql
+UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+Only the changed column goes out, so a value someone else changed in the meantime isn't overwritten with your stale copy. If nothing changed, no statement is sent at all.
+
+## Zero values are real
+
+The comparison is against what was loaded, so `0`, `""`, `false`, and `nil` are changes like any other.
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+// spot-start
+user.Age = 0
+user.Bio = nil
+// spot-end
+
+err = db.SaveChanges(ctx)
+```
+
+A write through a pointer is seen too, and so is a change inside an [`ant.JSON`](/models/custom-types#json) value.
+
+## What is tracked
+
+`All`, `First`, `Single`, and `Find` track their results, and so do `Insert` and the rows an `Include` loads. `All` returns pointers, so changes in a `range` count.
+
+```go
+users, err := db.Users.All(ctx)
+
+// spot-start
+for _, user := range users {
+	user.Age = 50
+}
+
+err = db.SaveChanges(ctx)
+// spot-end
+```
+
+These aren't tracked, so changing them saves nothing:
+
+| Results of | Why |
+| --- | --- |
+| `Each` | It yields values, one at a time |
+| `Column`, `Omit` | Their zero fields aren't real values |
+| `NoTracking` | You asked |
+| `ant.Raw`, `FromRaw`, `Project`, `Select` | They aren't whole entities |
+
+## Several entities
+
+`SaveChanges` covers everything the context tracks, in one transaction, parents before children on insert and children first on delete.
+
+```go
+// spot-start
+user.Age = 30
+post.Title = "Edited"
+
+err := db.SaveChanges(ctx) // two UPDATEs, one transaction
+// spot-end
+```
+
+## Is anything pending?
+
+```go
+user.Age = 60
+
+// spot-next-line
+db.HasChanges() // true
+```
+
+{/*
+```go
+var _ = 0
+```
+*/}
+
+## One instance per row
+
+A context holds one instance per row, so a later query returns the same pointer, with your unsaved changes.
+
+```go
+first, err := db.Users.Find(ctx, id)
+
+first.Age = 70
+
+again, err := db.Users.Where(ant.Eq(&U.ID, id)).Single(ctx)
+
+// spot-next-line
+fmt.Println(first == again, again.Age) // true 70
+```
+
+A bulk `Update` doesn't touch tracked entities. [`Reload`](/writing/update-and-delete#reloading-an-entity) picks up database changes, and they become the new baseline.
+
+## Turning it off
+
+`NoTracking` opts one query out, in any position in the chain. `WithTracking(false)` turns tracking off for a whole context.
+
+```go
+// spot-start
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
+
+session := ant.Session(db, ant.WithTracking(true))
+// spot-end
+```
+
+That second line is a nice pattern: a shared context that never grows, and tracking only in the [sessions](/tracking/sessions) that actually save.
+
+## Custom comparers
+
+Deep equality decides what changed. `b.Comparer` overrides it, for values where that is wrong, such as a list whose order means nothing.
+
+```go
+type Tagged struct {
+	ID    int64
+	Items ant.JSON[[]string]
+}
+
+func (Tagged) Configure(b *ant.ModelBuilder[Tagged]) {
+	// spot-next-line
+	b.Comparer(&TG.Items, sameItems)
+}
+
+func sameItems(a, b ant.JSON[[]string]) bool {
+	return slices.Equal(slices.Sorted(slices.Values(a.V)), slices.Sorted(slices.Values(b.V)))
+}
+
+var TG = ant.Fields[Tagged]()
+```
+
+:::warning[A context remembers everything it loads]
+
+A tracker keeps growing until it's cleared, and a shared one mixes up concurrent requests. Use a [session](/tracking/sessions) per unit of work.
+
+:::
+
+<Tests path="change_tracking/save_changes_test.go" />

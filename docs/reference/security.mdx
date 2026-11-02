@@ -1,0 +1,52 @@
+---
+title: Security
+description: How ant handles SQL, logs, and secrets, and the known limits.
+---
+
+To report a vulnerability, email the maintainers privately, and don't open a public issue.
+
+This page sums up a review from 2026-10-31, covering how ant builds SQL, what it logs, and how it handles secrets. It was done by the project's own tooling and authors, not an outside auditor.
+
+## SQL injection
+
+| Path | Protection |
+| --- | --- |
+| Values in queries | Always bound as parameters, in every statement ant writes |
+| Column and table names | Come from struct metadata, never from input, and are quoted |
+| `OrderBy`, `Where`, joins | Take field probes, so a request can't name a column |
+| Query comments and hints | Comment delimiters are removed, so they can't close the comment |
+| JSON paths | Bound as a parameter, and each part is quoted |
+| Migration scripts | Identifiers are quoted, and text is escaped |
+
+These take raw SQL by design, and must never be built from input. Pass values as arguments.
+
+- `ant.Raw`, `ant.RawFile`, `ant.FromRaw`, `ant.FromFunc`
+- `ant.SQL`, `ant.SQLCond`
+- `b.Check`, `.Default`, `.Generated`, `.Type`, `.Where` on indexes, which are written by developers, into migrations
+- `q.Hint`, `q.Tag`, and `ant.Func`'s name
+
+A helper that takes a column or sort order from a request should map it through a fixed list.
+
+## Logs and errors
+
+- Values stay out of logs unless `ant.LogValues` is set.
+- `.Sensitive()` keeps a column out even then. `ant.SQL` arguments aren't covered, since ant can't tell which column they belong to.
+- Query errors hold the SQL with its placeholders, for `ant.FailedSQL`. `WithDetailedErrors` adds it to the message, so leave that off where errors reach users.
+- A database error's message can quote a value, and `WithLogger` logs that message. Don't return `err.Error()` to users.
+- `Query.Debug` shows values on purpose, and is meant for a desk, not production.
+
+## Secrets
+
+- `secure.Value` uses AES-256-GCM with a random nonce, and prints and marshals as `[encrypted]`.
+- A ciphertext isn't bound to its row. See [encrypted fields](/recipes/encrypted-fields#limits).
+- ant doesn't log connection strings. An error from `Open` comes from the driver, and a badly malformed connection string can still reach the message, so treat that error as sensitive.
+
+## Tenancy
+
+A global filter is a convenience, not a security boundary, because `ant.Raw` and `IgnoreFilters` bypass it. See [multi-tenancy](/recipes/multi-tenancy).
+
+## Migrations
+
+- `reset` needs the database's name, typed or passed with `--confirm`, and refuses otherwise.
+- A checksum stops an applied file changing unnoticed. It detects mistakes, not attackers.
+- Migration files are code. Treat access to them, and to the embedded binary, like access to the database.

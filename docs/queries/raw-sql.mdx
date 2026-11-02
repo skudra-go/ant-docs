@@ -1,0 +1,104 @@
+---
+title: Raw SQL
+description: Your own SQL, scanned into the same structs.
+---
+
+Raw SQL is a proper way out, not a hack. `ant.Raw` runs your statement and scans the result into a model, any struct, or a single value.
+
+## Into a model
+
+```go
+// spot-next-line
+users, err := ant.Raw[User](db, `SELECT * FROM users WHERE age > ? ORDER BY name`, 18).All(ctx)
+```
+
+`All` returns values, as `[]User`, and `First` returns one row or `ant.ErrNotFound`. Raw results aren't tracked.
+
+## Into any struct
+
+Columns match fields by name. Columns with no field are ignored, and fields with no column stay zero.
+
+```go
+// spot-start
+type Summary struct {
+	Name    string
+	YearsOn int
+}
+// spot-end
+
+rows, err := ant.Raw[Summary](db, `SELECT name, age + 1 AS years_on FROM users`).All(ctx)
+```
+
+[`ant.WithStrict`](/tooling/errors#strict-scanning) makes a column with no field an error, which catches a model that has fallen behind its table.
+
+## Single values
+
+```go
+// spot-start
+count, err := ant.Raw[int](db, `SELECT count(*) FROM users`).First(ctx)
+names, err := ant.Raw[string](db, `SELECT name FROM users ORDER BY name`).All(ctx)
+now, err := ant.Raw[time.Time](db, `SELECT now()`).First(ctx)
+// spot-end
+```
+
+`NULL` needs a nullable type: `ant.Raw[sql.Null[string]]`.
+
+## Arguments
+
+`?` works on every database and becomes the right placeholder for it. A slice fills `IN (?)`, and named arguments work too. `$1` still works on PostgreSQL, and so does the `jsonb` `?` operator.
+
+```go
+ages := []int{17, 30}
+
+// spot-start
+a, err := ant.Raw[User](db, `SELECT * FROM users WHERE age > ? AND name <> ?`, 18, "Alice").All(ctx)
+b, err := ant.Raw[User](db, `SELECT * FROM users WHERE age IN (?)`, ages).All(ctx)
+c, err := ant.Raw[User](db, `SELECT * FROM users WHERE age IN (@ages)`, sql.Named("ages", ages)).All(ctx)
+// spot-end
+```
+
+An empty slice in `IN (?)` matches nothing, and so does an empty slice in `NOT IN (?)`, which is what SQL itself says, and differs from `ant.NotIn`. Outside `IN`, a slice is one array value, as in `age = ANY($1)`.
+
+## Statements that return nothing
+
+`Exec` returns the rows affected.
+
+```go
+// spot-next-line
+n, err := ant.Raw[any](db, `UPDATE users SET age = age + 1 WHERE age < ?`, 18).Exec(ctx)
+```
+
+## SQL in a file
+
+`ant.RawFile` loads a statement from any `fs.FS`, including `go:embed`. A missing file is reported at the terminal call.
+
+```go
+//go:embed queries/*.sql
+var queries embed.FS
+
+func adults(ctx context.Context, db *AppDB) ([]User, error) {
+	// spot-next-line
+	return ant.RawFile[User](db, queries, "queries/adults.sql", sql.Named("min", 18)).All(ctx)
+}
+```
+
+## Building on raw SQL
+
+`ant.FromRaw` starts from your SQL and keeps going with typed methods. The SQL must return the model's columns.
+
+```go
+// spot-next-line
+adults := ant.FromRaw[User](db, `SELECT * FROM users WHERE age > ?`, 18)
+
+page, err := adults.Where(ant.Lt(&U.Age, 35)).OrderBy(&U.Name).Limit(10).All(ctx)
+```
+
+For a fragment inside a typed query, use [`ant.SQL` and `ant.SQLCond`](/queries/expressions#a-sql-fragment).
+
+:::danger[Filters do not apply]
+
+`ant.Raw` runs your SQL as written, so [global filters](/lifecycle/global-filters) and soft deletes don't reach it. Never build the text from input: pass values as arguments.
+
+:::
+
+<Tests path="querying/raw_test.go" />

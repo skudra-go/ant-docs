@@ -1,0 +1,118 @@
+---
+title: Field roles
+description: Tags that decide how a field is read and written.
+---
+
+A tag gives a field a role in how it's read and written. Tags combine with commas, as in `ant:"default,immutable"`.
+
+## All the tags
+
+| Tag | Means |
+| --- | --- |
+| `ant:"-"` | Not a column |
+| `ant:"column=name"` | Use this column name |
+| `ant:"unique"` | A unique constraint, used by migrations |
+| `ant:"default"`, `ant:"default=0"` | Leave zero to the column's default |
+| `ant:"readonly"` | Filled by the database, never written |
+| `ant:"writeonly"` | Written, never read |
+| `ant:"immutable"` | Written on insert, never updated |
+| `ant:"computed"` | Filled by `Query.With`, no column |
+| `ant:"version"` | [Optimistic concurrency](/lifecycle/optimistic-concurrency) counter |
+| `ant:"token"` | Optimistic concurrency, with a value you manage |
+| `ant:"embedded"`, `ant:"embedded,prefix=x_"` | [Flatten a struct](/models/embedded-and-mixins) into columns |
+
+## Read only
+
+For generated columns. The database fills it in, and the value is copied back on insert.
+
+```go
+type Account struct {
+	ID    int64
+	Email string
+	// spot-next-line
+	Slug  string `ant:"readonly"` // GENERATED ALWAYS AS (lower(email))
+}
+
+account := &Account{Email: "A@X"}
+
+err := db.Accounts.Insert(ctx, account)
+
+fmt.Println(account.Slug) // "a@x"
+```
+
+## Write only
+
+For things that should never come back out, like a password hash. An explicit `Update` can still set it.
+
+```go
+type Account struct {
+	ID       int64
+	// spot-next-line
+	Password string `ant:"writeonly"`
+}
+
+// spot-start
+found, err := db.Accounts.Find(ctx, id)
+
+fmt.Println(found.Password) // empty: never read
+// spot-end
+```
+
+## Immutable
+
+Written once, on insert. Changing it later writes nothing, and doesn't even count as a change.
+
+```go
+type Account struct {
+	ID        int64
+	// spot-next-line
+	CreatedBy string `ant:"immutable"`
+}
+
+account.CreatedBy = "someone else"
+
+// spot-next-line
+db.HasChanges() // false
+```
+
+{/*
+```go
+var account *Account
+
+type RolesDB struct {
+	ant.Context
+	Accounts ant.Table[Account]
+	Writers  ant.Table[Writer]
+}
+```
+*/}
+
+## Computed
+
+No column at all. `Query.With` fills it from an expression, and otherwise it stays empty.
+
+```go
+type Writer struct {
+	ID           int64
+	Name         string
+	Articles     []Article
+	// spot-next-line
+	ArticleCount int64 `ant:"computed"`
+}
+
+type Article struct {
+	ID       int64
+	WriterID int64
+}
+
+var W = ant.Fields[Writer]()
+
+writers, err := db.Writers.
+	// spot-next-line
+	With(&W.ArticleCount, ant.CountRelated(&W.Articles)).
+	All(ctx)
+```
+
+More in [relation aggregates](/relations/loading#counts-and-sums).
+
+<Tests path="model_definition/field_roles_test.go" />

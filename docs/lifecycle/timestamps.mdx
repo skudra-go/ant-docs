@@ -1,0 +1,70 @@
+---
+title: Timestamps
+description: CreatedAt and UpdatedAt, maintained for you on any model.
+---
+
+Fields named `CreatedAt` and `UpdatedAt` are kept up to date for you, whether they come from `ant.Base` or not. You never have to set them.
+
+## What moves them
+
+```go
+type Note struct {
+	ID        int64
+	// spot-start
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	// spot-end
+	Text      string
+}
+```
+
+| Action | `CreatedAt` | `UpdatedAt` |
+| --- | --- | --- |
+| `Insert`, `InsertMany`, `Upsert` | Set | Set |
+| `SaveChanges` with a change | | Moved |
+| `SaveChanges` with no change | | Left alone |
+| Bulk `Update` | | Moved |
+
+Times are stored at the database's precision, so the value on your struct matches what's in the table. If you set a time yourself, it's kept on insert, and `ant.Set(&U.UpdatedAt, t)` wins on update.
+
+## A clock for tests
+
+`ant.WithNow` lets you set the clock, which keeps tests predictable.
+
+```go
+now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+// spot-next-line
+clock := ant.WithNow(func() time.Time { return now })
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, clock)
+```
+
+## Unix seconds
+
+`ant.UnixTime` stores a time as an integer, and it's kept up to date all the same.
+
+```go
+type Stamped struct {
+	ID        int64
+	// spot-start
+	CreatedAt ant.UnixTime
+	UpdatedAt ant.UnixTime
+	// spot-end
+}
+```
+
+## Opting out
+
+`b.NoTimestamps` turns all of this off for one model, and leaves the fields as you set them.
+
+```go
+func (Note) Configure(b *ant.ModelBuilder[Note]) {
+	// spot-next-line
+	b.NoTimestamps()
+}
+```
+
+To move a parent's `UpdatedAt` when a child is written, see [`Touch`](/relations/advanced#touching-the-parent).
+
+<Tests path="lifecycle/timestamps_test.go" />

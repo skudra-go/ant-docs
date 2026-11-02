@@ -1,0 +1,45 @@
+---
+title: Benchmarks
+description: ant against GORM, Bun, and plain database/sql.
+---
+
+These compare ant with GORM v1.31, Bun v1.3, and plain `database/sql`, doing the same work on the same PostgreSQL 17 in Docker. Plain `database/sql` stands in for sqlc, whose generated code is a query string and a `Scan`.
+
+These results came from one run on one laptop in WSL, on 2026-10-31. Read them as a shape, not as a promise. Differences of a few percent are noise. Allocations are stable, and times aren't.
+
+| Benchmark | `database/sql` | ant | GORM | Bun |
+| --- | --- | --- | --- | --- |
+| **Read 1000 rows** | 1.68 ms | 1.56 ms | 3.03 ms | 2.16 ms |
+| Allocations | 7,771 | 6,833 | 14,808 | 8,790 |
+| **Find one row** | 370 µs | 384 µs | 390 µs | 375 µs |
+| Allocations | 36 | 93 | 89 | 41 |
+| **Filter, sort, limit** | 541 µs | 537 µs | 544 µs | 528 µs |
+| Allocations | 98 | 178 | 219 | 124 |
+| **Insert one row** | 2.80 ms | 2.90 ms | 2.91 ms | 3.47 ms |
+| Allocations | 22 | 76 | 76 | 39 |
+| **Update one column** | 2.86 ms | 2.96 ms | 2.94 ms | 2.96 ms |
+| Allocations | 8 | 47 | 58 | 14 |
+
+**Rows are where a mapper's cost shows.** ant reads a row with a compiled list of field pointers, so reading 1000 rows costs about what hand-written `Scan` calls do, and half what GORM does.
+
+**A single row is mostly a network round trip.** Every library spends nearly all its time waiting, so the four are within 5% of each other, and one fewer query matters far more. ant allocates more than Bun or plain SQL here, which shows up in a garbage collector's work under load, not in this table.
+
+**Writes wait for the disk.** The insert and update figures are dominated by the commit.
+
+## What ant adds
+
+Measured with no database involved:
+
+| Operation | Time | Allocations |
+| --- | --- | --- |
+| Resolving a field probe | 20 ns | 0 |
+| Building and rendering a query with two conditions, an order, and a limit | 7.3 µs | 78 |
+
+Rendering takes a few microseconds, against a few hundred for the round trip, which is why ant doesn't cache rendered SQL: a cache key would cost about what it saves, and pgx already caches prepared statements per connection.
+
+## Run them yourself
+
+```bash
+make db-up DATABASES=postgres
+cd tools/compare && go test -run '^$' -bench . -benchmem -benchtime 2s
+```

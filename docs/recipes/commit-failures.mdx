@@ -1,0 +1,58 @@
+---
+title: When a commit fails
+description: The one failure where you cannot know what happened.
+---
+
+Most failures are simple: the transaction rolled back, and nothing happened. One isn't. If the connection drops while a `COMMIT` is on its way, your code can't know whether the database got it. The transaction may well have committed, even though your code sees an error.
+
+So retrying isn't safe, because the work may already be done. `ant.Attempts` and `ant.WithRetry` don't retry this case. They only retry deadlocks and serialization failures, which PostgreSQL guarantees were rolled back.
+
+{/*
+```go
+type Entry struct {
+	ID  int64
+	Key string `ant:"unique"`
+}
+
+type AppDB struct {
+	ant.Context
+	Entries ant.Table[Entry]
+}
+```
+*/}
+
+## Make the work safe to repeat
+
+Give each operation a key the client chooses, and store it in the same transaction, behind a unique constraint. A retry then finds the key and returns the first result, instead of doing the work again.
+
+```go
+type Entry struct {
+	ID  int64
+	Key string `ant:"unique"`
+}
+
+var E = ant.Fields[Entry]()
+
+func transfer(ctx context.Context, tx *AppDB, key string) (*Entry, error) {
+	// spot-start
+	existing, err := tx.Entries.Where(ant.Eq(&E.Key, key)).First(ctx)
+	if err == nil {
+		return existing, nil // it committed after all
+	}
+	// spot-end
+
+	entry := &Entry{Key: key}
+
+	return entry, tx.Entries.Insert(ctx, entry)
+}
+```
+
+The [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) does this for transfers, and the [audit example](https://github.com/skudra-go/ant-examples/tree/main/examples/audit) does it with event IDs.
+
+## Or check afterwards
+
+Where a client key doesn't fit, reconnect and look for the result, using something the transaction wrote.
+
+## After SaveChanges fails
+
+A failed `SaveChanges` leaves pending changes in the tracker, and clears generated keys, so it can be called again. If the failure was a lost commit, check first, or the rows go in twice.

@@ -1,0 +1,150 @@
+---
+title: Connections
+description: Open, wrap a pool, share transactions, and use read replicas.
+---
+
+ant sits on `database/sql`, so the connections are the standard library's, and you can reach them whenever you need to.
+
+## Opening
+
+`ant.Open` connects and fills in your context. You import the driver yourself: ant doesn't pick one for you.
+
+```go
+import _ "github.com/jackc/pgx/v5/stdlib"
+
+func open(ctx context.Context) (*AppDB, error) {
+	// spot-next-line
+	return ant.Open[AppDB](ctx, postgres.Dialect, dsn)
+}
+```
+
+`Close` closes the pool, and should run once, on the context from `Open`.
+
+## Pool settings
+
+`db.DB()` is the `*sql.DB`.
+
+```go
+// spot-start
+db.DB().SetMaxOpenConns(25)
+db.DB().SetConnMaxLifetime(5 * time.Minute)
+// spot-end
+```
+
+## An existing pool
+
+`ant.Wrap` puts a context on a pool you already have.
+
+```go
+pool, err := sql.Open("pgx", dsn)
+if err != nil {
+	return err
+}
+
+// spot-next-line
+db, err := ant.Wrap[AppDB](postgres.Dialect, pool)
+```
+
+`Close` closes that pool too, as with `Open`.
+
+## Joining a transaction
+
+`ant.UseTx` binds a context to a transaction started elsewhere, such as by another library. You commit or roll it back. Observers don't run, since they wait for a commit ant can't see.
+
+```go
+tx, err := db.DB().BeginTx(ctx, nil)
+if err != nil {
+	return err
+}
+
+defer tx.Rollback()
+
+// spot-next-line
+bound, err := ant.UseTx(db, tx)
+if err != nil {
+	return err
+}
+
+err = bound.Users.Insert(ctx, alice)
+```
+
+Two context types can share one transaction, through `ant.CurrentTx`, so two parts of a program commit together.
+
+```go keep-db
+type OtherDB struct {
+	ant.Context
+	Posts ant.Table[Post]
+}
+
+err := db.Tx(ctx, func(tx *AppDB) error {
+	// spot-next-line
+	joined, err := ant.UseTx(other, ant.CurrentTx(tx))
+	if err != nil {
+		return err
+	}
+
+	return joined.Posts.Insert(ctx, post)
+})
+```
+
+{/*
+```go
+var other *OtherDB
+```
+*/}
+
+## One connection
+
+`ant.UseConn` keeps everything on one connection, for a session setting or an advisory lock. Transactions stay on it too. You close it.
+
+```go
+conn, err := db.DB().Conn(ctx)
+if err != nil {
+	return err
+}
+
+defer conn.Close()
+
+// spot-next-line
+bound, err := ant.UseConn(db, conn)
+if err != nil {
+	return err
+}
+
+_, err = ant.Raw[any](bound, "SET application_name = 'worker'").Exec(ctx)
+```
+
+## Read replicas
+
+`ant.WithReplicas` sends reads outside transactions to replicas in turn. Writes, locks, and transactions use the primary. A failing replica is an error for that read, not a retry elsewhere.
+
+```go
+replica, err := sql.Open("pgx", replicaDSN)
+if err != nil {
+	return err
+}
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-start
+	ant.WithReplicas(replica),
+	ant.WithStickyWrites(2*time.Second),
+	// spot-end
+)
+```
+
+`WithStickyWrites` sends a context's reads to the primary for a while after each of its writes, so replication lag can't hide what it just wrote. To force one read:
+
+```go
+// spot-next-line
+users, err := db.Users.All(ant.OnPrimary(ctx))
+```
+
+{/*
+```go
+var replicaDSN string
+```
+*/}
+
+For separate databases, see [several databases](/recipes/several-databases).
+
+<Tests path="transactions" />

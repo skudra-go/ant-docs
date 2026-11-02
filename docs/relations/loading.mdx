@@ -1,0 +1,208 @@
+---
+title: Loading relations
+description: Include, shaped loading, loading later, and counts.
+---
+
+Loading is always explicit and always batched. Reading a field never runs a query, so whatever a page costs is written right there in the code.
+
+## Include
+
+`Include` loads a `[]T` relation, and `IncludeOne` loads a `*T` one. Each runs one extra query, however many parents there are.
+
+```go
+users, err := db.Users.
+	OrderBy(&U.Name).
+	// spot-next-line
+	Include(&U.Posts).
+	All(ctx)
+
+fmt.Println(users[0].Posts[0].Title)
+
+posts, err := db.Posts.
+	// spot-next-line
+	IncludeOne(&P.User).
+	All(ctx)
+
+fmt.Println(posts[0].User.Name)
+```
+
+```sql
+SELECT ... FROM "users" ORDER BY "users"."name"
+SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
+```
+
+It works with `All`, `First`, `Single`, `Find`, and `Chunk`. Rows with one parent share it.
+
+## Nil means not loaded
+
+This is how you tell "not loaded" from "there are none".
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+// spot-next-line
+fmt.Println(user.Posts == nil) // true: not loaded
+
+loaded, err := db.Users.Include(&U.Posts).Find(ctx, id)
+
+// spot-next-line
+fmt.Println(loaded.Posts != nil) // true: loaded, and maybe empty
+```
+
+## Shaping what loads
+
+The optional function shapes the related query, with the same methods as any other query.
+
+```go
+users, err := db.Users.
+	// spot-start
+	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Where(ant.Eq(&P.Published, true)).OrderByDesc(&P.CreatedAt)
+	}).
+	// spot-end
+	All(ctx)
+```
+
+`Limit` and `Offset` apply per parent, so this gives you the three newest posts of each user, not three posts in total.
+
+```go
+users, err := db.Users.
+	// spot-start
+	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.OrderByDesc(&P.CreatedAt).Limit(3)
+	}).
+	// spot-end
+	All(ctx)
+```
+
+`Column` picks columns, and the foreign key is always kept. `IncludeOne` takes a shape too, and a filter that excludes the parent leaves `nil`.
+
+## Going deeper
+
+`Include` inside the function loads the next level, down or up.
+
+{/*
+```go
+type Comment struct {
+	ID     int64
+	PostID int64
+	Text   string
+}
+
+type Post struct {
+	ant.Base
+	UserID    int64
+	Title     string
+	Published bool
+	User      *User
+	Comments  []Comment
+}
+```
+*/}
+
+```go
+users, err := db.Users.
+	// spot-start
+	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Include(&P.Comments)
+	}).
+	// spot-end
+	All(ctx)
+```
+
+## One statement, with a join
+
+`IncludeJoined` reads a parent in the same statement, through a `LEFT JOIN`, instead of the extra query `IncludeOne` runs. A parent it doesn't find stays `nil`, and the row survives.
+
+```go
+// spot-next-line
+posts, err := db.Posts.IncludeJoined(&P.User).OrderBy(&P.Title).All(ctx)
+```
+
+## Loading later
+
+`Load` fills relations on entities you already have, in one query.
+
+```go
+users, err := db.Users.OrderBy(&U.Name).All(ctx)
+
+// spot-start
+err = db.Users.Load(ctx, &U.Posts, users...)
+err = db.Posts.LoadOne(ctx, &P.User, post)
+// spot-end
+```
+
+`LoadMissing` skips entities whose relation is already loaded, and `ant.Pointers` adapts a `[]T`, as from `ant.Raw`.
+
+```go
+rows, err := ant.Raw[User](db, `SELECT * FROM users`).All(ctx)
+
+// spot-next-line
+err = db.Users.LoadMissing(ctx, &U.Posts, ant.Pointers(rows)...)
+```
+
+## The related rows of one entity
+
+`ant.Related` starts a query from one entity's relation, which you can refine, count, or delete. `ant.RelatedOne` does it for a `*T` relation.
+
+```go
+// spot-start
+drafts, err := ant.Related(db, alice, &U.Posts).
+	Where(ant.Eq(&P.Published, false)).
+	OrderBy(&P.Title).
+	All(ctx)
+
+author, err := ant.RelatedOne(db, post, &P.User).Single(ctx)
+// spot-end
+```
+
+## Counts and sums
+
+Fill a [`computed`](/models/field-roles#computed) field with an aggregate of a relation, in one query, with no rows loaded.
+
+```go
+type Writer struct {
+	ID           int64
+	Articles     []Article
+	// spot-start
+	ArticleCount int64             `ant:"computed"`
+	TotalViews   int               `ant:"computed"`
+	AverageViews sql.Null[float64] `ant:"computed"`
+	// spot-end
+}
+
+type Article struct {
+	ID       int64
+	WriterID int64
+	Views    int
+	Live     bool
+}
+
+var (
+	W = ant.Fields[Writer]()
+	A = ant.Fields[Article]()
+)
+
+writers, err := db.Writers.
+	// spot-start
+	With(&W.ArticleCount, ant.CountRelated(&W.Articles, ant.Eq(&A.Live, true))).
+	With(&W.TotalViews, ant.SumRelated(&W.Articles, &A.Views)).
+	With(&W.AverageViews, ant.AvgRelated(&W.Articles, &A.Views)).
+	// spot-end
+	All(ctx)
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users   ant.Table[User]
+	Posts   ant.Table[Post]
+	Writers ant.Table[Writer]
+}
+```
+*/}
+
+`CountRelated` and `SumRelated` are zero with no rows. `AvgRelated`, `MinRelated`, and `MaxRelated` are `NULL`, so they need a nullable field.
+
+<Tests path="loading" />

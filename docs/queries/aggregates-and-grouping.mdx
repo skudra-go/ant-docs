@@ -1,0 +1,125 @@
+---
+title: Aggregates and grouping
+description: Sums, counts, GROUP BY, and HAVING, with typed results.
+---
+
+An aggregate runs one query and gives you back a value of the column's type. Grouped results go into a struct you define, through [`Project`](/queries/projections).
+
+## One number
+
+```go
+adults := db.Users.Where(ant.Gt(&U.Age, 18))
+
+// spot-start
+total, err := ant.SumOf(ctx, adults, &U.Age)   // int
+average, err := ant.AvgOf(ctx, adults, &U.Age) // float64
+lowest, err := ant.MinOf(ctx, adults, &U.Age)  // int
+last, err := ant.MaxOf(ctx, adults, &U.Name)   // string
+// spot-end
+```
+
+`MIN` and `SUM` over no rows are `NULL` in SQL. Here, they're zero.
+
+## Grouping
+
+Define what a result holds, give it a probe, and map columns and aggregates into it.
+
+```go
+// spot-start
+type AgeGroup struct {
+	Age   int
+	Users int64
+}
+
+var G = ant.Fields[AgeGroup]()
+// spot-end
+
+groups, err := ant.Project[AgeGroup](
+	// spot-start
+	db.Users.GroupBy(&U.Age).Order(ant.Col(&U.Age).Asc()),
+	ant.Into(&G.Age, &U.Age),
+	ant.IntoExpr(&G.Users, ant.Count()),
+	// spot-end
+).All(ctx)
+```
+
+```sql
+SELECT "users"."age" AS "age", COUNT(*) AS "users" FROM "users" GROUP BY "users"."age" ORDER BY "users"."age"
+```
+
+`groups` is a `[]AgeGroup`. Both sides of each mapping are probes, so the compiler checks those as well.
+
+## Filtering groups
+
+`Where` filters rows before grouping, and `Having` filters groups after.
+
+```go
+groups, err := ant.Project[AgeGroup](
+	db.Users.
+		// spot-start
+		Where(ant.Gt(&U.Age, 20)).
+		GroupBy(&U.Age).
+		Having(ant.Count().Gt(1)).
+		// spot-end
+		Order(ant.Count().Desc()).
+		Limit(5),
+	ant.Into(&G.Age, &U.Age),
+).All(ctx)
+```
+
+## More than one column
+
+`ant.Then` adds a column to the group, and `GroupByExpr` groups by an expression.
+
+```go
+// spot-next-line
+byAgeAndName := ant.Then(db.Users.GroupBy(&U.Age), &U.Name)
+
+// spot-next-line
+decade := ant.SQL[int]("? / 10", ant.Col(&U.Age))
+
+groups, err := ant.Project[AgeGroup](
+	// spot-next-line
+	db.Users.GroupByExpr(decade).Order(decade.Asc()),
+	ant.IntoExpr(&G.Age, decade),
+	ant.IntoExpr(&G.Users, ant.Count()),
+).All(ctx)
+```
+
+## Aggregate functions
+
+| Function | Result |
+| --- | --- |
+| `ant.Count()` | `int64`, rows in the group |
+| `ant.CountOf(&U.Bio)` | `int64`, rows where it isn't `NULL` |
+| `ant.CountDistinct(&U.Age)` | `int64`, distinct values |
+| `ant.Sum(&U.Age)` | the column's type |
+| `ant.Avg(&U.Age)` | `float64` |
+| `ant.Min(&U.Age)`, `ant.Max(&U.Age)` | the column's type |
+
+Each is an [expression](/queries/expressions), so `.Filter(...)` narrows one aggregate without touching the rest of the query.
+
+```go
+ant.IntoExpr(&G.Users, ant.Count().Filter(ant.Eq(&U.Name, "Ada")))
+```
+
+{/*
+```go
+func filtered() ant.Mapping {
+	return ant.IntoExpr(&G.Users, ant.Count().Filter(ant.Eq(&U.Name, "Ada")))
+}
+```
+*/}
+
+## Across a join
+
+```go
+counts, err := ant.Project[AgeGroup](
+	// spot-next-line
+	db.Posts.Join(&P.User).GroupBy(&U.Age),
+	ant.Into(&G.Age, &U.Age),
+	ant.IntoExpr(&G.Users, ant.Count()),
+).All(ctx)
+```
+
+<Tests path="querying/group_by_test.go" />

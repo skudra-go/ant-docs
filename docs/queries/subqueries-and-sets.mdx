@@ -1,0 +1,174 @@
+---
+title: Subqueries, sets, and CTEs
+description: Queries inside queries, unions, WITH clauses, and recursion.
+---
+
+A query can sit inside another one as a list of values, a single value, or a table. Global filters and soft deletes still apply inside it.
+
+## A list of values
+
+`ant.SubOf` turns a query and a column into something `InSub` can use.
+
+```go
+// spot-next-line
+authors := ant.SubOf(db.Posts.Where(ant.Eq(&P.Published, true)), &P.UserID)
+
+// spot-start
+wrote, err := db.Users.Where(ant.InSub(&U.ID, authors)).All(ctx)
+quiet, err := db.Users.Where(ant.NotInSub(&U.ID, authors)).All(ctx)
+// spot-end
+```
+
+## Exists
+
+A subquery can refer to the outer row with `EqCol`.
+
+```go
+// spot-next-line
+theirs := db.Posts.Where(ant.EqCol(&P.UserID, &U.ID))
+
+// spot-start
+wrote, err := db.Users.Where(ant.Exists(theirs)).All(ctx)
+quiet, err := db.Users.Where(ant.NotExists(theirs)).All(ctx)
+// spot-end
+```
+
+For a relation, [`ant.Has`](/relations/filtering) says the same thing more briefly.
+
+## A single value
+
+`ant.SubExpr` runs a query for a single value, which you can use anywhere an expression goes.
+
+```go
+// spot-next-line
+oldest := ant.SubExpr(db.Users.Where(), ant.Max(&U.Age)).Expr()
+
+users, err := db.Users.Where(ant.Col(&U.Age).EqExpr(oldest)).All(ctx)
+```
+
+It works for ordering, and for updates too.
+
+```go
+// spot-next-line
+posts := ant.SubExpr(db.Posts.Where(ant.EqCol(&P.UserID, &U.ID)), ant.Count()).Expr()
+
+busiest, err := db.Users.Order(posts.Desc()).All(ctx)
+```
+
+## From a subquery
+
+```go
+adults := db.Users.Where(ant.Gt(&U.Age, 18))
+
+// spot-next-line
+users, err := db.Users.Query().From(adults).Where(ant.Lt(&U.Age, 35)).All(ctx)
+```
+
+`Include` can't be part of a subquery, and returns `ant.ErrIncludeInSubquery`.
+
+## Union, intersect, except
+
+These combine queries of one model. Conditions and ordering added afterward apply to the combined rows, so the result is a normal query.
+
+```go
+young := db.Users.Where(ant.Lt(&U.Age, 35))
+old := db.Users.Where(ant.Gt(&U.Age, 25))
+
+// spot-start
+either, err := young.Union(old).OrderBy(&U.Name).All(ctx)
+repeats, err := young.UnionAll(old).All(ctx)
+both, err := young.Intersect(old).All(ctx)
+onlyYoung, err := young.Except(old).All(ctx)
+// spot-end
+```
+
+## Common table expressions
+
+`FromCTE` names a subquery in a `WITH` clause.
+
+```go
+named := db.Users.Where(ant.Like(&U.Name, "A%"))
+
+// spot-next-line
+users, err := db.Users.Query().FromCTE("named", named).OrderBy(&U.Name).All(ctx)
+```
+
+## Recursion
+
+`Recursive` follows a model's relation to itself as far as it goes, and `RecursiveOne` walks up instead. A loop in the data doesn't hang it, because rows it has already seen are dropped.
+
+```go
+type Folder struct {
+	ID       int64
+	ParentID *int64
+	Name     string
+	Parent   *Folder
+	Children []Folder
+}
+
+var F = ant.Fields[Folder]()
+
+// spot-start
+tree, err := db.Folders.Where(ant.Eq(&F.ID, id)).
+	Recursive(&F.Children).
+	OrderBy(&F.Name).
+	All(ctx)
+	// spot-end
+
+// spot-start
+ancestors, err := db.Folders.Where(ant.Eq(&F.ID, id)).
+	RecursiveOne(&F.Parent).
+	All(ctx)
+// spot-end
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users   ant.Table[User]
+	Posts   ant.Table[Post]
+	Folders ant.Table[Folder]
+}
+```
+*/}
+
+## Rows held in memory
+
+`ant.Values` treats rows in your program as a table, so you can join against a list. It needs a dialect with migration support, which means PostgreSQL for now, and an empty list is `ant.ErrNoRows`.
+
+```go
+type Wanted struct {
+	UserID int64
+	Label  string
+}
+
+var W = ant.Fields[Wanted]()
+
+// spot-next-line
+wanted := ant.Values(db, Wanted{alice.ID, "first"}, Wanted{bob.ID, "second"})
+
+rows, err := ant.JoinSub(db.Users.Query(), wanted, ant.EqCol(&U.ID, &W.UserID)).
+	Select(func(u *User, w *Wanted) string { return w.Label + ": " + u.Name }).
+	All(ctx)
+```
+
+## Table functions
+
+`ant.FromFunc` reads a function that returns rows, and queries build on it.
+
+```go
+type Number struct {
+	N int64
+}
+
+var N = ant.Fields[Number]()
+
+numbers, err := ant.
+	// spot-next-line
+	FromFunc[Number](db, "generate_series(?::bigint, ?::bigint) AS numbers(n)", 1, 5).
+	Where(ant.Gt(&N.N, 3)).
+	All(ctx)
+```
+
+<Tests path="querying" />

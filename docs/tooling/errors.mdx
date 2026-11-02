@@ -1,0 +1,82 @@
+---
+title: Errors
+description: Sentinels, database error classification, and finding the failing SQL.
+---
+
+Errors are values you can check. Builders collect them along the way, and the call that runs the query returns them, joined together if there's more than one.
+
+## Common errors
+
+Match them with `errors.Is`, not by their text, which can change.
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+// spot-next-line
+if errors.Is(err, ant.ErrNotFound) {
+	return nil
+}
+```
+
+| Error | Means |
+| --- | --- |
+| `ant.ErrNotFound` | `First`, `Single`, `Find`, or `Reload` found no row |
+| `ant.ErrMultipleRows` | `Single` found more than one |
+| `ant.ErrNoCondition` | A [bulk write](/writing/update-and-delete#the-no-condition-guard) with no condition |
+| `ant.ErrConcurrency` | A version check failed |
+| `ant.ErrUnsupported` | This database lacks the feature |
+| `ant.ErrNotProbe` | A pointer that isn't a probe |
+| `ant.ErrWrongModel` | A probe of a model outside this query |
+| `ant.ErrKeyType` | A key of the wrong type |
+| `ant.ErrNoKey` | The model has no usable key for this |
+| `ant.ErrReadOnly` | A write to a view |
+| `ant.ErrTxDone` | The transaction already ended |
+
+## Database errors
+
+These classify a database's error without string matching, on all five databases.
+
+```go
+err := db.Users.Insert(ctx, user)
+
+// spot-start
+switch {
+case ant.IsUniqueViolation(err):
+	return errors.New("already exists")
+case ant.IsForeignKeyViolation(err):
+	return errors.New("refers to something missing")
+case ant.IsNotNullViolation(err), ant.IsCheckViolation(err):
+	return errors.New("invalid")
+case ant.IsRetryable(err):
+	return errors.New("try again")
+}
+// spot-end
+```
+
+`ant.SQLState(err)` returns the code itself, such as `23505`, translated so one value means one thing everywhere.
+
+## Finding the statement
+
+`ant.FailedSQL` reads the statement behind a query error, with placeholders and no values, so it's safe for an internal log.
+
+```go
+err := db.Users.Insert(ctx, user)
+
+// spot-next-line
+slog.Error("insert failed", "sql", ant.FailedSQL(err))
+```
+
+`ant.WithDetailedErrors()` adds it to every error's message, which helps in development. Leave it off where errors reach users.
+
+## Strict scanning
+
+By default a result column with no field is ignored. `ant.WithStrict()` refuses it, which catches a model that has fallen behind its table.
+
+```go
+// spot-next-line
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithStrict())
+```
+
+`ant.WithLooseScan()` says the default out loud, where `WithStrict` is on for other contexts.
+
+<Tests path="developer_tooling/errors_test.go" />

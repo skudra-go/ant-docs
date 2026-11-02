@@ -1,0 +1,100 @@
+---
+title: Expressions
+description: Compute values in SQL, with their Go type checked.
+---
+
+An `ant.Expr[V]` computes a value in SQL and knows its Go type. You can compare it, order by it, select it, or write it to a column.
+
+## Using an expression
+
+```go
+// spot-next-line
+lower := ant.Lower(&U.Name)
+
+users, err := db.Users.
+	// spot-start
+	Where(lower.Eq("bob")).
+	Order(lower.Desc()).
+	// spot-end
+	All(ctx)
+```
+
+## Columns and arithmetic
+
+`ant.Col` turns a probe into an expression, and arithmetic stays typed.
+
+```go
+// spot-next-line
+nextYear := ant.Col(&U.Age).Plus(1)
+
+users, err := db.Users.Where(nextYear.Eq(18)).All(ctx)
+```
+
+| Method | Does |
+| --- | --- |
+| `.Plus`, `.Minus`, `.Times`, `.Div` | arithmetic with a value |
+| `.Eq`, `.Ne`, `.Gt`, `.Gte`, `.Lt`, `.Lte` | compare with a value, giving a `Cond` |
+| `.EqExpr`, `.GtExpr`, `.LtExpr` | compare with another expression |
+| `.IsNull`, `.IsNotNull` | check for `NULL` |
+| `.Asc`, `.Desc` | an ordering term |
+| `.Filter(conds...)` | narrow an aggregate |
+| `.Over(window)` | run as a [window function](/queries/window-functions) |
+
+## Built-in functions
+
+```go
+// spot-start
+lower := ant.Lower(&U.Name)
+upper := ant.Upper(&U.Name)
+length := ant.Length(&U.Name)
+fallback := ant.Coalesce(&U.Bio, new("none"))
+sorted := ant.Collate(&U.Name, "C")
+// spot-end
+
+users, err := db.Users.Where(length.Gte(5)).Order(sorted.Asc()).All(ctx)
+```
+
+## CASE
+
+```go
+// spot-start
+kind := ant.Case[string]().
+	When(ant.Lt(&U.Age, 18), "minor").
+	When(ant.Gt(&U.Age, 65), "senior").
+	Else("adult")
+// spot-end
+```
+
+`Else` returns the finished `Expr[string]`. `End` leaves it open, as `Expr[sql.Null[string]]`, since a row that matches nothing is `NULL`. `WhenExpr` and `ElseExpr` take columns or other expressions as results.
+
+## Any database function
+
+`ant.Func` calls a function by name, with the result type you state. Columns go in as expressions, and other values are bound.
+
+```go
+// spot-next-line
+fixed := ant.Func[string]("REPLACE", ant.Col(&U.Name), "o", "0")
+```
+
+## A SQL fragment
+
+`ant.SQL` lets you write the expression yourself. Each `?` takes a column or a bound value, so a value never becomes part of the statement text.
+
+```go
+// spot-start
+label := ant.SQL[string]("? || ?", ant.Col(&U.Name), "/x")
+even := ant.SQLCond("? % ? = 0", ant.Col(&U.Age), 2)
+// spot-end
+
+users, err := db.Users.Where(even).All(ctx)
+```
+
+`ant.SQLCond` is the same thing, as a condition. The wrong number of arguments is an error.
+
+:::danger[Never build the text from input]
+
+The string is SQL, by design. Pass values as arguments, and keep the text a constant.
+
+:::
+
+<Tests path="querying/expressions_test.go" />

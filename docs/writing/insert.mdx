@@ -1,0 +1,125 @@
+---
+title: Insert
+description: Insert one row, several, or a whole graph.
+---
+
+`Insert` writes one entity or several. Every field is written as it is, so a zero is stored as zero, and generated keys come back on your struct.
+
+## One or several
+
+```go
+alice := &User{
+	Name:  "Alice",
+	Email: "alice@example.com",
+	Age:   30,
+}
+
+// spot-next-line
+err := db.Users.Insert(ctx, alice)
+if err != nil {
+	return err
+}
+
+fmt.Println(alice.ID) // set by the database
+```
+
+Several go in together, all or nothing: if one fails, every row is rolled back and the keys it set are cleared.
+
+```go
+// spot-next-line
+err := db.Users.Insert(ctx, alice, bob)
+
+// A slice of pointers spreads.
+// spot-next-line
+err = db.Users.Insert(ctx, users...)
+```
+
+## A whole graph
+
+`Insert` also saves the entities a new struct points at, parents first, filling in foreign keys as it goes.
+
+```go
+alice := &User{
+	Name:  "Alice",
+	Email: "alice@example.com",
+	// spot-next-line
+	Posts: []Post{{Title: "Hello"}, {Title: "Second"}},
+}
+
+err := db.Users.Insert(ctx, alice)
+
+fmt.Println(alice.Posts[1].UserID == alice.ID) // true
+```
+
+It works from the child too, and an existing parent is linked, not inserted again.
+
+```go
+// spot-next-line
+post := &Post{Title: "New", User: alice}
+
+err := db.Posts.Insert(ctx, post)
+```
+
+```sql
+INSERT INTO "users" (...) VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id"
+INSERT INTO "posts" (...) VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10) RETURNING "id"
+```
+
+New rows that depend on each other in a loop are refused with `ant.ErrCycle`.
+
+## Ignoring relations
+
+`InsertOnly` writes the row and leaves its relation fields alone.
+
+```go
+// spot-next-line
+err := db.Users.InsertOnly(ctx, alice)
+```
+
+## Find or create
+
+`FirstOrCreate` returns the first row that matches the conditions, or inserts yours. The bool tells you which happened. If another writer gets there first, a unique constraint stops this insert, and you get the winner's row back.
+
+```go
+// spot-start
+user, created, err := db.Users.FirstOrCreate(
+	ctx,
+	&User{Name: "Ada", Email: "ada@example.com"},
+	ant.Eq(&U.Email, "ada@example.com"),
+)
+// spot-end
+```
+
+`FirstOrNew` is the same without saving. Its bool reports whether a row was found.
+
+```go
+// spot-next-line
+user, found, err := db.Users.FirstOrNew(ctx, &User{Name: "Ada"}, ant.Eq(&U.Name, "Ada"))
+```
+
+## Copying a row
+
+`ant.Clone` copies an entity with its key and relations cleared, ready to insert as a new row.
+
+```go
+// spot-next-line
+twin := ant.Clone(alice)
+twin.Email = "twin@example.com"
+
+err := db.Users.Insert(ctx, twin)
+```
+
+## When a constraint fails
+
+A constraint failure is the database's own error, and the [`Is` helpers](/tooling/errors) read it on every database.
+
+```go
+err := db.Users.Insert(ctx, &User{Email: alice.Email})
+
+// spot-next-line
+if ant.IsUniqueViolation(err) {
+	return errors.New("that email is taken")
+}
+```
+
+<Tests path="writing/insert_test.go" />

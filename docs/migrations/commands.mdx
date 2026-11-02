@@ -1,0 +1,39 @@
+---
+title: Commands
+description: Every migrate command, in one place.
+---
+
+Run each with `go run ./cmd/migrate <command>`.
+
+## No database needed
+
+| Command | Does |
+| --- | --- |
+| `diff <name>` | Write a migration for what changed in the models |
+| `diff <name> --empty` | Write an empty migration to fill by hand |
+| `diff <name> --rename a.b=c` | Treat a change as a rename, repeatable |
+| `diff <name> --dry-run` | Print the SQL and write nothing |
+| `check` | Fail if models, snapshot, and files are out of step |
+| `snapshot` | Accept the models as they are, with no migration |
+| `adopt <dump.sql>` | Make a schema dump the first migration |
+| `squash [name]` | Replace all migrations with one baseline, `--keep` to join them |
+| `schema-dump` | Print the whole schema as SQL, `--snapshot` to use the snapshot |
+| `inspect [table]` | List the tables and columns the models describe |
+| `script` | Print all migrations as one idempotent file, `--plain` for other tools |
+
+## With a database
+
+| Command | Does |
+| --- | --- |
+| `up` | Apply pending migrations, then changed repeatable ones |
+| `up --to <version>` | Stop after this version |
+| `up --dry-run` | Print what would run |
+| `status` | List every migration and where it stands |
+| `drift` | Compare the live database with the migrations, `--sql` for the fix |
+| `db-show` | Summarize the live database: version, size, and tables |
+| `baseline [version]` | Record migrations as applied without running them |
+| `repair` | Accept changed files, clear failed runs, and forget missing files |
+| `seed [name...]` | Run seeders |
+| `reset` | Delete everything and apply all migrations, `--seed` to seed too |
+
+These take `--dsn`, and otherwise read `DATABASE_URL`, then `Config.DSN`.

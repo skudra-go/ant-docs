@@ -1,0 +1,83 @@
+---
+title: Deploying
+description: Embed migrations in a binary, and choose when they run.
+---
+
+Embed the migration files in your binary, so it doesn't need anything sitting next to it.
+
+## Embedding
+
+```go title="migrations/migrations.go" no-check
+package migrations
+
+import "embed"
+
+//go:embed all:versions all:code
+var Files embed.FS
+```
+
+`go:embed` refuses a folder with no files, so a new project needs a `.gitkeep` in each until it has migrations. `all:` is what makes that count.
+
+After that, one `main.go` works in both places. `Embedded` is only used when there's no `migrations` folder on disk, so in your repository `diff` writes real files, and in a container image `up` reads them from the binary.
+
+```go
+package main
+
+import (
+	"github.com/skudra-go/ant/dialect/postgres"
+	"github.com/skudra-go/ant/migrate"
+
+	"example.com/app/migrations"
+	"example.com/app/models"
+)
+
+func main() {
+	// spot-next-line
+	migrate.Main[models.AppDB](postgres.Dialect, migrate.Config{Embedded: migrations.Files})
+}
+```
+
+## When to apply
+
+**As a separate step**, such as a Kubernetes job or a compose service that runs before the server. This is the safer option: a schema change doesn't depend on a code rollout, and if it fails, the deployment stops before anything changes. The [blog example](https://github.com/skudra-go/ant-examples/tree/main/examples/blog) works this way.
+
+**At startup**, which is fine for small deployments.
+
+```go
+// spot-next-line
+err := migrate.Up(ctx, db, migrate.Config{FS: files})
+```
+
+{/*
+```go
+var files embed.FS
+```
+*/}
+
+Either way, several instances can start at once. A PostgreSQL advisory lock lets one of them do the work while the others wait, and then they find there's nothing left to do.
+
+:::warning[Connection poolers]
+
+Session locks don't survive a pooler in transaction mode, such as PgBouncer. Run migrations on a direct connection, or set `Config.NoLock` and make sure only one runs.
+
+:::
+
+## A database ant cannot reach
+
+`script` writes a single SQL file for someone else to run. Each block checks the history table first, so it's safe to run more than once, and `up` agrees with the result afterwards.
+
+```bash
+go run ./cmd/migrate script > deploy.sql
+```
+
+## Leaving ant's tooling
+
+None of this needs ant to keep working.
+
+- `migrations/versions` is plain SQL in a common layout. golang-migrate runs the `.up.sql` files as they are.
+- `script --plain` joins everything into one file for any other tool.
+- `schema-dump` prints the whole schema as SQL, from the structs.
+- The history table is an ordinary table you can drop.
+- Queries don't depend on migrations at all.
+
+<Tests path="migrations/script_test.go" />

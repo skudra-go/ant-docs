@@ -1,0 +1,30 @@
+{
+  "name": "ant-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Documentation site for the ant ORM",
+  "scripts": {
+    "start": "docusaurus start",
+    "build": "DOCUSAURUS_GENERATED_FILES_DIR_NAME=.docusaurus-build docusaurus build",
+    "serve": "docusaurus serve",
+    "clear": "docusaurus clear && rm -rf .docusaurus-build",
+    "check:samples": "cd tools/doccheck && go run ./cmd/doccheck ../../docs",
+    "fix:samples": "cd tools/doccheck && go run ./cmd/doccheck -fix ../../docs",
+    "check": "npm run check:samples && npm run build"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
+    "@easyops-cn/docusaurus-search-local": "^0.55.3",
+    "@fontsource-variable/figtree": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@mdx-js/react": "^3.1.1",
+    "clsx": "^2.1.1",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "^3.10.2"
+  }
+}

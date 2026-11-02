@@ -1,0 +1,57 @@
+---
+title: Inspecting queries
+description: See the SQL, the plan, and what a piece of code really writes.
+---
+
+ant never hides what it sends. Each of these lets you look, from a single query up to a whole unit of work.
+
+## ToSQL
+
+`ToSQL` returns a query's statement and arguments, with no database involved.
+
+```go
+// spot-next-line
+text, args, err := db.Users.Where(ant.Gt(&U.Age, 18)).OrderBy(&U.Name).Limit(5).ToSQL()
+```
+
+```sql
+SELECT "users"."id", ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users"."name" LIMIT $2
+```
+
+`args` is `[18 5]`. `ToSQLContext` applies [global filters](/lifecycle/global-filters) from a context. `UpdateSQL` and `DeleteSQL` do the same for writes.
+
+## Explain
+
+`Explain` returns the database's plan.
+
+```go
+// spot-next-line
+plan, err := db.Users.Where(ant.Gt(&U.Age, 18)).Explain(ctx)
+```
+
+## Debug
+
+`Debug` logs one query's SQL and values, through slog's default logger, for a moment at a desk. It shows values, so don't leave it in code.
+
+```go
+// spot-next-line
+users, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Debug().All(ctx)
+```
+
+## DryRun
+
+`ant.DryRun` runs real code in a transaction, returns every statement, and rolls back, which shows what a unit of work decides to write. Sequences still move on, and whatever the function does outside the database still happens.
+
+```go
+// spot-start
+statements, err := ant.DryRun(ctx, db, func(tx *AppDB) error {
+	return tx.Users.Insert(ctx, &User{Name: "Temp", Email: "temp@example.com"})
+})
+// spot-end
+
+for _, s := range statements {
+	fmt.Println(s.SQL)
+}
+```
+
+<Tests path="developer_tooling" />

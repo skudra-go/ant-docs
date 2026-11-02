@@ -1,0 +1,165 @@
+---
+title: Joins
+description: Follow relations, or join on any condition, across up to four models.
+---
+
+A join follows a relation, or any condition you give it. The result is typed by the models in it, and conditions and ordering can use any of them.
+
+## Through a relation
+
+`Join` follows a `*T` relation, and `JoinMany` follows a `[]T` one, giving one result per related row. `Select` then shapes each row.
+
+```go
+rows, err := db.Posts.
+	// spot-next-line
+	Join(&P.User).
+	Where(ant.Eq(&U.Name, "Alice")).
+	OrderBy(&P.Title).
+	// spot-next-line
+	Select(func(p *Post, u *User) string { return u.Name + ": " + p.Title }).
+	All(ctx)
+```
+
+```go
+titles, err := db.Users.
+	// spot-next-line
+	JoinMany(&U.Posts).
+	Select(func(u *User, p *Post) string { return p.Title }).
+	All(ctx)
+```
+
+:::tip[`Join` or `Include`?]
+
+A join gives you one flat row per match, to project or filter on. To load whole models with their relations attached, use [`Include`](/relations/loading).
+
+:::
+
+## Left joins
+
+`LeftJoin` and `LeftJoinMany` keep rows with no match, and the missing side is `nil`.
+
+```go
+rows, err := db.Users.
+	// spot-next-line
+	LeftJoinMany(&U.Posts).
+	Select(func(u *User, p *Post) string {
+		// spot-start
+		if p == nil {
+			return u.Name + " has no posts"
+		}
+		// spot-end
+
+		return u.Name + ": " + p.Title
+	}).
+	All(ctx)
+```
+
+## On any condition
+
+`JoinOn` needs no relation. The other model is a type argument.
+
+```go
+rows, err := db.Users.
+	// spot-next-line
+	JoinOn[Post](ant.EqCol(&U.ID, &P.UserID), ant.Eq(&P.Published, true)).
+	Select(func(u *User, p *Post) string { return p.Title }).
+	All(ctx)
+```
+
+`LeftJoinOn`, `RightJoinOn`, and `FullJoinOn` work the same way. `CrossJoin[Post]()` takes no condition, and `JoinUsing[Post](&U.ID)` joins on a column both tables have.
+
+`FULL JOIN` depends on the database: see [databases](/reference/databases).
+
+## Three and four models
+
+Chain joins, and each step can follow a relation of any model already in the query.
+
+```go
+type Comment struct {
+	ID     int64
+	PostID int64
+	Text   string
+	Post   *Post
+}
+
+var C = ant.Fields[Comment]()
+
+rows, err := db.Comments.
+	// spot-next-line
+	Join(&C.Post).Join(&P.User).
+	Where(ant.Eq(&U.Name, "Ann")).
+	// spot-start
+	Select(func(c *Comment, p *Post, u *User) string {
+		return u.Name + "/" + p.Title + "/" + c.Text
+	}).
+	// spot-end
+	All(ctx)
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users    ant.Table[User]
+	Posts    ant.Table[Post]
+	Comments ant.Table[Comment]
+	Folders  ant.Table[Folder]
+}
+
+type Folder struct {
+	ID       int64
+	ParentID *int64
+	Name     string
+	Parent   *Folder
+}
+
+var F = ant.Fields[Folder]()
+```
+*/}
+
+## A table with itself
+
+Each side of a self-join is its own row.
+
+```go
+pairs, err := db.Folders.
+	// spot-next-line
+	Join(&F.Parent).
+	Select(func(child, parent *Folder) string { return parent.Name + "/" + child.Name }).
+	All(ctx)
+```
+
+## Joining a query
+
+`JoinSub` joins the results of a query, so they can be narrowed first. Probes of the joined model refer to its columns.
+
+```go
+published := db.Posts.Where(ant.Eq(&P.Published, true))
+
+rows, err := ant.
+	// spot-next-line
+	JoinSub(db.Users.OrderBy(&U.Name), published, ant.EqCol(&U.ID, &P.UserID)).
+	Select(func(u *User, p *Post) string { return p.Title }).
+	All(ctx)
+```
+
+`LeftJoinSub` keeps rows with no match.
+
+## The newest rows per parent
+
+A lateral join runs once per row, so it can read the top few rows for each parent, which a plain join can't do.
+
+```go
+// spot-next-line
+newest := db.Posts.Where(ant.EqCol(&P.UserID, &U.ID)).OrderByDesc(&P.ID).Limit(2)
+
+rows, err := ant.
+	// spot-next-line
+	JoinLateral(db.Users.OrderBy(&U.Name), newest).
+	Select(func(u *User, p *Post) string { return p.Title }).
+	All(ctx)
+```
+
+`LeftJoinLateral` keeps users with no posts. Lateral joins depend on the database.
+
+<Tests path="relations/join_test.go" />

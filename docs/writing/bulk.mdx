@@ -1,0 +1,102 @@
+---
+title: Bulk writes
+description: Write thousands of rows quickly, in few statements.
+---
+
+For large writes, these skip the model layer and go straight for speed.
+
+## InsertMany
+
+`InsertMany` writes many rows in multi-row statements, inside one transaction, and tells you how many went in. Generated keys come back, except with a conflict clause, where some rows may be skipped. It ignores relations and doesn't track the rows.
+
+```go
+// spot-next-line
+n, err := db.Users.InsertMany(ctx, users, ant.BatchSize(500))
+```
+
+It splits the work to fit the database's parameter limit, so a batch size bigger than one statement can hold still works. It's all or nothing, and keys are cleared if it fails.
+
+## UpdateMany
+
+`UpdateMany` writes a different value per row, for the columns you name. Fields you don't name are left alone.
+
+```go
+alice.Age, bob.Age = 31, 18
+
+// spot-next-line
+n, err := db.Users.UpdateMany(ctx, []*User{alice, bob}, ant.F(&U.Age))
+```
+
+Tracked entities keep their snapshots, so prefer `SaveChanges` for them.
+
+## InsertFrom
+
+`InsertFrom` copies rows with one statement, in the database.
+
+```go
+type Archive struct {
+	ID    int64
+	Title string
+	Tag   string
+}
+
+var A = ant.Fields[Archive]()
+
+// spot-start
+n, err := db.Archives.InsertFrom(ctx, ant.Project[Archive](
+	db.Posts.Where(ant.Eq(&P.Published, true)),
+	ant.Into(&A.Title, &P.Title),
+	ant.IntoExpr(&A.Tag, ant.SQL[string]("'archived'")),
+))
+// spot-end
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users    ant.Table[User]
+	Posts    ant.Table[Post]
+	Archives ant.Table[Archive]
+}
+```
+*/}
+
+## Truncate
+
+`Truncate` empties a table, faster than `Delete`. It fails on a table others still refer to, and it doesn't clear the tracker, so call `db.ClearTracked()` if you hold these rows.
+
+```go
+// spot-next-line
+err := db.Posts.Truncate(ctx)
+```
+
+## COPY on PostgreSQL
+
+`pgxext.Copy` is the fast path for loading many rows, through PostgreSQL's `COPY`. Timestamps are filled in, and keys from the database don't come back. It needs the `pgx` driver.
+
+```go
+// spot-next-line
+n, err := pgxext.Copy(ctx, db, users)
+```
+
+## Batches in one round trip
+
+`pgxext.Batch` sends statements together, as one transaction, so a failure undoes all of them. `UpdateSQL` and `DeleteSQL` build a statement without running it.
+
+```go
+// spot-next-line
+var batch pgxext.Batch
+
+// spot-start
+batch.Add(db.Users.Where(ant.Eq(&U.ID, alice.ID)).UpdateSQL(ctx, ant.Set(&U.Age, 41)))
+batch.Add(db.Users.Where(ant.Eq(&U.ID, bob.ID)).DeleteSQL(ctx))
+batch.Exec("UPDATE users SET age = age + 1 WHERE id = $1", alice.ID)
+
+affected, err := batch.Send(ctx, db)
+// spot-end
+```
+
+`affected` holds the rows each statement touched.
+
+<Tests path="writing/bulk_test.go" />

@@ -1,0 +1,52 @@
+---
+title: Sessions
+description: A cheap context with its own tracker, one per unit of work.
+---
+
+A session is a context on the same connections, with a tracker of its own. Call `ant.Open` once at startup, and take a session per request.
+
+## One per request
+
+```go
+func handle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// spot-next-line
+	session := ant.Session(db)
+
+	user, err := session.Users.Find(ctx, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+
+		return
+	}
+
+	user.Age++
+
+	// spot-next-line
+	err = session.SaveChanges(ctx)
+}
+```
+
+Each session saves only its own changes, and many can run at once. Observers registered on the root are shared.
+
+:::warning[Close the root only]
+
+A session shares the root's pool, so closing a session closes it for everyone. Close the context you got from `Open`, and only that one.
+
+:::
+
+## Options
+
+A session takes its settings from the root, and options change them for that session alone.
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
+
+// spot-next-line
+session := ant.Session(db, ant.WithTracking(true))
+```
+
+A session on a tracking-off root inherits that, so `SaveChanges` would have nothing to save. Pass `WithTracking(true)` to the sessions that write.
+
+<Tests path="change_tracking/sessions_test.go" />

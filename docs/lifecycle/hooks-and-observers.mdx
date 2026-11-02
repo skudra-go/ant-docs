@@ -1,0 +1,105 @@
+---
+title: Hooks and observers
+description: Run code around writes, by having methods with the right names.
+---
+
+A hook is a method on your model that runs inside the write. If it returns an error, the write is cancelled. An observer sits at the other end: it hears about the write after the commit.
+
+## Hooks
+
+A model gets a hook just by having a method with the right name. Use a pointer receiver, so whatever the hook changes on the entity gets saved.
+
+```go
+type Member struct {
+	ID    int64
+	Name  string
+	Email string
+}
+
+// spot-start
+func (m *Member) BeforeInsert(ctx context.Context) error {
+	m.Email = strings.ToLower(m.Email)
+
+	return nil
+}
+// spot-end
+```
+
+| Hook | Runs |
+| --- | --- |
+| `Validate` | Before every insert and update |
+| `BeforeInsert`, `AfterInsert` | Around an insert |
+| `BeforeUpdate`, `AfterUpdate` | Around a save that changed the entity |
+| `BeforeDelete`, `AfterDelete` | Around a delete |
+| `AfterLoad` | After a row is read |
+| `AfterInclude` | After its relations are loaded |
+
+## Refusing a write
+
+An error from a before hook stops the write. An error from an after hook undoes it, because hooks run inside the transaction.
+
+```go
+func (m *Member) BeforeDelete(ctx context.Context) error {
+	// spot-start
+	if m.Name == "protected" {
+		return errors.New("cannot delete")
+	}
+	// spot-end
+
+	return nil
+}
+```
+
+## What runs no hooks
+
+Bulk `Update` and `Delete`, `InsertMany`, and `Raw` don't run hooks, because they never load an entity to call them on. A save with nothing to save doesn't run any either.
+
+`ant.WithoutHooks` skips them for a single call, which is handy for seeding.
+
+```go
+// spot-next-line
+err := db.Members.Insert(ant.WithoutHooks(ctx), member)
+```
+
+{/*
+```go
+var member *Member
+
+type MembersDB struct {
+	ant.Context
+	Members ant.Table[Member]
+}
+```
+*/}
+
+:::warning[A hook cannot reach the transaction]
+
+A hook only gets a `context.Context`. Use one to check or refuse a write, not to write rows of its own. For that, see [auditing](/recipes/auditing).
+
+:::
+
+## Observers
+
+An observer hears about a write once it's committed, so it never sees one that rolled back. It waits for the outermost transaction to finish, and sessions share it. It can't change the write, which makes it a good fit for notifications and cache invalidation.
+
+```go
+// spot-start
+err := ant.Observe(db, ant.Observer[Member]{
+	Inserted: func(ctx context.Context, m *Member) { welcome(m) },
+	Updated:  func(ctx context.Context, m *Member) { refresh(m) },
+	Deleted:  func(ctx context.Context, m *Member) { refresh(m) },
+})
+// spot-end
+```
+
+{/*
+```go
+func welcome(m *Member) {}
+
+func refresh(m *Member) {}
+```
+*/}
+
+An observer runs in your process, so if the process crashes, it's gone. For anything that mustn't be lost, write an outbox row in the same transaction instead.
+
+<Tests path="lifecycle/hooks_test.go" />

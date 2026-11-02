@@ -1,0 +1,88 @@
+---
+title: Locks and hints
+description: Row locks, job queues, optimizer hints, and query comments.
+---
+
+A lock holds rows until the transaction ends, so locks belong inside a [`Tx`](/transactions).
+
+{/*
+```go
+type Job struct {
+	ID   int64
+	Done bool
+}
+
+var J = ant.Fields[Job]()
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Jobs  ant.Table[Job]
+}
+```
+*/}
+
+## Row locks
+
+```go
+err := db.Tx(ctx, func(tx *AppDB) error {
+	// spot-next-line
+	user, err := tx.Users.Where(ant.Eq(&U.ID, id)).ForUpdate().Single(ctx)
+	if err != nil {
+		return err
+	}
+
+	user.Age++
+
+	return tx.SaveChanges(ctx)
+})
+```
+
+| Method | Means |
+| --- | --- |
+| `ForUpdate()` | Lock for writing. Others wait |
+| `ForShare()` | Lock against writers. Other readers are fine |
+| `NoWait()` | Fail at once on a locked row |
+| `SkipLocked()` | Leave locked rows out |
+
+`ForUpdate` is always sent to the primary, even with [replicas](/transactions/connections#read-replicas).
+
+## A job queue
+
+`SkipLocked` lets each worker claim a row nobody else holds, so no job runs twice.
+
+```go
+err := db.Tx(ctx, func(tx *AppDB) error {
+	// spot-next-line
+	job, err := tx.Jobs.OrderBy(&J.ID).ForUpdate().SkipLocked().First(ctx)
+	if err != nil {
+		return err
+	}
+
+	job.Done = true
+
+	return tx.SaveChanges(ctx)
+})
+```
+
+Row locks depend on the database: see [databases](/reference/databases).
+
+## Optimizer hints
+
+`Hint` writes an optimizer hint at the start of a statement. PostgreSQL ignores hints unless you install the `pg_hint_plan` extension. A hint tends to outlive the reason for it, so prefer fixing the query.
+
+```go
+// spot-next-line
+users, err := db.Users.Query().Hint("SeqScan(users)").All(ctx)
+```
+
+## Query comments
+
+`Tag` adds a comment to the SQL, so a slow query is easy to spot in database logs. Neither `Tag` nor `Hint` can break out of its comment.
+
+```go
+// spot-next-line
+users, err := db.Users.Where(ant.Gt(&U.Age, 18)).Tag("dashboard: adults").All(ctx)
+```
+
+<Tests path="querying/locks_test.go" />

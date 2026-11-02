@@ -1,0 +1,95 @@
+---
+title: Projections
+description: Shape results into your own types, in Go or in SQL.
+---
+
+A projection turns rows into a struct of your own. There are two ways to do it, and the difference is where the work happens.
+
+| | `Select` | `Project` |
+| --- | --- | --- |
+| Runs | In Go, once per row | In SQL |
+| Fetches | Every column of each joined table | Only what you map |
+| Can use | Any Go code | Columns and expressions |
+
+## Select
+
+`Select` takes a typed closure on a join. It reads naturally and can run any Go you like, because Go can't look inside a closure to turn it into SQL.
+
+```go
+type Summary struct {
+	Author string
+	Title  string
+}
+
+summaries, err := db.Posts.
+	Join(&P.User).
+	Where(ant.Eq(&P.Published, true)).
+	// spot-start
+	Select(func(p *Post, u *User) Summary {
+		return Summary{u.Name, p.Title}
+	}).
+	// spot-end
+	All(ctx)
+```
+
+The result has `All`, `First`, and `Each`, and it is `[]Summary`, not a slice of pointers.
+
+## Project
+
+`Project` selects only the columns you map, so it's cheaper on wide tables. Each mapping is a pair of probes: where the value goes, then where it comes from.
+
+```go
+var S = ant.Fields[Summary]()
+
+// spot-start
+summaries, err := ant.Project[Summary](
+	db.Posts.Join(&P.User).Where(ant.Eq(&P.Published, true)),
+	ant.Into(&S.Author, &U.Name),
+	ant.Into(&S.Title, &P.Title),
+).All(ctx)
+// spot-end
+```
+
+`IntoExpr` maps an expression. A column that can be `NULL` needs a nullable destination.
+
+```go
+ant.Project[Summary](
+	db.Users.Where(ant.Eq(&U.Name, "Bob")),
+	// spot-next-line
+	ant.IntoExpr(&S.Author, ant.Upper(&U.Name)),
+)
+```
+
+## A computed field
+
+To keep whole models and add a value to each, tag a field `computed` and fill it with `With`. It's never written.
+
+```go
+type Author struct {
+	ID        int64
+	Name      string
+	Posts     []Post
+	// spot-next-line
+	PostCount int64 `ant:"computed"`
+}
+
+var A = ant.Fields[Author]()
+
+authors, err := db.Authors.
+	// spot-next-line
+	With(&A.PostCount, ant.CountRelated(&A.Posts)).
+	All(ctx)
+```
+
+{/*
+```go
+type PageDB struct {
+	ant.Context
+	Users   ant.Table[User]
+	Posts   ant.Table[Post]
+	Authors ant.Table[Author]
+}
+```
+*/}
+
+<Tests path="relations/project_test.go" />

@@ -1,0 +1,82 @@
+---
+title: Optimistic concurrency
+description: Detect conflicting writes without holding a lock.
+---
+
+Two people load the same row, and both save. By default the second save wins for the columns it changed. A version field makes it fail instead, so nobody overwrites work they never saw.
+
+## A version field
+
+`ant:"version"` starts at 1 and goes up with every save. A save only goes through if the row still has the version you loaded.
+
+```go
+type Page struct {
+	ID      int64
+	Title   string
+	// spot-next-line
+	Version int64 `ant:"version"`
+}
+```
+
+{/*
+```go
+type WikiDB struct {
+	ant.Context
+	Pages  ant.Table[Page]
+	Stocks ant.Table[Stock]
+}
+
+var page *Page
+```
+*/}
+
+## When writers collide
+
+```go
+one, two := ant.Session(db), ant.Session(db)
+
+a, err := one.Pages.Find(ctx, id)
+b, err := two.Pages.Find(ctx, id)
+
+a.Title = "first"
+err = one.SaveChanges(ctx) // fine
+
+b.Title = "second"
+// spot-next-line
+err = two.SaveChanges(ctx) // ant.ErrConcurrency
+```
+
+Bulk updates and deletes count as writes, and a delete checks the version too.
+
+## Handling a conflict
+
+`ant.ConcurrencyError` tells you which row it was. Reload it to see what's there now, and try again.
+
+```go
+err := db.SaveChanges(ctx)
+
+// spot-start
+var conflict *ant.ConcurrencyError
+
+if errors.As(err, &conflict) {
+	fmt.Println(conflict.Model, conflict.Key)
+
+	return db.Pages.Reload(ctx, page)
+}
+// spot-end
+```
+
+## A token you manage
+
+`ant:"token"` works the same way with a value your application sets, such as an ETag. A `NULL` token compares correctly too.
+
+```go
+type Stock struct {
+	ID       int64
+	Quantity int
+	// spot-next-line
+	ETag     *string `ant:"token"`
+}
+```
+
+<Tests path="lifecycle/concurrency_test.go" />

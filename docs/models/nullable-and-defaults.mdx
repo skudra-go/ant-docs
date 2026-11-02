@@ -1,0 +1,96 @@
+---
+title: Nullable columns and defaults
+description: Pointers, sql.Null, and the one place a zero value means something.
+---
+
+A plain field can't hold `NULL`, so ant never has to guess what a zero value means. Use a pointer or `sql.Null[T]` for any column that can be empty.
+
+## Nullable fields
+
+```go
+type Profile struct {
+	ID      int64
+	// spot-start
+	Bio     *string
+	Age     sql.Null[int64]
+	// spot-end
+	Website string
+}
+
+profile := &Profile{
+	// spot-start
+	Bio: new("Gopher"), // Go 1.26's new(expr)
+	Age: sql.Null[int64]{V: 30, Valid: true},
+	// spot-end
+}
+```
+
+`nil` is `NULL`, and a pointer to an empty string is an empty string. They come back from the database just as different as they went in.
+
+Reading `NULL` into a plain field is an error, not a quiet zero.
+
+## Querying for NULL
+
+`ant.Eq` with `nil` renders `IS NULL`, and a pointer value compares what it points to.
+
+```go
+// spot-start
+noBio, err := db.Users.Where(ant.Eq(&U.Bio, nil)).All(ctx)
+same, err := db.Users.Where(ant.IsNull(&U.Bio)).All(ctx)
+hasBio, err := db.Users.Where(ant.IsNotNull(&U.Bio)).All(ctx)
+gophers, err := db.Users.Where(ant.Eq(&U.Bio, new("Gopher"))).All(ctx)
+// spot-end
+```
+
+Setting works the same way, with `nil` writing `NULL`.
+
+```go
+// spot-next-line
+_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Bio, nil))
+```
+
+## Database defaults
+
+`ant:"default"` says a zero value in this field should be left to the column's default. After the insert, the value the database chose is copied back.
+
+```go
+type Account struct {
+	ID     int64
+	// spot-next-line
+	Status string `ant:"default"` // the column has DEFAULT 'new'
+}
+
+account := &Account{}
+
+err := db.Accounts.Insert(ctx, account)
+
+fmt.Println(account.Status) // "new"
+```
+
+Migrations need to know the default. `ant:"default=0"` is short for `b.Column(...).Default("0")`, and either one sets the column's `DEFAULT` too.
+
+```go
+func (Post) Configure(b *ant.ModelBuilder[Post]) {
+	// spot-next-line
+	b.Column(&P.Title).Default("'Untitled'")
+}
+```
+
+:::danger[A default makes zero mean "not set"]
+
+This is the one place ant does what it otherwise refuses to: treat zero as "not set". So only put a default on a field whose zero means nothing. With `Floor float64` and a default of `-100.00`, a real `0.00` silently becomes `-100.00`. Without a default, zero is written as zero.
+
+:::
+
+{/*
+```go
+type DefaultsDB struct {
+	ant.Context
+	Users    ant.Table[User]
+	Posts    ant.Table[Post]
+	Accounts ant.Table[Account]
+}
+```
+*/}
+
+<Tests path="model_definition/nullable_test.go" />

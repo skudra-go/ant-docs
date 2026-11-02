@@ -1,0 +1,47 @@
+---
+title: Diagnostics
+description: Warnings about N+1 patterns, slow requests, and row explosions.
+---
+
+Diagnostics warn about patterns no single query would show you. They count within a scope, usually one web request, and cost a little per statement.
+
+## Setting it up
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-start
+	ant.WithDiagnostics(ant.Diagnostics{
+		RepeatLimit: 10,
+		Budget:      500 * time.Millisecond,
+		Alert: func(ctx context.Context, a ant.Alert) {
+			slog.Warn("database", "kind", a.Kind, "message", a.Message, "sql", a.SQL)
+		},
+	}),
+	// spot-end
+)
+```
+
+The default `Alert` logs through slog.
+
+## A scope per request
+
+`ant.Watch` starts counting. Without a scope, repeats and budgets don't count.
+
+```go
+func middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// spot-next-line
+		next.ServeHTTP(w, r.WithContext(ant.Watch(r.Context())))
+	})
+}
+```
+
+## What it finds
+
+| `Kind` | Means |
+| --- | --- |
+| `repeated` | One statement ran more than `RepeatLimit` times in a scope, which is what N+1 looks like |
+| `budget` | Statements spent longer than `Budget` in total, which a slow-query log can't see if each is fast |
+| `cartesian` | A query joined two to-many relations, which multiplies rows. This warns with or without a scope |
+
+<Tests path="developer_tooling/diagnostics_test.go" />

@@ -1,0 +1,138 @@
+---
+title: Conditions
+description: Every way to filter rows, checked by the compiler.
+---
+
+A condition is a value of type `ant.Cond`. You build one from a field probe and pass it to `Where`, and the compiler checks that the value fits the column.
+
+## Comparing values
+
+```go
+users, err := db.Users.
+	// spot-next-line
+	Where(ant.Gte(&U.Age, 18)).
+	All(ctx)
+```
+
+Several conditions in one `Where` all have to match, and calling `Where` again adds more.
+
+```go
+users, err := db.Users.
+	// spot-start
+	Where(ant.Gte(&U.Age, 18), ant.Lt(&U.Age, 65)).
+	Where(ant.Ne(&U.Name, "Bob")).
+	// spot-end
+	All(ctx)
+```
+
+| Condition | Means |
+| --- | --- |
+| `ant.Eq(&U.Age, 18)` | equal |
+| `ant.Ne(&U.Age, 18)` | not equal |
+| `ant.Gt`, `ant.Gte` | greater than, or equal too |
+| `ant.Lt`, `ant.Lte` | less than, or equal too |
+| `ant.Between(&U.Age, 18, 65)` | in a range, ends included |
+| `ant.In(&U.Age, 18, 21)` | one of these |
+| `ant.NotIn(&U.Age, 18, 21)` | none of these |
+| `ant.Like(&U.Name, "A%")` | matches a pattern |
+| `ant.ILike(&U.Name, "a%")` | the same, ignoring case |
+| `ant.IsNull(&U.Bio)`, `ant.IsNotNull` | [empty or not](/models/nullable-and-defaults#querying-for-null) |
+
+`Gt` and the other orderings work on numbers, strings, and `time.Time`. A zero value is a real value here too: `ant.Eq(&U.Age, 0)` matches age zero.
+
+## Lists
+
+`In` is variadic, so a slice spreads into it.
+
+```go
+names := []string{"Alice", "Bob"}
+
+// spot-next-line
+users, err := db.Users.Where(ant.In(&U.Name, names...)).All(ctx)
+```
+
+:::warning[An empty list]
+
+`ant.In` with no values matches nothing, and `ant.NotIn` with no values matches everything. Both are correct, and the second is exactly why a [bulk write](/writing/update-and-delete#the-no-condition-guard) refuses a condition that can't exclude a row.
+
+:::
+
+## And, Or, Not
+
+```go
+// spot-start
+cond := ant.Or(
+	ant.Lt(&U.Age, 18),
+	ant.And(ant.Gt(&U.Age, 65), ant.Like(&U.Name, "A%")),
+)
+// spot-end
+
+users, err := db.Users.Where(cond, ant.Not(ant.Eq(&U.Name, "Bob"))).All(ctx)
+```
+
+Grouping follows the nesting. An empty `ant.And()` matches everything, and an empty `ant.Or()` matches nothing.
+
+## Comparing two columns
+
+`EqCol` compares columns, which is also how subqueries refer to the outer row. Both must have the same Go type.
+
+```go
+// spot-next-line
+sameDay, err := db.Users.Where(ant.EqCol(&U.CreatedAt, &U.UpdatedAt)).All(ctx)
+```
+
+## One value, several columns
+
+```go
+// spot-start
+either := ant.AnyOf("Bob", &U.Name, &U.Email)   // Bob in any of them
+both := ant.AllOf("Bob", &U.Name, &U.Email)     // Bob in all of them
+neither := ant.NoneOf("Bob", &U.Name, &U.Email) // Bob in none of them
+// spot-end
+
+users, err := db.Users.Where(either).All(ctx)
+```
+
+## Several columns as one
+
+`InTuples` matches pairs of values together, where `In` on each column separately would mix them up.
+
+```go
+// spot-start
+columns := []ant.FieldRef{ant.F(&U.Name), ant.F(&U.Age)}
+
+users, err := db.Users.
+	Where(ant.InTuples(columns, []any{"Alice", 30}, []any{"Bob", 17})).
+	All(ctx)
+// spot-end
+```
+
+## Dates
+
+These compare against the database's clock, so the results don't depend on your server's.
+
+```go
+// spot-start
+past := ant.Past(&U.CreatedAt)
+future := ant.Future(&U.CreatedAt)
+today := ant.Today(&U.CreatedAt)
+// spot-end
+
+users, err := db.Users.Where(today).All(ctx)
+```
+
+`ant.DatePart(&U.CreatedAt, "year")` reads part of a date as an [expression](/queries/expressions), on PostgreSQL.
+
+## Conditions as values
+
+A condition is an ordinary value, so you can give it a name and reuse it.
+
+```go
+// spot-next-line
+adults := ant.Gte(&U.Age, 18)
+
+count, err := db.Users.Where(adults).Count(ctx)
+users, err := db.Users.Where(adults).OrderBy(&U.Name).All(ctx)
+```
+
+<Tests path="querying" />

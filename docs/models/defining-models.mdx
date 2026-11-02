@@ -1,0 +1,133 @@
+---
+title: Defining models
+description: Structs, ant.Base, the context, and the naming conventions.
+---
+
+A model is just a struct. It doesn't need a base type, tags, or generated code.
+
+## A model
+
+```go
+// spot-start
+type Article struct {
+	ID    int64
+	Title string
+	Views int
+}
+// spot-end
+
+type BlogDB struct {
+	ant.Context
+	Articles ant.Table[Article]
+}
+
+var A = ant.Fields[Article]()
+```
+
+That maps to a table called `articles`, with `id` as a primary key the database generates.
+
+## `ant.Base`
+
+Embed `ant.Base` for the three fields most tables want. It's optional, and the fields behave like any others.
+
+```go
+type Article struct {
+	// spot-next-line
+	ant.Base
+	Title string
+}
+
+article := &Article{Title: "Hello"}
+
+err := db.Articles.Insert(ctx, article)
+
+// spot-next-line
+fmt.Println(article.ID, article.CreatedAt, article.UpdatedAt) // all filled in
+```
+
+There's nothing special about `ant.Base` itself: any model with a `CreatedAt` or `UpdatedAt` field gets the same [timestamps](/lifecycle/timestamps).
+
+## Naming conventions
+
+| Go | Database |
+| --- | --- |
+| `type OrderItem` | table `order_items` |
+| `UserID` | column `user_id` |
+| `HTTPPort` | column `http_port` |
+| `ID` | primary key `id` |
+
+:::note[Plurals are simple]
+
+ant adds `s`, or `es` after `s`, `x`, `ch`, and `sh`, and turns a consonant and `y` into `ies`. That gives `categories` for `Category`, but also `persons` for `Person` and `childs` for `Child`. Use `b.Table` when that reads wrong.
+
+:::
+
+## Overriding names
+
+A tag renames a column, and `Configure` renames a table.
+
+```go
+type Device struct {
+	ID   int64
+	// spot-next-line
+	Name string `ant:"column=display_name"`
+}
+
+func (Device) Configure(b *ant.ModelBuilder[Device]) {
+	// spot-next-line
+	b.Table("hardware")
+}
+```
+
+## Leaving a field out
+
+`ant:"-"` and unexported fields aren't columns, so they're never read, written, or queried.
+
+```go
+type Session struct {
+	ID     int64
+	Token  string
+	// spot-start
+	Cached string `ant:"-"`
+	secret string
+	// spot-end
+}
+```
+
+## Your own naming strategy
+
+`ant.WithNaming` replaces the conventions, which is useful for an existing database with its own style. A nil function keeps the default, and any name you set explicitly stays.
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-start
+	ant.WithNaming(ant.Naming{
+		Table:  func(name string) string { return "tbl_" + name },
+		Column: func(name string) string { return "col_" + name },
+	}),
+	// spot-end
+)
+```
+
+`ant.WithConvention` goes a step further and applies a rule to every model. `Configure` can still override it.
+
+```go
+rule := func(m *ant.ModelConvention) {
+	for _, f := range m.Fields() {
+		if f.Type.Kind() == reflect.String {
+			// spot-next-line
+			f.SetLength(100)
+		}
+	}
+}
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithConvention(rule))
+```
+
+:::warning[Set once per process]
+
+Models are reflected once per process, so naming and conventions are global, and they come from the first `Open`.
+
+:::
+
+<Tests path="model_definition" />

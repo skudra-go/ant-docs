@@ -1,0 +1,46 @@
+---
+title: Metrics and tracing
+description: Prometheus text with no dependencies, and OpenTelemetry in its own module.
+---
+
+Both are interceptors, so they see every statement, and neither adds a dependency to ant's root module.
+
+## Metrics
+
+The `metrics` package counts statements with no dependencies, and writes Prometheus text format, which most monitoring systems read.
+
+```go
+// spot-next-line
+m := metrics.New()
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(m))
+
+// spot-next-line
+http.Handle("/metrics", m)
+```
+
+`m.Snapshot()` returns the numbers as data, per kind of statement, so a few lines of your own can publish them through any meter.
+
+```go
+for _, s := range m.Snapshot() {
+	fmt.Println(s.Kind, s.Count, s.Errors, s.Duration)
+}
+```
+
+{/*
+```go
+var m *metrics.Metrics
+```
+*/}
+
+## OpenTelemetry
+
+Tracing is the module `github.com/skudra-go/ant/contrib/otel`, kept apart so the OpenTelemetry SDK stays out of ant's core.
+
+```go no-check
+tracer := otel.New(provider.Tracer("ant"))
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(tracer))
+```
+
+Each statement gets a span.

@@ -1,0 +1,134 @@
+---
+title: Field probes
+description: How &U.Age names a column, and what happens when it does not.
+---
+
+A probe is how ant points at a column without using a string. `&U.Age` is the column, and the compiler knows its type.
+
+## Declaring a probe
+
+Declare one per model, once, right next to the model. It never holds data, and asking for it again gives you the same probe.
+
+```go
+// spot-start
+var (
+	U = ant.Fields[User]()
+	P = ant.Fields[Post]()
+)
+// spot-end
+
+adults, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(ctx)
+```
+
+## What the compiler gives you
+
+`ant.Gt` is generic: `Gt[V Ordered](field *V, v V)`. `&U.Age` is a `*int`, which makes `V` an `int`, so the value has to be an `int` too.
+
+```go compile-fail
+// spot-next-line
+db.Users.Where(ant.Gt(&U.Age, "18"))
+```
+
+```text
+cannot use "18" (untyped string constant) as int value in argument to ant.Gt
+```
+
+It goes further than values. A typo is a compile error, and so is using the wrong kind of column for an operation.
+
+```go compile-fail
+// spot-start
+db.Users.Where(ant.Eq(&U.Nmae, "x"))
+db.Users.Where(ant.Like(&U.Age, "1%"))
+db.Users.Include(&U.Name)
+// spot-end
+```
+
+```text
+U.Nmae undefined (type *User has no field or method Nmae)
+in call to ant.Like, V (type int) does not satisfy ~string
+in call to db.Users.Include, type *string of &U.Name does not match *[]R (cannot infer R)
+```
+
+And because a probe is an ordinary field reference, renaming a field in your editor renames it in every query.
+
+## Reaching inside
+
+Probes follow promoted fields and embedded structs, so nested columns just work.
+
+{/*
+```go
+type Address struct {
+	City string
+}
+
+type Shop struct {
+	ID       int64
+	Shipping Address `ant:"embedded,prefix=shipping_"`
+}
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+	Shops ant.Table[Shop]
+}
+
+var S = ant.Fields[Shop]()
+```
+*/}
+
+```go
+db.Users.OrderBy(&U.CreatedAt) // promoted from ant.Base
+
+// spot-next-line
+db.Shops.Where(ant.Eq(&S.Shipping.City, "Oslo"))
+```
+
+## Field references
+
+A few calls take any number of columns of different types. `ant.F` turns a probe into a `FieldRef` for them.
+
+{/*
+```go
+type Grant struct {
+	UserID int64
+	Scope  string
+}
+
+var G = ant.Fields[Grant]()
+```
+*/}
+
+```go
+func (Grant) Configure(b *ant.ModelBuilder[Grant]) {
+	// spot-next-line
+	b.CompositeKey(ant.F(&G.UserID), ant.F(&G.Scope))
+}
+```
+
+## How it works
+
+`ant.Fields[User]()` allocates a single `User`, and `&U.Age` is an address inside it. Subtract the start of the probe and you get an offset. ant walks the struct with `reflect` once to learn which field lives at each offset.
+
+An offset alone isn't unique: `&U.Base` and `&U.ID` share an address, because `ID` is the first field of `Base`. So ant matches on address and type together.
+
+## What it cannot catch
+
+These compile, because a condition doesn't carry its model's type. They fail when the query runs instead, and [antvet](/tooling/antvet) flags them even sooner.
+
+```go
+age := 18
+
+// spot-start
+_, err := db.Users.Where(ant.Gt(&age, 18)).All(ctx)
+errors.Is(err, ant.ErrNotProbe) // true
+
+_, err = db.Posts.Where(ant.Gt(&U.Age, 18)).All(ctx)
+errors.Is(err, ant.ErrWrongModel) // true
+
+_, err = db.Posts.Where(ant.IsNull(&P.User)).All(ctx)
+errors.Is(err, ant.ErrNotColumn) // true: a relation is not a column
+// spot-end
+```
+
+<Tests path="model_definition/probes_test.go" />

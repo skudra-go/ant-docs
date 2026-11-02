@@ -1,0 +1,49 @@
+---
+title: Working in a team
+description: What happens when two branches add a migration, and squashing history.
+---
+
+When two branches each add a migration, they usually collide. ant catches every way that can happen.
+
+| What happened | What ant does | What to do |
+| --- | --- | --- |
+| The same version number | Every command refuses, and names both files | Renumber the one that hasn't been applied anywhere |
+| A snapshot merge conflict | The `latest` line changes with every migration, so this is on purpose | Take either side, keep both migrations, renumber if needed, then run `snapshot` |
+| A clean merge that lost the snapshot | `check` compares `latest` with the newest file, and fails if they differ | Run `snapshot` |
+| A migration older than what ran | `up` refuses it, because it was written against a schema that is gone | Renumber it, or set `Config.OutOfOrder` |
+
+`Config.Name = migrate.Timestamped` makes collisions rare, by naming files with the time.
+
+```go
+package main
+
+import (
+	"github.com/skudra-go/ant/dialect/postgres"
+	"github.com/skudra-go/ant/migrate"
+
+	"example.com/app/models"
+)
+
+func main() {
+	// spot-next-line
+	migrate.Main[models.AppDB](postgres.Dialect, migrate.Config{Name: migrate.Timestamped})
+}
+```
+
+## Squashing
+
+Long histories can be squashed. `squash` replaces every file with a single baseline.
+
+```bash
+go run ./cmd/migrate squash
+```
+
+The new file starts with `-- ant:replaces 0040`. A database that already has those migrations records it without running it, and a new database simply runs it, so no environment needs a special step. A database that hasn't reached `0040` yet is refused, and has to catch up from an older release first.
+
+:::warning[What a squash loses]
+
+A squash writes from the models, so anything written by hand is gone from the file, such as extensions, triggers, and data. The command warns about this. `--keep` joins the old files instead.
+
+:::
+
+<Tests path="migrations/team_test.go" />

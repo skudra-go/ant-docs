@@ -1,0 +1,48 @@
+type User struct {
+	ant.Base
+	Name  string
+	Email string `ant:"unique"`
+	Age   int
+	Bio   *string
+	Posts []Post
+}
+
+type Post struct {
+	ant.Base
+	UserID    int64
+	Title     string
+	Published bool
+	User      *User
+}
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+}
+
+var U = ant.Fields[User]()
+
+var P = ant.Fields[Post]()
+
+var ctx context.Context
+
+var db *AppDB
+
+var err error
+
+var dsn string
+
+var id int64
+
+var user *User
+
+var users []*User
+
+var post *Post
+
+var alice *User
+
+var bob *User
+
+var t *testing.T

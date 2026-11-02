@@ -1,0 +1,42 @@
+---
+title: Troubleshooting
+description: What each migration failure means, and what to do about it.
+---
+
+Every failure here stops before it can do more damage, and tells you what to fix.
+
+## A migration failed
+
+It ran in a transaction, so none of it stuck, and later migrations didn't run. The error names the file, the line, and what the database said. Fix the file and run `up` again.
+
+```text
+ant: migration 0002_add_post_slug failed and was rolled back: ERROR: could not create unique index "posts_slug_key" (SQLSTATE 23505)
+  Key (slug)=() is duplicated.
+```
+
+## A no-transaction migration failed partway
+
+Some of it may have run, so `up` refuses to continue. Look at the database, then pick one.
+
+- If you undid what ran, or the file can run again: fix the file, run `repair`, then `up`.
+- If you finished it by hand: run `repair`, then `baseline <version>`.
+
+## `applied migration was changed`
+
+Someone edited a file that has already run. Put it back, and make the change in a new migration. If the edit truly changes nothing, such as a comment, run `repair`. Line endings don't count as an edit.
+
+## `applied migration is missing`
+
+A file that ran is gone. Put it back. If this is a Go migration, make sure the program imports the package that registers it. `repair` forgets it, if it's gone on purpose.
+
+## `drift` reports something you did on purpose
+
+If it should be permanent, add it to the models and run `snapshot`, or put it in `Config.Ignore`.
+
+## `diff` wrote something you do not want
+
+Delete the file, and restore the snapshot.
+
+```bash
+git checkout migrations/versions/schema.snapshot.json
+```

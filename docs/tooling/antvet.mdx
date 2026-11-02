@@ -1,0 +1,23 @@
+---
+title: antvet
+description: A go vet analyzer for what the compiler cannot see.
+---
+
+Some mistakes compile, and only fail when the query runs. `antvet` finds them at build time instead.
+
+## Running it
+
+```bash
+go install github.com/skudra-go/ant/tools/antvet/cmd/antvet@latest
+go vet -vettool=$(which antvet) ./...
+```
+
+## What it reports
+
+| Check | Example |
+| --- | --- |
+| A field pointer that isn't a probe | `ant.Gt(&age, 18)` |
+| A probe of the wrong model | `db.Posts.Where(ant.Gt(&U.Age, 18))` |
+| A `Find` key of the wrong type | `db.Users.Find(ctx, "1")` |
+
+It doesn't check strings passed to `ant.Raw`, `ant.SQL`, and the like.

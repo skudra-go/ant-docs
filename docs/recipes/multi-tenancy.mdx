@@ -1,0 +1,127 @@
+---
+title: Multi-tenancy
+description: Keep customers apart in one database, in a way that cannot be forgotten.
+---
+
+To keep customers apart in one database, every query needs a tenant condition. The only reliable way is to make it impossible to forget.
+
+## A global filter
+
+A [filter](/lifecycle/global-filters) applies to every query of a model, and reaches joins, `Include`, `Has`, and subqueries by itself.
+
+```go
+type tenantKey struct{}
+
+func WithTenant(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, tenantKey{}, id)
+}
+
+func (Invoice) Configure(b *ant.ModelBuilder[Invoice]) {
+	// spot-start
+	b.Filter("tenant", func(ctx context.Context) ant.Cond {
+		id, ok := ctx.Value(tenantKey{}).(int64)
+		if !ok {
+			return ant.FailedCond(ErrNoTenant) // fail closed
+		}
+
+		return ant.Eq(&I.TenantID, id)
+	})
+	// spot-end
+}
+```
+
+{/*
+```go
+type Invoice struct {
+	Tenanted
+	ID    int64
+	Total int64
+}
+
+var I = ant.Fields[Invoice]()
+
+var ErrNoTenant = errors.New("no tenant in context")
+```
+*/}
+
+**Fail closed.** With no tenant in the context, the filter returns an error and the query fails. If it returned an empty condition instead, code that forgot to set a tenant would see every tenant's rows, which is the worst way this can go wrong.
+
+## Every model at once
+
+An embedded struct with `ConfigureMixin` brings the column, the filter, and the value on insert all at once, so a model can't get just part of it wrong.
+
+```go
+type Tenanted struct {
+	TenantID int64
+}
+
+func (Tenanted) ConfigureMixin(m *ant.Mixin) {
+	// spot-start
+	m.Filter("tenant", func(ctx context.Context) ant.Cond {
+		id, err := TenantOf(ctx)
+		if err != nil {
+			return ant.FailedCond(err)
+		}
+
+		return m.Eq("tenant_id", id)
+	})
+	// spot-end
+}
+
+func (t *Tenanted) BeforeInsert(ctx context.Context) error {
+	id, err := TenantOf(ctx)
+	// spot-next-line
+	t.TenantID = id
+
+	return err
+}
+
+func TenantOf(ctx context.Context) (int64, error) {
+	id, ok := ctx.Value(tenantKey{}).(int64)
+	if !ok {
+		return 0, ErrNoTenant
+	}
+
+	return id, nil
+}
+```
+
+Now a model only has to embed it.
+
+```go
+type Bill struct {
+	// spot-next-line
+	Tenanted
+	ID    int64
+	Total int64
+}
+```
+
+The [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) is built this way.
+
+## What a filter does not cover
+
+- `ant.Raw` runs your SQL as written, so a raw query has to name the tenant itself.
+- `q.IgnoreFilters()` turns filters off, on purpose, for admin tools. Search for it in reviews.
+- Unique constraints are per table, so a value unique per tenant needs the tenant in the key.
+
+```go
+func (Member) Configure(b *ant.ModelBuilder[Member]) {
+	// spot-next-line
+	b.Index(&M.TenantID).And(&M.Email).Unique()
+}
+```
+
+{/*
+```go
+type Member struct {
+	Tenanted
+	ID    int64
+	Email string
+}
+
+var M = ant.Fields[Member]()
+```
+*/}
+
+For a harder boundary, PostgreSQL's row-level security enforces the same rule in the database. Set the tenant per transaction with `SET LOCAL`, inside `db.Tx`.

@@ -1,0 +1,133 @@
+---
+title: Configure
+description: Override conventions in typed Go, on a method of the model.
+---
+
+Conventions and a few tags cover most models. When they don't, `Configure` is an optional method where you override them in typed Go. It runs once, when a context containing the model opens.
+
+## The method
+
+```go
+type Plan struct {
+	Slug  string
+	Title string
+}
+
+// spot-start
+func (Plan) Configure(b *ant.ModelBuilder[Plan]) {
+	b.Table("pricing_plans")
+	b.Key(&Pl.Slug)
+}
+// spot-end
+
+var Pl = ant.Fields[Plan]()
+```
+
+:::tip[Mistakes stop `Open`]
+
+An empty table name, a relation used as a key, or a probe from another model all fail as soon as the database opens, so you find out at startup, not in the middle of production traffic.
+
+:::
+
+## Columns
+
+`b.Column` describes what the database column looks like. It matters to migrations, not to queries.
+
+{/*
+```go
+type Article struct {
+	ID        int64
+	AuthorID  int64
+	Title     string
+	Slug      string
+	Body      string
+	Price     float64
+	Status    string
+	Views     int
+	Search    string
+	Note      *string
+	Code      string
+	Number    int64
+	Secret    string
+	Tags      postgres.Array[string]
+	CreatedAt time.Time
+	Published *time.Time
+}
+
+var A = ant.Fields[Article]()
+```
+*/}
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	// spot-start
+	b.Column(&A.Title).Length(200)          // varchar(200)
+	b.Column(&A.Price).Precision(10, 2)     // numeric(10,2)
+	b.Column(&A.Code).Fixed(4)              // char(4)
+	b.Column(&A.Status).Type("post_status") // any SQL type
+	b.Column(&A.Views).Default("0")         // a SQL expression
+	b.Column(&A.Note).Nullable()            // or NotNull()
+	b.Column(&A.Slug).Collation("C").Unique()
+	b.Column(&A.Search).Generated("to_tsvector('english', title)")
+	b.Column(&A.Secret).Comment("Never shown").Sensitive()
+	// spot-end
+}
+```
+
+A native enum and a table comment:
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	// spot-start
+	b.Column(&A.Status).Enum("post_status", "draft", "live")
+	b.Comment("Published articles")
+	// spot-end
+}
+```
+
+## Indexes
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	// spot-start
+	b.Index(&A.AuthorID).And(&A.CreatedAt).Desc() // composite, descending
+	b.Index(&A.Slug).Unique()
+	b.Index(&A.Published).Where("deleted_at IS NULL").Name("posts_live_idx")
+	b.Index(&A.Tags).Using("gin")
+	b.IndexExpr("lower(title)").Name("posts_title_lower_idx")
+	b.Index(&A.Body).Include(&A.Title).Concurrently()
+	// spot-end
+}
+```
+
+`.Concurrently()` makes the migration run outside a transaction, so the index builds without blocking writes.
+
+## Check constraints
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	// spot-next-line
+	b.Check("articles_views_positive", "views >= 0")
+}
+```
+
+## Relations
+
+`Configure` is also where you declare relations that names can't find. See [declaring relations](/relations/declaring).
+
+## Everything else
+
+`Configure` is home to everything else a model can say about itself:
+
+| Call | Page |
+| --- | --- |
+| `b.Key`, `b.CompositeKey`, `b.NoKey`, `b.KeyName` | [Keys](/models/keys) |
+| `b.Discriminator`, `b.View`, `b.Schema` | [Shared tables and views](/models/shared-tables-and-views) |
+| `b.Filter` | [Global filters](/lifecycle/global-filters) |
+| `b.Validate` | [Validation](/lifecycle/validation) |
+| `b.Comparer` | [SaveChanges](/tracking/save-changes#custom-comparers) |
+| `b.NoTimestamps` | [Timestamps](/lifecycle/timestamps) |
+| `b.PartitionByRange`, `b.PartitionByList`, `b.PartitionByHash` | [Partitioned tables](/recipes/partitioned-tables) |
+| `b.ExcludeFromMigrations` | [Models to tables](/migrations/models-to-tables) |
+
+<Tests path="model_definition/configure_test.go" />

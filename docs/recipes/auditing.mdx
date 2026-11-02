@@ -1,0 +1,94 @@
+---
+title: Auditing
+description: Four places to record what happened, and which one fits.
+---
+
+ant gives you four places to record what happened. Which one fits depends on what you need to know.
+
+{/*
+```go
+type Order struct {
+	ID int64
+}
+
+type AuditEntry struct {
+	ID      int64
+	Action  string
+	Subject int64
+}
+
+type AppDB struct {
+	ant.Context
+	Users    ant.Table[User]
+	Orders   ant.Table[Order]
+	AuditLog ant.Table[AuditEntry]
+}
+
+var order *Order
+```
+*/}
+
+| You need | Use |
+| --- | --- |
+| Field-level history of `SaveChanges` | `SaveInterceptor` |
+| A record that can't disagree with the data | A row in the same `Tx` |
+| A reaction after the commit | `Observer` |
+| Delivery that survives a crash | An outbox row and a worker |
+| Bulk writes and raw SQL too | `Interceptor`, or a database trigger |
+
+## What changed, field by field
+
+A [`SaveInterceptor`](/tooling/interceptors#watching-saves) sees every `SaveChanges` before it writes. An error cancels the save.
+
+```go
+type AuditTrail struct {
+	log *slog.Logger
+}
+
+func (a *AuditTrail) Before(ctx context.Context, _ *ant.Statement) (context.Context, error) {
+	return ctx, nil
+}
+
+func (a *AuditTrail) After(context.Context, *ant.Statement, ant.Outcome) {}
+
+// spot-start
+func (a *AuditTrail) SavingChanges(ctx context.Context, changes []ant.Change) error {
+	for _, c := range changes {
+		a.log.Info("saving", "model", c.Model, "state", c.State.String(), "fields", c.Changed)
+	}
+
+	return nil
+}
+// spot-end
+```
+
+To record old values too, read them with `ant.Original(ant.Entry(db, user), &U.Age)`.
+
+## A row in the same transaction
+
+For a record that can never disagree with the data, write it in the same transaction as the change. Either both commit, or neither does.
+
+```go
+err := db.Tx(ctx, func(tx *AppDB) error {
+	if err := tx.Orders.Insert(ctx, order); err != nil {
+		return err
+	}
+
+	// spot-next-line
+	return tx.AuditLog.Insert(ctx, &AuditEntry{Action: "order.created", Subject: order.ID})
+})
+```
+
+A hook runs inside the write too, but it only gets a `context.Context`, with no way to reach the transaction. Use hooks to check or refuse, not to write rows.
+
+## After it happened
+
+An [observer](/lifecycle/hooks-and-observers#observers) runs after the commit, and never hears about a rollback. It runs in the process, and is gone if it crashes. For anything that must not be lost, write an outbox row in the transaction, as the [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) does, and let a worker send it.
+
+## Every statement
+
+An [`Interceptor`](/tooling/interceptors) sees every statement, including bulk writes and raw SQL, in SQL rather than entities.
+
+Bulk `Update` and `Delete`, `InsertMany`, and `Raw` don't run hooks or a `SaveInterceptor`, because they never load an entity. Only a database trigger sees everything, including someone typing into `psql`.
+
+For a whole audit service, see the [audit example](https://github.com/skudra-go/ant-examples/tree/main/examples/audit).

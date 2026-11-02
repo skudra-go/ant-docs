@@ -1,0 +1,85 @@
+---
+title: Embedded structs and mixins
+description: Group columns in a struct, and share configuration between models.
+---
+
+A struct can group columns without being a table of its own. A mixin is one that brings its configuration along with it.
+
+## Anonymous embedding
+
+The embedded struct's fields become the model's columns, the same way `ant.Base` works.
+
+```go
+type Audit struct {
+	CreatedBy string
+}
+
+type Shop struct {
+	// spot-next-line
+	Audit
+	ID   int64
+	Name string
+}
+```
+
+## Named groups, with a prefix
+
+The `embedded` tag does the same for a named field, and `prefix` keeps two of them apart.
+
+```go
+type Address struct {
+	City string
+	Zip  string
+}
+
+type Shop struct {
+	ID       int64
+	// spot-start
+	Billing  Address `ant:"embedded,prefix=billing_"`
+	Shipping Address `ant:"embedded,prefix=shipping_"`
+	// spot-end
+}
+
+var S = ant.Fields[Shop]()
+
+// spot-next-line
+oslo, err := db.Shops.Where(ant.Eq(&S.Shipping.City, "Oslo")).All(ctx)
+```
+
+{/*
+```go
+type ShopsDB struct {
+	ant.Context
+	Shops ant.Table[Shop]
+}
+```
+*/}
+
+That table has `billing_city`, `billing_zip`, `shipping_city`, and `shipping_zip`. Tracking works per column, so changing `Billing.Zip` writes one column. Embedding nests too.
+
+## Mixins
+
+A mixin is an embedded struct with a `ConfigureMixin` method. It works by column name, without knowing who embeds it, which suits anything many models share.
+
+```go
+type Created struct {
+	Created int64
+}
+
+// spot-start
+func (Created) ConfigureMixin(m *ant.Mixin) {
+	m.Index("created").Name(m.Table() + "_created_idx")
+	m.Check(m.Table()+"_created_positive", "created >= 0")
+}
+// spot-end
+
+type Event struct {
+	ID int64
+	// spot-next-line
+	Created
+}
+```
+
+A mixin can add a [global filter](/lifecycle/global-filters) too, which is how [multi-tenancy](/recipes/multi-tenancy) stays impossible to forget. A hook method on the mixin is promoted to every model that embeds it.
+
+<Tests path="model_definition/embedded_test.go" />

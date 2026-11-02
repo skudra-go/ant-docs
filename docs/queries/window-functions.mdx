@@ -1,0 +1,77 @@
+---
+title: Window functions
+description: Compute over related rows without collapsing them.
+---
+
+A window function computes across a set of rows and keeps every row, where `GROUP BY` would collapse them. The results come back through [`Project`](/queries/projections).
+
+## A running position
+
+```go
+type Ranked struct {
+	Name     string
+	Position int64
+}
+
+var R = ant.Fields[Ranked]()
+
+// spot-next-line
+byAge := ant.OrderedBy(ant.Col(&U.Age).Asc(), ant.Col(&U.Name).Asc())
+
+rows, err := ant.Project[Ranked](
+	db.Users.OrderBy(&U.Name),
+	ant.Into(&R.Name, &U.Name),
+	// spot-next-line
+	ant.IntoExpr(&R.Position, ant.RowNumber().Over(byAge)),
+).All(ctx)
+```
+
+## Defining a window
+
+`ant.OrderedBy` orders the rows, and `ant.PartitionBy` restarts for each group.
+
+```go
+// spot-next-line
+perAge := ant.PartitionBy(&U.Age).OrderBy(ant.Col(&U.Name).Asc())
+
+position := ant.RowNumber().Over(perAge)
+```
+
+## The functions
+
+| Function | Gives |
+| --- | --- |
+| `ant.RowNumber()` | 1, 2, 3, 4 |
+| `ant.Rank()` | 1, 2, 2, 4: gaps after ties |
+| `ant.DenseRank()` | 1, 2, 2, 3: no gaps |
+| `ant.Lag(&U.Age)` | the previous row's value, `NULL` for the first |
+| `ant.Lead(&U.Age)` | the next row's value, `NULL` for the last |
+
+Any aggregate works as a window too, which is how you get a running total.
+
+```go
+type Running struct {
+	Total    int
+	Previous sql.Null[int]
+}
+
+var T = ant.Fields[Running]()
+
+rows, err := ant.Project[Running](
+	db.Users.OrderBy(&U.Name),
+	// spot-start
+	ant.IntoExpr(&T.Total, ant.Sum(&U.Age).Over(byAge)),
+	ant.IntoExpr(&T.Previous, ant.Lag(&U.Age).Over(byAge)),
+	// spot-end
+).All(ctx)
+```
+
+`Over` needs a function: `ant.Col(&U.Age).Over(w)` is an error.
+
+{/*
+```go
+var byAge = ant.OrderedBy(ant.Col(&U.Age).Asc())
+```
+*/}
+
+<Tests path="querying/window_test.go" />

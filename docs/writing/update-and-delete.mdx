@@ -1,0 +1,127 @@
+---
+title: Update and delete
+description: Bulk writes with explicit assignments, and the guard that stops accidents.
+---
+
+`Update` and `Delete` write straight to the database, without loading anything, and tell you how many rows they touched. To change things you've loaded, use [`SaveChanges`](/tracking/save-changes).
+
+## Update
+
+Every assignment is explicit, so zero values and `nil` are written like any other.
+
+```go
+n, err := db.Users.
+	Where(ant.Eq(&U.ID, id)).
+	// spot-next-line
+	Update(ctx, ant.Set(&U.Age, 0), ant.Set(&U.Bio, nil))
+```
+
+```sql
+UPDATE "users" SET "age" = $1, "bio" = $2, "updated_at" = $3 WHERE "users"."id" = $4
+```
+
+`UpdatedAt` moves by itself. An explicit `ant.Set(&U.UpdatedAt, t)` wins.
+
+## Values from the row
+
+`Inc` and `Dec` run in the database, so two writers can't lose each other's update. `SetExpr` assigns any expression, a subquery included.
+
+```go
+// spot-start
+_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Inc(&U.Age, 1))
+
+_, err = db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.SetExpr(&U.Email, ant.Lower(&U.Name)))
+
+oldest := ant.SubExpr(db.Users.Where(), ant.Max(&U.Age)).Expr()
+
+_, err = db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.SetExpr(&U.Age, oldest))
+// spot-end
+```
+
+## Delete
+
+```go
+// spot-next-line
+n, err := db.Users.Where(ant.Lt(&U.Age, 18)).Delete(ctx)
+```
+
+On a model with [soft deletes](/lifecycle/soft-deletes) this marks rows instead of removing them. Conditions can use relations, which is how to delete with a join.
+
+```go
+// spot-next-line
+n, err := db.Users.Where(ant.HasNone(&U.Posts)).Delete(ctx)
+```
+
+One row by key is `DeleteByID`, which returns `ant.ErrNotFound` if there's no such row.
+
+```go
+// spot-next-line
+err := db.Users.DeleteByID(ctx, id)
+```
+
+## The no-condition guard
+
+A bulk write with no condition is refused with `ant.ErrNoCondition`, because a forgotten filter would otherwise change the whole table. `Unfiltered` says you really mean it.
+
+```go
+// spot-start
+_, err := db.Users.Query().Delete(ctx) // ant.ErrNoCondition
+
+n, err := db.Users.Unfiltered().Delete(ctx) // every row, on purpose
+// spot-end
+```
+
+The guard also sees through conditions that can't exclude a row. Those are the dangerous ones, because the code looks filtered.
+
+```go
+var none []string
+
+// spot-start
+_, err := db.Users.Where(ant.And()).Delete(ctx)                  // refused
+_, err = db.Users.Where(ant.NotIn(&U.Name, none...)).Delete(ctx) // refused
+// spot-end
+
+n, err := db.Users.Where(ant.In(&U.Name, none...)).Delete(ctx) // fine: deletes nothing
+```
+
+A `When` that was skipped leaves the guard on too.
+
+## Limiting a write
+
+`Limit` and `Offset` bound a bulk write, oldest first with an ordering.
+
+```go
+// spot-next-line
+n, err := db.Users.Where(ant.Lt(&U.Age, 18)).OrderBy(&U.CreatedAt).Limit(100).Delete(ctx)
+```
+
+## Getting the rows back
+
+`UpdateReturning` and `DeleteReturning` give back what they touched. Support varies: see [databases](/reference/databases).
+
+```go
+// spot-start
+changed, err := db.Users.Where(ant.Gt(&U.Age, 18)).UpdateReturning(ctx, ant.Inc(&U.Age, 1))
+
+removed, err := db.Users.Where(ant.Eq(&U.Name, "Bob")).DeleteReturning(ctx)
+// spot-end
+```
+
+## Reloading an entity
+
+`Reload` replaces an entity's columns with what is stored now, discarding unsaved changes. Relations are left alone.
+
+```go
+_, err := db.Users.Where(ant.Eq(&U.ID, user.ID)).Update(ctx, ant.Set(&U.Age, 41))
+
+// spot-next-line
+err = db.Users.Reload(ctx, user)
+```
+
+:::note[Bulk writes skip the model layer]
+
+`Update` and `Delete` run no hooks and no `SaveInterceptor`, because they load no entities, and a bulk update doesn't touch tracked structs. They do apply [global filters](/lifecycle/global-filters) and timestamps.
+
+:::
+
+<Tests path="writing" />

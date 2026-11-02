@@ -1,0 +1,69 @@
+---
+title: Logging
+description: Statements through log/slog, with values kept out by default.
+---
+
+`ant.WithLogger` logs statements through `log/slog`. Values stay out of the logs unless you opt in, and there's a test that proves it.
+
+## Turning it on
+
+```go
+logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelDebug,
+}))
+
+// spot-next-line
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithLogger(logger))
+```
+
+Statements log at debug, slow ones at warning, and failures at error.
+
+## Slow queries
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-next-line
+	ant.WithLogger(logger, ant.SlowThreshold(200*time.Millisecond)),
+)
+```
+
+## Values
+
+`ant.LogValues` puts values in logs, for development.
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-next-line
+	ant.WithLogger(logger, ant.LogValues()),
+)
+```
+
+`.Sensitive()` keeps a column out even then, on inserts, updates, `Set`, and conditions. It logs as `[redacted]`.
+
+```go
+type Account struct {
+	ID       int64
+	Password string
+}
+
+func (Account) Configure(b *ant.ModelBuilder[Account]) {
+	// spot-next-line
+	b.Column(&A.Password).Sensitive()
+}
+
+var A = ant.Fields[Account]()
+```
+
+{/*
+```go
+var logger *slog.Logger
+```
+*/}
+
+:::warning[Limits]
+
+`ant.SQL` arguments aren't covered by `.Sensitive()`, since ant can't tell which column they belong to. And a database error's message can quote a value, so don't return `err.Error()` to users.
+
+:::
+
+<Tests path="developer_tooling/logging_test.go" />

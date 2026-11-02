@@ -1,0 +1,75 @@
+---
+title: Composing queries
+description: Reuse queries, add to them conditionally, and name them.
+---
+
+Builder methods always return a new query, so one query can be the starting point for others, and a function can hand back part of one.
+
+## Queries are values
+
+```go
+// spot-next-line
+adults := db.Users.Where(ant.Gt(&U.Age, 18)).OrderBy(&U.Name)
+
+alice, err := adults.Where(ant.Eq(&U.Name, "Alice")).All(ctx)
+carol, err := adults.Where(ant.Eq(&U.Name, "Carol")).All(ctx)
+
+// adults is unchanged, and can run again.
+everyone, err := adults.All(ctx)
+```
+
+## Conditional parts
+
+`When` only adds to a query if a condition holds at run time, so a search form doesn't need a chain of `if`s.
+
+```go
+func search(ctx context.Context, name string, adultsOnly bool) ([]*User, error) {
+	return db.Users.
+		OrderBy(&U.Name).
+		// spot-start
+		When(name != "", func(q *ant.Query[User]) *ant.Query[User] {
+			return q.Where(ant.Eq(&U.Name, name))
+		}).
+		When(adultsOnly, func(q *ant.Query[User]) *ant.Query[User] {
+			return q.Where(ant.Gte(&U.Age, 18))
+		}).
+		// spot-end
+		All(ctx)
+}
+```
+
+## Scopes
+
+A scope is a named, reusable piece of a query. It's just a function that takes a query and returns one.
+
+```go
+// spot-start
+func Adults(q *ant.Query[User]) *ant.Query[User] {
+	return q.Where(ant.Gte(&U.Age, 18))
+}
+
+func OlderFirst(q *ant.Query[User]) *ant.Query[User] {
+	return q.OrderByDesc(&U.Age)
+}
+// spot-end
+
+users, err := db.Users.Scope(Adults, OlderFirst).All(ctx)
+```
+
+For a scope with parameters, write a function that returns one.
+
+```go
+// spot-start
+func OlderThan(age int) func(*ant.Query[User]) *ant.Query[User] {
+	return func(q *ant.Query[User]) *ant.Query[User] {
+		return q.Where(ant.Gt(&U.Age, age))
+	}
+}
+// spot-end
+
+users, err := db.Users.Scope(OlderThan(30)).All(ctx)
+```
+
+You apply scopes by hand. For a condition that should apply to every query of a model, use a [global filter](/lifecycle/global-filters) instead.
+
+<Tests path="querying/when_test.go" />

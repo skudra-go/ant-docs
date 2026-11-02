@@ -1,0 +1,63 @@
+---
+title: Generated SQL
+description: Warnings, renames, new required columns, and editing the result.
+---
+
+`diff` gives you a starting point, and the file is yours from then on. It flags anything risky, and takes care of the cases that usually go wrong.
+
+## Warnings
+
+Anything that could lose data or fail gets a comment above the statement, and shows up in the command's output too.
+
+```sql
+-- spot-next-line
+-- WARNING: this drops column users.bio and its data.
+ALTER TABLE "users" DROP COLUMN "bio";
+```
+
+## New required columns
+
+A new `NOT NULL` column has to put something in the rows that already exist. ant fills them with the field's zero value, then drops the default, so the column ends up exactly as the model declares it. If zero is the wrong value, edit it.
+
+```sql
+-- WARNING: existing rows of users get 0 in age. Change the DEFAULT below to fill them differently.
+-- spot-start
+ALTER TABLE "users" ADD COLUMN "age" bigint NOT NULL DEFAULT 0;
+ALTER TABLE "users" ALTER COLUMN "age" DROP DEFAULT;
+-- spot-end
+```
+
+## Renames
+
+A renamed column looks exactly like one dropped and one added, and only you know which you meant. In a terminal, `diff` asks you. Elsewhere, tell it with a flag, which you can repeat.
+
+```bash
+go run ./cmd/migrate diff rename_bio --rename users.bio=about
+go run ./cmd/migrate diff rename_table --rename users=people
+```
+
+If you do neither, the file warns you and shows the statement to use instead. Constraints and indexes follow a rename on their own, and they're renamed, not rebuilt.
+
+## Editing the file
+
+Here's the most common reason to edit one. `slug` is required and unique, and as generated, the file would give every existing post the same empty slug.
+
+```sql
+ALTER TABLE "posts" ADD COLUMN "slug" text;
+-- spot-next-line
+UPDATE "posts" SET "slug" = lower(regexp_replace("title", '[^a-zA-Z0-9]+', '-', 'g'));
+ALTER TABLE "posts" ALTER COLUMN "slug" SET NOT NULL;
+ALTER TABLE "posts" ADD CONSTRAINT "posts_slug_key" UNIQUE ("slug");
+```
+
+The snapshot records your models, not the SQL, so an edit that reaches the same schema doesn't change anything else. `drift` will confirm it did.
+
+## Changing a file before it ships
+
+If `diff` wrote something you don't want, delete the file and restore the snapshot.
+
+```bash
+git checkout migrations/versions/schema.snapshot.json
+```
+
+<Tests path="migrations/diff_test.go" />

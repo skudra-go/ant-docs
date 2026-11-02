@@ -1,0 +1,99 @@
+---
+title: Soft deletes
+description: Keep deleted rows, hidden, so a mistake can be undone.
+---
+
+A soft delete keeps the row but hides it, so a mistake can be undone. Add a field of type `ant.DeletedAt`, and the rest follows on its own.
+
+## Turning it on
+
+```go
+type Note struct {
+	ant.Base
+	Text      string
+	// spot-next-line
+	DeletedAt ant.DeletedAt
+}
+
+var N = ant.Fields[Note]()
+```
+
+From then on, `Delete`, `DeleteByID`, and `ant.Remove` mark the row instead of removing it. Every query skips marked rows, including `Find`, `Count`, `Include`, `Has`, joins, and subqueries.
+
+```go
+// spot-next-line
+n, err := db.Notes.Where(ant.Eq(&N.Text, "draft")).Delete(ctx) // marks it
+
+all, err := db.Notes.All(ctx) // live rows only
+```
+
+{/*
+```go
+type NotesDB struct {
+	ant.Context
+	Notes ant.Table[Note]
+}
+```
+*/}
+
+A second delete changes nothing.
+
+## Seeing deleted rows
+
+```go
+// spot-start
+every, err := db.Notes.WithDeleted().All(ctx)
+gone, err := db.Notes.OnlyDeleted().All(ctx)
+// spot-end
+```
+
+## Undoing, and really deleting
+
+```go
+// spot-start
+n, err := db.Notes.Where(ant.Eq(&N.Text, "draft")).Restore(ctx)
+
+n, err = db.Notes.WithDeleted().Where(ant.Eq(&N.Text, "draft")).ForceDelete(ctx)
+// spot-end
+```
+
+`Restore` on a model with no `DeletedAt` is `ant.ErrNotSoftDeleted`.
+
+## When a row was deleted
+
+`&N.DeletedAt.V` names the column as a time. A row that was never deleted holds `NULL`, so `Lt` leaves it out.
+
+```go
+cutoff := time.Now().AddDate(0, -3, 0)
+
+// spot-next-line
+stale, err := db.Notes.OnlyDeleted().Where(ant.Lt(&N.DeletedAt.V, cutoff)).Count(ctx)
+```
+
+## Clearing out old rows
+
+`Prune` removes rows for good, soft-deleted or not, in batches, so it never holds one long transaction open.
+
+```go
+// spot-next-line
+removed, err := db.Notes.Prune(ctx, ant.Lt(&N.DeletedAt.V, cutoff))
+```
+
+{/*
+```go
+var cutoff time.Time
+```
+*/}
+
+## Unique values
+
+A soft-deleted row still holds its values, so a plain unique constraint stops anyone reusing that email. Index only the live rows instead.
+
+```go
+func (User) Configure(b *ant.ModelBuilder[User]) {
+	// spot-next-line
+	b.Index(&U.Email).Unique().Where("deleted_at IS NULL")
+}
+```
+
+<Tests path="lifecycle/soft_delete_test.go" />

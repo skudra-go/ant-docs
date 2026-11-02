@@ -1,0 +1,84 @@
+---
+title: Validation
+description: Check entities before they are written.
+---
+
+Validation runs before every insert and update, and a failure stops the write. It runs at the same point as [hooks](/lifecycle/hooks-and-observers), so bulk writes skip it, and so does `ant.WithoutHooks`.
+
+## A Validate method
+
+For rules that span fields, give the model a `Validate` method.
+
+```go
+type Signup struct {
+	ID    int64
+	Name  string
+	Email string
+	Age   int
+}
+
+// spot-start
+func (s *Signup) Validate(ctx context.Context) error {
+	if s.Name == "" {
+		return errors.New("name is required")
+	}
+
+	return nil
+}
+// spot-end
+```
+
+## Field rules
+
+`b.Validate` attaches a rule to a single field, typed to that field. The `validate` package has the common ones ready to go.
+
+```go
+func (Signup) Configure(b *ant.ModelBuilder[Signup]) {
+	// spot-start
+	b.Validate(&S.Name, validate.All(validate.Required[string](), validate.MaxLength(50)))
+	b.Validate(&S.Email, validate.Email)
+	b.Validate(&S.Age, validate.Range(0, 150))
+	// spot-end
+}
+
+var S = ant.Fields[Signup]()
+```
+
+| Rule | Checks |
+| --- | --- |
+| `validate.Required[V]()` | Not the zero value |
+| `validate.Email` | A valid address |
+| `validate.MinLength(n)`, `validate.MaxLength(n)` | String length |
+| `validate.Range(low, high)` | Between two values |
+| `validate.OneOf(a, b, c)` | One of these |
+| `validate.Matches(pattern)` | Matches a `*regexp.Regexp` |
+| `validate.All(rules...)` | All of them |
+
+A rule is just a `func(V) error`, so writing your own is easy.
+
+## Reading the error
+
+A failed rule comes back as an `ant.ValidationError`, which tells you the field.
+
+```go
+err := db.Signups.Insert(ctx, &Signup{Email: "a@example.com"})
+
+// spot-start
+var invalid *ant.ValidationError
+
+if errors.As(err, &invalid) {
+	fmt.Println(invalid.Field, invalid.Err) // Name, and why
+}
+// spot-end
+```
+
+{/*
+```go
+type SignupDB struct {
+	ant.Context
+	Signups ant.Table[Signup]
+}
+```
+*/}
+
+<Tests path="lifecycle/validate_test.go" />

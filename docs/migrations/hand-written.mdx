@@ -1,0 +1,103 @@
+---
+title: Hand-written changes
+description: Views, functions, data migrations, seeds, and statements outside a transaction.
+---
+
+Some things your models can't express. Each section here is a home for one of them.
+
+{/*
+```go
+type Role struct {
+	ID   int64
+	Name string
+}
+
+var R = ant.Fields[Role]()
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Roles ant.Table[Role]
+}
+```
+*/}
+
+## An empty migration
+
+`diff --empty` writes a blank file for extensions, types, triggers, or anything else. Your models and snapshot stay as they are, and if the models changed too, `snapshot` accepts them.
+
+```bash
+go run ./cmd/migrate diff enable_citext --empty
+```
+
+## Views and functions
+
+Files in `migrations/code` run after the versioned ones, in name order, and again whenever they change. That way the file stays the one definition of the view or function, and git keeps its history. Number them if one depends on another, as in `10_views/` and `20_functions/`. Each file has to be safe to run again.
+
+```sql title="migrations/code/10_post_stats.sql"
+-- spot-start
+DROP VIEW IF EXISTS post_stats;
+CREATE VIEW post_stats AS SELECT user_id, count(*) AS posts FROM posts GROUP BY user_id;
+-- spot-end
+```
+
+## Data, in Go
+
+For changes SQL can't express, register a migration in Go. It runs once, in order with the files, inside a transaction, and `tx` is your context bound to it.
+
+```go
+func init() {
+	// spot-start
+	migrate.Register[AppDB](
+		"0005_split_names",
+		func(ctx context.Context, tx *AppDB) error {
+			_, err := ant.Raw[any](tx, "UPDATE users SET name = trim(name)").Exec(ctx)
+
+			return err
+		},
+	)
+	// spot-end
+}
+```
+
+Put it in a package that both `cmd/migrate` and any program calling `migrate.Up` import. A model describes today's schema, not the schema at that point in history, so prefer `ant.Raw` in code that has to outlive a model change. For work too big for one transaction, add `migrate.NoTransaction` and commit in batches.
+
+## Statements that refuse a transaction
+
+`-- ant:no-transaction` at the top of a file runs it without one, a statement at a time. `.Concurrently()` on an index adds it for you.
+
+```sql
+-- spot-next-line
+-- ant:no-transaction
+CREATE INDEX CONCURRENTLY "posts_title_idx" ON "posts" ("title");
+```
+
+If such a file fails partway, `up` stops until someone has looked: see [troubleshooting](/migrations/troubleshooting).
+
+## Seed data
+
+`seed` runs Go seeders, each in its own transaction, with model hooks off. They run whenever you ask, so write them to be safe to repeat.
+
+```go
+func init() {
+	// spot-start
+	migrate.Seed[AppDB]("roles", func(ctx context.Context, db *AppDB) error {
+		_, _, err := db.Roles.FirstOrCreate(ctx, &Role{Name: "admin"}, ant.Eq(&R.Name, "admin"))
+
+		return err
+	})
+	// spot-end
+}
+```
+
+```bash
+go run ./cmd/migrate seed
+```
+
+`Config.SeedHooks` turns hooks on. For data that should track a file, such as a list of countries, use an idempotent `INSERT ... ON CONFLICT` in `migrations/code`.
+
+## Tests and prototypes
+
+`db.EnsureCreated(ctx)` builds tables straight from the structs, and `db.EnsureDeleted(ctx)` removes them. `go run ./cmd/migrate reset` wipes a local database and applies everything. It asks for the database's name first, or takes `--confirm name`.
+
+<Tests path="migrations/data_test.go" />

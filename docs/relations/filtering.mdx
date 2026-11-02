@@ -1,0 +1,60 @@
+---
+title: Filtering by relations
+description: Has, HasNone, and HasOne match rows by what they relate to.
+---
+
+`ant.Has` filters rows by what they're related to, without loading anything. Each one becomes an `EXISTS` inside the same query, so it costs no extra round trip.
+
+## Has a related row
+
+```go
+// spot-next-line
+writers, err := db.Users.Where(ant.Has(&U.Posts)).All(ctx)
+```
+
+Add conditions on the related row.
+
+```go
+// spot-next-line
+drafting, err := db.Users.Where(ant.Has(&U.Posts, ant.Eq(&P.Published, false))).All(ctx)
+```
+
+## Has none
+
+```go
+// spot-next-line
+silent, err := db.Users.Where(ant.HasNone(&U.Posts)).All(ctx)
+```
+
+`HasNone` with conditions matches rows with no related row that meets them.
+
+## The other direction
+
+`ant.HasOne` follows a many-to-one or one-to-one relation.
+
+```go
+// spot-next-line
+byAdults, err := db.Posts.Where(ant.HasOne(&P.User, ant.Gt(&U.Age, 18))).All(ctx)
+```
+
+## Combining
+
+These are conditions like any other.
+
+```go
+// spot-next-line
+young, err := db.Users.Where(ant.Has(&U.Posts), ant.Lt(&U.Age, 18)).All(ctx)
+
+// spot-next-line
+same, err := db.Users.Where(ant.Not(ant.Has(&U.Posts))).Count(ctx)
+```
+
+They work on many-to-many and through relations too, and a global filter on the related model still applies.
+
+:::warning[Build it at run time]
+
+`ant.Has` needs the related model's configuration, which exists once a context has opened. Call it where the query is built, not in a package variable.
+
+:::
+
+<Tests path="relations/has_test.go" />

@@ -1,0 +1,86 @@
+---
+title: Migrations overview
+sidebar_label: Overview
+description: Your structs are the source of truth, and migrations are plain SQL.
+---
+
+Your Go structs are the source of truth. `diff` compares them with a stored snapshot and writes the difference out as plain SQL. You read the file, edit it if you need to, and `up` applies it.
+
+import MigrationFlow from '@site/src/components/MigrationFlow';
+
+<MigrationFlow />
+
+Generating doesn't need a database, and every migration is ordinary SQL, so any tool can read the files and you can stop using ant's runner whenever you like. There are no down migrations: to undo a change, you write a new one.
+
+Migrations run on PostgreSQL. The other databases return `schema.ErrUnsupported` for now.
+
+## Set up
+
+Go can't load your structs from another module, so the CLI is a tiny program that lives in yours.
+
+```go title="cmd/migrate/main.go"
+package main
+
+import (
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/skudra-go/ant/dialect/postgres"
+	"github.com/skudra-go/ant/migrate"
+
+	"example.com/app/models"
+)
+
+func main() {
+	// spot-next-line
+	migrate.Main[models.AppDB](postgres.Dialect)
+}
+```
+
+## The first migration
+
+```bash
+export DATABASE_URL='postgres://user:password@localhost:5432/app?sslmode=disable'
+
+go run ./cmd/migrate diff create_tables
+go run ./cmd/migrate up
+```
+
+That gives you this, and you commit all of it. The snapshot is what the next `diff` compares against.
+
+```text
+migrations/
+├── versions/
+│   ├── 0001_create_tables.up.sql   runs once
+│   └── schema.snapshot.json        what the models looked like
+└── code/                           reruns when a file changes
+```
+
+## Daily work
+
+Change a struct, then:
+
+```bash
+go run ./cmd/migrate diff add_bio   # writes 0002_add_bio.up.sql
+# read the file
+go run ./cmd/migrate up
+```
+
+`diff --dry-run` prints the SQL without writing anything. `status` lists every migration and where it stands, and `drift` compares the live database with what migrations describe.
+
+## In CI
+
+`check` fails if someone changed a struct without generating a migration. It doesn't need a database, so it's cheap to run in CI.
+
+```bash
+go run ./cmd/migrate check
+```
+
+## Next
+
+- [Models to tables](/migrations/models-to-tables): how structs become columns.
+- [Generated SQL](/migrations/generated-sql): warnings, renames, and backfills.
+- [Hand-written changes](/migrations/hand-written): views, functions, data, and seeds.
+- [Deploying](/migrations/deploying): embedding, and when to apply.
+- [Adopting a database](/migrations/adopting): start from a schema you already have.
+
+<Tests path="migrations" />

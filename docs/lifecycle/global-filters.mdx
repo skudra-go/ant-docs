@@ -1,0 +1,92 @@
+---
+title: Global filters
+description: A condition on every query of a model, built from the call's context.
+---
+
+A global filter adds a condition to every query of a model, and it follows the model into joins, `Include`, `Has`, subqueries, and bulk writes on its own. It's built when the query runs, so it can read values from the request's context.
+
+## Declaring a filter
+
+```go
+type Doc struct {
+	ID       int64
+	TenantID int64
+	Secret   bool
+	Title    string
+}
+
+func (Doc) Configure(b *ant.ModelBuilder[Doc]) {
+	// spot-start
+	b.Filter("tenant", func(ctx context.Context) ant.Cond {
+		tenant, ok := ctx.Value(tenantKey{}).(int64)
+		if !ok {
+			return ant.FailedCond(errors.New("no tenant in context"))
+		}
+
+		return ant.Eq(&D.TenantID, tenant)
+	})
+
+	b.Filter("public", func(context.Context) ant.Cond {
+		return ant.Eq(&D.Secret, false)
+	})
+	// spot-end
+}
+
+type tenantKey struct{}
+
+var D = ant.Fields[Doc]()
+```
+
+`ant.FailedCond` makes the query fail, and that's what you want here. A filter that quietly returned nothing would show every tenant's rows.
+
+## Using it
+
+There's nothing to do. The context decides.
+
+```go
+one := context.WithValue(ctx, tenantKey{}, int64(1))
+two := context.WithValue(ctx, tenantKey{}, int64(2))
+
+query := db.Docs.Where(ant.Like(&D.Title, "A%"))
+
+// spot-start
+theirs, err := query.All(one)
+others, err := query.All(two)
+// spot-end
+```
+
+Run the same query in another context and you get other rows.
+
+{/*
+```go
+type DocsDB struct {
+	ant.Context
+	Docs ant.Table[Doc]
+}
+```
+*/}
+
+## Switching one off
+
+`IgnoreFilters` switches off the named filters for one query, or all of them if you don't name any. It's worth searching for in code review.
+
+```go
+// spot-start
+withSecrets, err := db.Docs.IgnoreFilters("public").All(one)
+everything, err := db.Docs.IgnoreFilters().All(ctx)
+// spot-end
+```
+
+{/*
+```go
+var one context.Context
+```
+*/}
+
+:::danger[A convenience, not a security boundary]
+
+`ant.Raw` and `IgnoreFilters` bypass filters. For a harder boundary, PostgreSQL's row-level security enforces the same rule in the database. See [multi-tenancy](/recipes/multi-tenancy).
+
+:::
+
+<Tests path="lifecycle/filters_test.go" />

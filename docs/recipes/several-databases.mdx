@@ -1,0 +1,81 @@
+---
+title: Several databases
+description: Separate databases per area, and routing by tenant.
+---
+
+For read replicas of a single database, see [read replicas](/transactions/connections#read-replicas). This page is about databases that hold different data.
+
+## One context per database
+
+Declare a context for each. Each has its own models, migrations, and `cmd/migrate`.
+
+```go keep-db
+type Invoice struct {
+	ID int64
+}
+
+// spot-start
+type MainDB struct {
+	ant.Context
+	Users ant.Table[User]
+}
+
+type BillingDB struct {
+	ant.Context
+	Invoices ant.Table[Invoice]
+}
+// spot-end
+```
+
+A relation can't cross databases. Keep the key, and load the other side in a second query. Mark such a relation `.NoForeignKey()`.
+
+## Routing by tenant
+
+To give each large tenant a database of its own, keep a map of open contexts and pick one per request. Open each one once: an ant context owns a connection pool.
+
+```go
+type Router struct {
+	mu  sync.RWMutex
+	dbs map[string]*AppDB
+}
+
+// spot-start
+func (r *Router) For(ctx context.Context, tenant string) (*AppDB, error) {
+	r.mu.RLock()
+	db := r.dbs[tenant]
+	r.mu.RUnlock()
+
+	if db != nil {
+		return db, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if db := r.dbs[tenant]; db != nil {
+		return db, nil
+	}
+
+	db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsnFor(tenant))
+	if err != nil {
+		return nil, err
+	}
+
+	r.dbs[tenant] = db
+
+	return db, nil
+}
+// spot-end
+
+func dsnFor(tenant string) string {
+	return "postgres://localhost/" + tenant
+}
+```
+
+Apply migrations to each with `migrate.Up`, which is safe to call from several processes at once.
+
+:::warning[No cross-database transactions]
+
+A transaction can't span databases, and ant has no two-phase commit. Use an outbox to carry a change from one to the other.
+
+:::

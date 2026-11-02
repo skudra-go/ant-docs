@@ -1,0 +1,61 @@
+---
+title: Retries
+description: Run a transaction again after a deadlock or serialization conflict.
+---
+
+When two transactions collide, the database cancels one, and running it again usually just works. ant can do that for you.
+
+## One transaction
+
+`ant.Attempts` reruns a transaction that lost a serialization conflict or a deadlock. The number is the total number of runs. An ordinary error is never retried.
+
+```go
+err := db.Tx(
+	ctx,
+	func(tx *AppDB) error {
+		user, err := tx.Users.NoTracking().Find(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Age, user.Age+1))
+
+		return err
+	},
+	ant.Isolation(sql.LevelSerializable),
+	// spot-next-line
+	ant.Attempts(5),
+)
+```
+
+## Every transaction
+
+`ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context, for an application that wants this handled in one place. `ant.Attempts` overrides it for one call.
+
+```go
+// spot-next-line
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithRetry(ant.Retry{Attempts: 5}))
+```
+
+## Checking by hand
+
+`ant.IsRetryable` reports whether an error is one of these.
+
+```go
+err := db.SaveChanges(ctx)
+
+// spot-next-line
+if ant.IsRetryable(err) {
+	log.Println("worth another try")
+}
+```
+
+:::warning[The function may run twice]
+
+A retried function runs again from the top, so it shouldn't change anything outside the database. Send the email after the commit, or from an [observer](/lifecycle/hooks-and-observers#observers).
+
+:::
+
+Commit failures aren't retried: the transaction may already have committed. See [when a commit fails](/recipes/commit-failures).
+
+<Tests path="transactions/retry_test.go" />

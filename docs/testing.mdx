@@ -1,0 +1,129 @@
+---
+title: Testing
+description: Isolated tests against a real database, with factories and fixtures.
+---
+
+Test against a real database. ant has no in-memory fake, on purpose: a fake accepts SQL the real server would refuse, and hides what constraints, triggers, and transactions actually do. PostgreSQL in a container starts in seconds anyway.
+
+## A database for tests
+
+Build the schema from your real migrations, so a broken migration fails a test before it reaches production.
+
+```go
+var shared *models.AppDB
+
+func TestMain(m *testing.M) {
+	ctx := context.Background()
+
+	db, err := ant.Open[models.AppDB](ctx, postgres.Dialect, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// spot-next-line
+	if err := migrate.Up(ctx, db, migrate.Config{FS: migrations.Files}); err != nil {
+		log.Fatal(err)
+	}
+
+	shared = db
+
+	os.Exit(m.Run())
+}
+```
+
+For quick experiments, `db.EnsureCreated(ctx)` builds tables straight from the structs.
+
+## Isolating tests
+
+`anttest.Isolate` gives a test a context bound to a transaction that rolls back when the test ends, so tests can share a database and never need cleaning up after.
+
+```go
+func TestSignup(t *testing.T) {
+	// spot-next-line
+	db := anttest.Isolate(t, shared)
+
+	err := db.Users.Insert(t.Context(), &models.User{Name: "Ann", Email: "ann@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+```
+
+A test of concurrency needs a schema of its own instead, because other connections can't see an open transaction.
+
+## Factories
+
+A factory makes valid entities, so each test only spells out what it cares about. The number it passes in keeps values unique.
+
+```go
+// spot-start
+var Users = anttest.NewFactory(func(n int) *models.User {
+	return &models.User{
+		Name:  fmt.Sprintf("user %d", n),
+		Email: fmt.Sprintf("u%d@example.com", n),
+	}
+})
+// spot-end
+
+func TestFactories(t *testing.T) {
+	db := anttest.Isolate(t, shared)
+
+	// spot-start
+	user := Users.Create(t, &db.Users)                                      // in the database
+	draft := Users.Build()                                                  // in memory
+	many := Users.CreateMany(t, &db.Users, 10)                              // several
+	young := Users.Create(t, &db.Users, func(u *models.User) { u.Age = 5 }) // one override
+	// spot-end
+
+	// A state is a factory, and leaves the original alone.
+	// spot-next-line
+	admin := Users.With(func(u *models.User) { u.Admin = true })
+
+	boss := admin.Create(t, &db.Users)
+}
+```
+
+`AfterBuild` and `AfterCreate` add callbacks. `anttest.Recycle` shares one parent among many children.
+
+```go
+func TestRecycle(t *testing.T) {
+	db := anttest.Isolate(t, shared)
+
+	// spot-next-line
+	author := anttest.Recycle(Users, &db.Users)
+
+	posts := anttest.NewFactory(func(n int) *models.Post {
+		return &models.Post{Title: fmt.Sprintf("post %d", n), UserID: author.Get(t).ID}
+	})
+
+	posts.CreateMany(t, &db.Posts, 3) // one author
+}
+```
+
+## Fixtures
+
+`anttest.Load` loads rows from JSON files named after their tables, for data that doesn't change. Rows go in as written, with no hooks, so parents come first.
+
+```go
+//go:embed testdata
+var data embed.FS
+
+func TestWithFixtures(t *testing.T) {
+	db := anttest.Isolate(t, shared)
+
+	// spot-next-line
+	anttest.Load(t, db, data, "testdata/users.json", "testdata/posts.json")
+}
+```
+
+## Checking what code does
+
+`q.ToSQL()` returns a query's SQL with no database, which suits a test of a query builder. For anything else, run it: what matters is what the database returns. [`ant.DryRun`](/tooling/inspecting-queries#dryrun) shows what a unit of work decides to write, and [antvet](/tooling/antvet) catches mistakes before tests run.
+
+:::warning[SQLite is not a stand-in]
+
+SQLite is tempting for speed, but it has no `FOR UPDATE`, no enum types, different date handling, and looser typing, so a test can pass there and fail in production. Test on the database you actually deploy.
+
+:::
+
+<Tests path="testing" />

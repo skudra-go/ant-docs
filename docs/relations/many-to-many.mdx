@@ -1,0 +1,123 @@
+---
+title: Many-to-many
+description: Relations through a join table, and changing what is linked.
+---
+
+A many-to-many relation goes through a join table. Declare it on either side, or both, and migrations create the table once.
+
+## Declaring
+
+```go
+type Student struct {
+	ID      int64
+	Name    string
+	Courses []Course
+}
+
+func (Student) Configure(b *ant.ModelBuilder[Student]) {
+	// spot-next-line
+	b.ManyToMany(&St.Courses).Through("enrollments")
+}
+
+type Course struct {
+	ID    int64
+	Title string
+}
+
+var (
+	St = ant.Fields[Student]()
+	Cs = ant.Fields[Course]()
+)
+```
+
+The join table's columns default to `student_id` and `course_id` here. `PivotColumns` names them, which a self-referencing relation needs.
+
+```go
+type Person struct {
+	ID      int64
+	Friends []Person
+}
+
+func (Person) Configure(b *ant.ModelBuilder[Person]) {
+	// spot-next-line
+	b.ManyToMany(&Pn.Friends).Through("friendships").PivotColumns("person_id", "friend_id")
+}
+
+var Pn = ant.Fields[Person]()
+```
+
+## Reading
+
+`Include`, `Has`, `JoinMany`, and `CountRelated` all go through the join table for you.
+
+```go
+// spot-start
+students, err := db.Students.Include(&St.Courses).All(ctx)
+
+artists, err := db.Students.Where(ant.Has(&St.Courses, ant.Eq(&Cs.Title, "Art"))).All(ctx)
+// spot-end
+```
+
+## Changing the links
+
+These change the join table only, never the rows on either side. Repeating a `Link` is harmless.
+
+```go
+// spot-start
+err := ant.Link(ctx, db, ann, &St.Courses, math, art)      // add
+err = ant.Unlink(ctx, db, ann, &St.Courses, art)           // remove
+err = ant.SyncLinks(ctx, db, ann, &St.Courses, art, music) // make the list exact
+err = ant.Toggle(ctx, db, ann, &St.Courses, math)          // flip each one
+// spot-end
+```
+
+{/*
+```go
+var (
+	ann   *Student
+	math  *Course
+	art   *Course
+	music *Course
+)
+
+type SchoolDB struct {
+	ant.Context
+	Students ant.Table[Student]
+	Courses  ant.Table[Course]
+}
+```
+*/}
+
+## Through a tracked slice
+
+A loaded relation can be edited like any slice, and `SaveChanges` updates the links. A new target is inserted and linked. Removing one removes the link, never the course.
+
+```go
+session := ant.Session(db)
+
+student, err := session.Students.Include(&St.Courses).Find(ctx, id)
+
+// spot-start
+student.Courses = student.Courses[1:]
+student.Courses = append(student.Courses, Course{Title: "Drama"})
+
+err = session.SaveChanges(ctx)
+// spot-end
+```
+
+## A join table with data
+
+When the join table holds data of its own, like a grade or a date, it's really a model. Make it one, with two has-many relations, and you get queries, timestamps, and everything else for free. ant has no separate pivot API, on purpose.
+
+```go
+// spot-start
+type Enrollment struct {
+	ant.Base
+	StudentID int64
+	CourseID  int64
+	Grade     *string
+}
+// spot-end
+```
+
+<Tests path="relations/many_to_many_test.go" />

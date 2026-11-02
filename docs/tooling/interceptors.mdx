@@ -1,0 +1,81 @@
+---
+title: Interceptors and events
+description: See every statement, every save, and every change of state.
+---
+
+An interceptor sees every statement a context runs, bulk writes and raw SQL included. Logging, metrics, and tracing are all built on it, and since an `ant.Option` can install one, it's the plugin API too.
+
+## An interceptor
+
+`Before` can return a new context, as tracing needs. It can change the statement, and an error stops it. `After` hears the outcome.
+
+```go
+type Timer struct{}
+
+// spot-start
+func (Timer) Before(ctx context.Context, s *ant.Statement) (context.Context, error) {
+	return ctx, nil
+}
+
+func (Timer) After(ctx context.Context, s *ant.Statement, o ant.Outcome) {
+	slog.Info("query", "sql", s.SQL, "took", o.Duration)
+}
+// spot-end
+
+// spot-next-line
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(Timer{}))
+```
+
+`s.Replica` says where the statement ran, and `o.Err` is any failure. `s.Args` holds real values, so take care what you record.
+
+## Watching saves
+
+An interceptor that also has `SavingChanges` is a `SaveInterceptor`. It sees each `SaveChanges` before it writes, as whole entities and field names, and an error cancels the save, so it suits rules that span a unit of work.
+
+```go
+type Audit struct {
+	Timer
+}
+
+// spot-start
+func (Audit) SavingChanges(ctx context.Context, changes []ant.Change) error {
+	for _, c := range changes {
+		slog.Info("saving", "model", c.Model, "state", c.State.String(), "fields", c.Changed)
+	}
+
+	return nil
+}
+// spot-end
+```
+
+## Events
+
+Events are callbacks on the unit of work as a whole. They can't stop anything, and a nil callback is skipped. `Tracked` and `StateChanged` must not call back into the context.
+
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	// spot-start
+	ant.WithEvents(ant.Events{
+		Saving:     func(ctx context.Context, changes []ant.Change) {},
+		Saved:      func(ctx context.Context, changes []ant.Change) {},
+		SaveFailed: func(ctx context.Context, err error) {},
+		Tracked:    func(model string, entity any) {},
+		StateChanged: func(model string, entity any, from, to ant.State) {
+			slog.Info("state", "model", model, "from", from.String(), "to", to.String())
+		},
+	}),
+	// spot-end
+)
+```
+
+## Which one
+
+| You need | Use |
+| --- | --- |
+| Every statement, including raw SQL | `Interceptor` |
+| To refuse or rewrite a statement | `Interceptor.Before` |
+| To inspect or refuse a save | `SaveInterceptor` |
+| To follow the unit of work | `Events` |
+| To react to one model, after commit | [`Observer`](/lifecycle/hooks-and-observers#observers) |
+
+<Tests path="developer_tooling/interceptor_test.go" />

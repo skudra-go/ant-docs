@@ -1,0 +1,115 @@
+---
+title: Adopting a database
+description: Start from a schema you already have, with drift as the check.
+---
+
+ant won't generate structs from a database, and that's deliberate. The mapping is ambiguous: a `text` column could be a `string`, a pointer, a named type, or an enum, and foreign keys say little about which relations you actually want. A person, or an AI assistant, does a better job, given a dump and a way to check the result. `drift` is that check.
+
+Your database, and whatever runs it today, stays exactly as it's until the very last step.
+
+## 1. Dump the schema
+
+```bash
+pg_dump --schema-only "$DATABASE_URL" > schema.sql
+```
+
+## 2. Write the models
+
+By hand or with an assistant. Add a [`cmd/migrate/main.go`](/migrations/overview#set-up), and start from [the prompt below](#a-prompt-for-your-assistant).
+
+## 3. Compare until there is nothing left
+
+With no snapshot yet, `drift` compares the live database with your models, and lists every difference.
+
+```bash
+go run ./cmd/migrate drift
+```
+
+```text
+The database differs from the models. To match, it would need to:
+  change column accounts.name: type character varying(50) to text
+  add unique accounts_email_key on accounts
+```
+
+Read each line as something your models have wrong, not something to change in the database. Tables you don't plan to model go in `Config.Ignore`, or get `b.ExcludeFromMigrations()`. Keep going until it says `No drift`.
+
+## 4. Start the history
+
+From the dump. This is usually the right choice, because a new database then gets everything, including what your models don't describe.
+
+```bash
+go run ./cmd/migrate adopt schema.sql
+```
+
+From the models, if they cover everything:
+
+```bash
+go run ./cmd/migrate diff baseline
+```
+
+From your existing files, if you want to keep the history. Copy them into `migrations/versions`, then run `snapshot`. `0001_x.up.sql`, `0001_x.sql`, and `V1__x.sql` all work as they are, and `.down.sql` files are ignored. Goose and dbmate keep up and down in one file, so split those first.
+
+## 5. Mark each existing database as done
+
+This records the migrations as applied, without running them. It adds the `ant_migrations` table and touches nothing else.
+
+```bash
+go run ./cmd/migrate baseline
+```
+
+From here on, `diff` and `up` work just as they do in a new project.
+
+## Keeping your current runner
+
+Run `snapshot` instead of steps 4 and 5, and only use `diff` and `check`, which don't need a database. `Config.Name` and `Config.Parse` can name the files the way your tool expects.
+
+## A prompt for your assistant
+
+Paste this along with `schema.sql`, and adjust it to your project.
+
+````text
+This is the schema of an existing PostgreSQL database, from pg_dump. Write Go
+models for it using the ant ORM, in one file per table, in package models. Do not
+change the database: the models must describe it exactly as it is.
+
+Rules:
+
+- Models are plain structs. Embed nothing unless every table really has id,
+  created_at, and updated_at as bigint and timestamptz.
+- Field names convert to snake_case column names, and type names to plural
+  snake_case table names. If that gives the wrong name, use ant:"column=name" or
+  b.Table("name") in Configure.
+- A column that allows NULL must be a pointer or sql.Null[T]. A NOT NULL column
+  must not be.
+- bigint is int64, integer is int32, smallint is int16, boolean is bool, text is
+  string, timestamptz is time.Time, jsonb is ant.JSON[T], bytea is []byte. For any
+  other type, including varchar(n), numeric(p,s), date, enums, and domains, use
+  b.Column(&X.Field).Type("the type as written") in Configure.
+- Declare each model's field probe: var Users = ant.Fields[User]().
+- A primary key named id is found by convention. For anything else use b.Key or
+  b.CompositeKey. A key that is not an identity or serial column needs
+  .NotGenerated(). If the constraint is not named table_pkey, add b.KeyName("name").
+- For each foreign key, add a relation with b.BelongsTo, and the other side with
+  b.HasMany where it is useful. Set .OnDelete and .OnUpdate to match. If the
+  constraint is not named table_column_fkey, add .ConstraintName("name"). If the
+  column has no index, add .NoIndex().
+- A join table with only two foreign keys is b.ManyToMany(...).Through("table").
+  With other columns, model it as a table.
+- A unique constraint is ant:"unique", or b.Column(&X.F).Unique("name") if it is
+  not named table_column_key. A unique index that is not a constraint is
+  b.Index(&X.F).Unique().Name("name").
+- Add b.Index for each index, with .Name, .Desc, .Where, .Using, and .Include as
+  needed. Use b.IndexExpr for an expression.
+- Add b.Check for each check constraint, using its name.
+- Add b.Column(&X.F).Default("expr") for each default, and .Generated("expr") for
+  each generated column.
+- Views are b.View("name"). Leave triggers, functions, and types out of the models.
+- A context struct embeds ant.Context, and has an ant.Table[T] field for each model.
+
+Then I will run `go run ./cmd/migrate drift`, which lists every remaining difference
+between the models and the database. When I paste its output, fix the models. Each
+line says what the database would need to do to match, so the models are what is
+wrong. Never suggest changing the database. We are done when it prints "No drift".
+````
+
+<Tests path="migrations/adopt_test.go" />

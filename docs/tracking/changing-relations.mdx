@@ -1,0 +1,118 @@
+---
+title: Changing relations
+description: Edit a loaded relation like a slice, and SaveChanges does the rest.
+---
+
+Change a loaded relation, and the rows change with it. Tracking follows keys, not memory addresses, so everyday slice work is safe, including `slices.Delete` and an `append` that moves the array.
+
+## Add
+
+An appended element is inserted, and its new key and foreign key are copied back.
+
+```go
+session := ant.Session(db)
+
+alice, err := session.Users.Include(&U.Posts).Find(ctx, id)
+
+// spot-start
+alice.Posts = append(alice.Posts, Post{Title: "New"})
+
+err = session.SaveChanges(ctx)
+// spot-end
+```
+
+## Edit
+
+```go
+// spot-next-line
+alice.Posts[0].Title = "Edited"
+
+err := session.SaveChanges(ctx)
+```
+
+## Remove
+
+What removal does depends on the foreign key. `Post.UserID` is required, so a post you remove from its user gets deleted.
+
+```go
+// spot-start
+alice.Posts = slices.Delete(alice.Posts, 0, 1) // deletes that post
+alice.Posts = alice.Posts[:1]                  // deletes the rest but one
+alice.Posts = nil                              // deletes them all
+// spot-end
+
+err := session.SaveChanges(ctx)
+```
+
+A nullable foreign key is unlinked instead: the child stays, with no parent.
+
+```go
+type Member struct {
+	ID     int64
+	// spot-next-line
+	TeamID *int64 // nullable, so removal clears it
+	Team   *Team
+}
+
+type Team struct {
+	ID      int64
+	Members []Member
+}
+```
+
+Reordering changes nothing. And a relation you never loaded can't remove anything: `nil` from a plain `Find` means "not loaded", not "empty".
+
+```go
+user, err := session.Users.Find(ctx, id)
+
+user.Age = 31
+
+// spot-next-line
+err = session.SaveChanges(ctx) // user.Posts is nil, and the posts are safe
+```
+
+## Move
+
+To move a post, set its foreign key and put it in the other slice.
+
+```go
+// spot-start
+post := alice.Posts[0]
+post.UserID = bob.ID
+
+bob.Posts = append(bob.Posts, post)
+alice.Posts = alice.Posts[1:]
+// spot-end
+
+err := session.SaveChanges(ctx)
+```
+
+## Change a parent
+
+Set the pointer, or set the foreign key. Setting `nil` clears a nullable key, and a new parent is inserted and linked. If you change both, the foreign key wins.
+
+```go
+member, err := session.Members.IncludeOne(&M.Team).Find(ctx, id)
+
+// spot-next-line
+member.Team = &Team{}
+
+err = session.SaveChanges(ctx)
+```
+
+{/*
+```go
+type SessionDB struct {
+	ant.Context
+	Users   ant.Table[User]
+	Posts   ant.Table[Post]
+	Members ant.Table[Member]
+}
+
+var M = ant.Fields[Member]()
+
+var session *SessionDB
+```
+*/}
+
+<Tests path="change_tracking/relations_test.go" />

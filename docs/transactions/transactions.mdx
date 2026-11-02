@@ -1,0 +1,133 @@
+---
+title: Transactions
+description: Closures, nesting, savepoints, and isolation levels.
+---
+
+`db.Tx` runs a function in a transaction. It commits if the function returns `nil`, and rolls back on an error or a panic. `tx` is your own context type, bound to that transaction.
+
+## Tx
+
+```go
+// spot-next-line
+err := db.Tx(ctx, func(tx *AppDB) error {
+	bob := &User{Name: "Bob", Email: "bob@example.com"}
+
+	if err := tx.Users.Insert(ctx, bob); err != nil {
+		return err
+	}
+
+	return tx.Posts.Insert(ctx, &Post{UserID: bob.ID, Title: "First"})
+})
+```
+
+The error comes back to you unchanged. Reads inside see the transaction's own writes, and a panic rolls back and then keeps panicking.
+
+Use `tx` inside the function: anything you do on `db` runs outside the transaction. Cancelling the context rolls it back.
+
+## SaveChanges in a transaction
+
+`SaveChanges` has its own implicit transaction, or joins the one it's in. If that transaction rolls back, the changes are pending again, and a rolled-back insert isn't tracked.
+
+```go
+err := db.Tx(ctx, func(tx *AppDB) error {
+	user, err := tx.Users.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	user.Age++
+
+	// spot-next-line
+	return tx.SaveChanges(ctx)
+})
+```
+
+`ant.WithoutAutoTx()` stops `SaveChanges` and `Insert` from opening their own, so a failure partway leaves earlier statements in place. Use it only to control transactions yourself.
+
+## Nesting
+
+A `Tx` inside a `Tx` becomes a savepoint, so only the inner part rolls back. That's also how you recover from a failed statement, which PostgreSQL otherwise won't let you do.
+
+```go
+err := db.Tx(ctx, func(tx *AppDB) error {
+	if err := tx.Users.Insert(ctx, alice); err != nil {
+		return err
+	}
+
+	// spot-start
+	inner := tx.Tx(ctx, func(tx2 *AppDB) error {
+		return tx2.Users.Insert(ctx, bob)
+	})
+	// spot-end
+	if inner != nil {
+		log.Println("skipped bob:", inner)
+	}
+
+	return nil // alice commits either way
+})
+```
+
+## Begin
+
+`ant.Begin` hands you the transaction to finish yourself. Prefer `Tx` where you can, since it can't leave one open by accident.
+
+```go
+// spot-next-line
+tx, err := ant.Begin(ctx, db)
+if err != nil {
+	return err
+}
+
+defer tx.Rollback()
+
+if err := tx.Users.Insert(ctx, alice); err != nil {
+	return err
+}
+
+// spot-next-line
+return tx.Commit()
+```
+
+The second end is `ant.ErrTxDone`, which makes that deferred `Rollback` harmless. `db.Commit()` outside a transaction is `ant.ErrNotInTx`.
+
+## Savepoints
+
+```go
+// spot-start
+err := tx.Savepoint(ctx, "before")
+err = tx.RollbackTo(ctx, "before")
+err = tx.Release(ctx, "before")
+// spot-end
+```
+
+{/*
+```go
+var tx *AppDB
+```
+*/}
+
+## Isolation and read-only
+
+Options go after the function, on `Tx` and `Begin`.
+
+```go
+err := db.Tx(
+	ctx,
+	func(tx *AppDB) error {
+		return nil
+	},
+	// spot-next-line
+	ant.Isolation(sql.LevelSerializable),
+)
+
+err = db.Tx(
+	ctx,
+	func(tx *AppDB) error {
+		return nil
+	},
+	// spot-next-line
+	ant.ReadOnly(),
+)
+```
+
+<Tests path="transactions/tx_test.go" />

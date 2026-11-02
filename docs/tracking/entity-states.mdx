@@ -1,0 +1,88 @@
+---
+title: Entity states
+description: Add, Attach, Remove, and inspect what the tracker knows.
+---
+
+Every entity a context knows about has a state. Usually ant manages that for you, and these calls are for the times you need to say it yourself.
+
+## The states
+
+| State | Means | Next `SaveChanges` |
+| --- | --- | --- |
+| `ant.Detached` | Not tracked | Nothing |
+| `ant.Added` | New | `INSERT` |
+| `ant.Unchanged` | Matches what was loaded | Nothing |
+| `ant.Modified` | Differs from what was loaded | `UPDATE` |
+| `ant.Deleted` | Marked for removal | `DELETE` |
+
+## Changing state
+
+```go
+// spot-start
+err := ant.Add(db, newUser)            // insert on the next save
+err = ant.Remove(db, user)             // delete on the next save
+err = ant.Attach(db, existing)         // track as it is, assumed saved
+err = ant.MarkModified(db, disconnect) // write every field on the next save
+ant.Detach(db, user)                   // stop tracking, forget changes
+db.ClearTracked()                      // forget everything
+// spot-end
+```
+
+{/*
+```go
+var (
+	newUser    *User
+	existing   *User
+	disconnect *User
+)
+```
+*/}
+
+`MarkModified` suits a struct from outside, such as a request body, whose earlier values are unknown.
+
+## Looking inside
+
+`ant.Entry` tells you what the tracker knows.
+
+```go
+// spot-next-line
+entry := ant.Entry(db, user)
+
+fmt.Println(entry.State())   // Modified
+fmt.Println(entry.Changed()) // [Age]
+
+// spot-start
+dirty := ant.IsDirty(entry, &U.Age)
+before, err := ant.Original(entry, &U.Age)
+// spot-end
+```
+
+`ant.Tracked[User](db)` lists tracked entities, oldest first, and `db.DebugTracked()` prints the tracker as text.
+
+## Saving a graph from outside
+
+`ant.TrackGraph` saves a tree that came from outside, like a request body. Nothing says what it held before, so your function decides each entity's state.
+
+```go
+// spot-start
+err := ant.TrackGraph(db, incoming, func(n ant.GraphNode) ant.State {
+	if n.HasKey {
+		return ant.Modified
+	}
+
+	return ant.Added
+})
+// spot-end
+
+err = db.SaveChanges(ctx)
+```
+
+{/*
+```go
+var incoming *User
+```
+*/}
+
+Foreign keys are filled in as it walks. Returning `ant.Detached` skips an entity and everything below it.
+
+<Tests path="change_tracking/states_test.go" />
