@@ -4,3 +4,7 @@ build/
 .docusaurus-build/
 .cache-loader/
 .DS_Store
+
+# A local go.work points doccheck at an unreleased ant.
+go.work
+go.work.sum

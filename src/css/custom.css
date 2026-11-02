@@ -196,6 +196,67 @@ pre,
   font-variant-ligatures: none;
 }
 
+/* API links: the first mention of a name on a page links to pkg.go.dev, and shows
+   its declaration while hovered. */
+
+.markdown a.api-ref {
+  position: relative;
+  text-decoration: none;
+}
+
+.markdown a.api-ref > code {
+  box-shadow: inset 0 -1.5px 0 var(--ant-lavender);
+  transition: background-color 120ms ease;
+}
+
+.markdown a.api-ref:hover > code {
+  background-color: color-mix(in srgb, var(--ant-lavender) 30%, var(--ant-lavender-soft));
+}
+
+.api-card {
+  background: var(--ant-stage);
+  border: 1px solid var(--ant-stage-line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgb(21 18 30 / 18%);
+  display: none;
+  left: 0;
+  max-width: min(32rem, calc(100vw - 1.5rem));
+  padding: 0.6rem 0.8rem 0.65rem;
+  pointer-events: none;
+  position: absolute;
+  text-align: left;
+  top: calc(100% + 0.4rem);
+  transform: translateX(var(--api-card-shift, 0px));
+  width: max-content;
+  z-index: 30;
+}
+
+.api-ref:hover .api-card,
+.api-ref:focus-visible .api-card {
+  display: block;
+}
+
+.api-card__decl {
+  color: #e9e4f8;
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre-wrap;
+}
+
+.api-card__doc {
+  color: #b4adc6;
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 400;
+  line-height: 1.45;
+  margin-top: 0.35rem;
+  white-space: normal;
+}
+
 /* Navbar */
 
 /* The blur would make the navbar a containing block for the mobile menu, which is
@@ -776,6 +837,77 @@ pre,
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.hero-ant__status a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--ant-lavender);
+  text-underline-offset: 3px;
+}
+
+.hero-ant__install {
+  align-items: center;
+  background: var(--ant-stage);
+  border-radius: 10px;
+  display: inline-flex;
+  gap: 0.4rem;
+  margin: 0 0 1.1rem;
+  max-width: 100%;
+  padding: 0.3rem 0.3rem 0.3rem 0.9rem;
+}
+
+.hero-ant__install code {
+  background: transparent;
+  color: #e9e4f8;
+  font-size: 0.88rem;
+  overflow-x: auto;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.hero-ant__prompt {
+  color: var(--ant-spot);
+  margin-right: 0.6em;
+  user-select: none;
+}
+
+.hero-ant__install button {
+  background: transparent;
+  border: 1px solid var(--ant-stage-line);
+  border-radius: 7px;
+  color: #b4adc6;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 4.6rem;
+  padding: 0.3rem 0.7rem;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.hero-ant__install button:hover {
+  border-color: var(--ant-spot);
+  color: #e9e4f8;
+}
+
+@media (max-width: 480px) {
+  .hero-ant__install {
+    padding-left: 0.7rem;
+  }
+
+  .hero-ant__install code {
+    font-size: 0.76rem;
+  }
+
+  .hero-ant__prompt {
+    margin-right: 0.45em;
+  }
+
+  .hero-ant__install button {
+    min-width: 0;
+    padding: 0.3rem 0.55rem;
+  }
 }
 
 .markdown a.ant-button,

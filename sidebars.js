@@ -1,3 +1,5 @@
+const api = require('./src/remark/api.json');
+
 // The sidebar reads as a trail: groups, sections with an icon each, and pages as
 // stops along a dashed line. Icons are CSS masks, named by className.
 const group = (label) => ({type: 'html', value: label, className: 'sidebar-group', defaultStyle: true});
@@ -111,6 +113,7 @@ const sidebars = {
       'recipes/commit-failures',
     ]),
     section('Reference', 'list', [
+      {type: 'link', label: 'API on pkg.go.dev', href: api.packages.ant.url},
       'reference/databases',
       'reference/benchmarks',
       'reference/compatibility',

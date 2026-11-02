@@ -12,13 +12,7 @@ npm run check       # check every Go sample, then build
 
 Search only works in a production build: `npm run build && npm run serve`. A build keeps its generated files apart from the dev server's, so it is safe to run beside `npm start`. If the dev server ever reports an empty JSON file or a failed chunk, or keeps showing something you changed, reload the page, and `npm run clear` if it stays. Two dev servers at once share webpack's cache in `node_modules/.cache`, so start a second one with `DOCUSAURUS_NO_PERSISTENT_CACHE=true`.
 
-The sample check needs Go 1.27 and a checkout of `ant` beside this repository:
-
-```text
-skudra-go/
-├── ant/
-└── ant-docs/
-```
+The sample check needs Go 1.27. It checks against the ant release that `tools/doccheck/go.mod` requires, downloaded like any other module, so the docs describe what users get.
 
 `DOCS_URL` and `DOCS_BASE_URL` set where the site is hosted when building it.
 
@@ -80,11 +74,19 @@ db.Users.Where(ant.Lte(⟦+:&U.Age⟧, 18))
 
 ### Linking to tests
 
-End a feature page with `<Tests path="querying" />`, which links to the tests behind it.
+End a feature page with `<Tests path="querying" />`, which links to the tests behind it, as of the release.
+
+### Links to the API
+
+The first mention of an API name on a page, in backticks, becomes a link to its entry on pkg.go.dev, with its declaration and the first sentence of its doc comment shown on hover. Nothing needs marking up: `ant.Open`, `migrate.Config`, `db.SaveChanges`, `b.HasMany`, `db.Users.Find`, and `Table.Where` are all recognised, and so is a bare method name like `Include` when it can only mean one thing. Mentions inside `Others` and `Lib` are left alone, and inside `Pain` only names written with their package are linked, because the other libraries have methods with the same names.
+
+A mention like `ant.Foo` of a name that doesn't exist fails the build.
+
+The names come from `src/remark/api.json`, which `npm run api` writes from the release's source.
 
 ## How samples are checked
 
-`npm run check:samples` type-checks every Go fence against the real ant source, and fails on anything that does not compile or is not gofmt-formatted. `npm run fix:samples` formats them first, keeping the spot comments. It lives in `tools/doccheck`.
+`npm run check:samples` type-checks every Go fence against the ant release, and fails on anything that does not compile or is not gofmt-formatted. `npm run fix:samples` formats them first, keeping the spot comments. It lives in `tools/doccheck`.
 
 A sample can be declarations, statements, both in that order, or a whole file. Each one sees:
 
@@ -113,3 +115,18 @@ Flags go in the fence's info string:
 | `no-check` | Skip this sample, as for code from another library |
 | `compile-fail` | This sample must not compile |
 | `keep-db` | A context declared here does not change what `db` is |
+
+## A new ant release
+
+1. `cd tools/doccheck && go get github.com/skudra-go/ant@vX.Y.Z && go mod tidy`
+2. `npm run api`, so links and hover cards match it. The build refuses to run while `api.json` is for another version.
+3. `npm run check`, and fix what the release changed.
+
+To check the docs against ant changes that aren't released yet, point doccheck at a local copy with a workspace, which git ignores:
+
+```sh
+cd tools/doccheck
+go work init . ../../../ant
+```
+
+Delete `go.work` when the release is out.

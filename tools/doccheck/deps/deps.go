@@ -7,9 +7,11 @@ import (
 	_ "net/http"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "go.opentelemetry.io/otel/trace"
 
 	_ "github.com/skudra-go/ant"
 	_ "github.com/skudra-go/ant/anttest"
+	_ "github.com/skudra-go/ant/contrib/otel"
 	_ "github.com/skudra-go/ant/dialect"
 	_ "github.com/skudra-go/ant/dialect/mysql"
 	_ "github.com/skudra-go/ant/dialect/postgres"

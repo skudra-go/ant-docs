@@ -489,7 +489,13 @@ The [migrations guide](/migrations/overview) covers the rest, and [adopting a da
 
 ## Where it stands
 
-ant is pre-alpha and hasn't been released yet, so the API can still change. It needs Go 1.27 or later, because it leans on generic methods.
+ant hasn't reached 1.0, so the API can still change between releases. It needs Go 1.27 or later, because it leans on generic methods.
+
+```bash
+go get github.com/skudra-go/ant
+```
+
+The [reference on pkg.go.dev](https://pkg.go.dev/github.com/skudra-go/ant) has every exported name with its doc comment. These pages link to it too: the first time a page mentions a name like `ant.Open`, it's a link, and hovering it shows the declaration.
 
 **PostgreSQL gets everything.** MySQL, MariaDB, SQLite, and SQL Server run the same queries, writes, relations, tracking, and transactions, but no migrations yet, and they're covered by a smaller test suite. [Databases](/reference/databases) spells out exactly what differs.
 

@@ -35,12 +35,25 @@ var m *metrics.Metrics
 
 ## OpenTelemetry
 
-Tracing is the module `github.com/skudra-go/ant/contrib/otel`, kept apart so the OpenTelemetry SDK stays out of ant's core.
+Tracing is its own module, kept apart so the OpenTelemetry SDK stays out of ant's core:
 
-```go no-check
+```bash
+go get github.com/skudra-go/ant/contrib/otel
+```
+
+Hand it a tracer from your provider:
+
+```go
+// spot-next-line
 tracer := otel.New(provider.Tracer("ant"))
 
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(tracer))
 ```
+
+{/*
+```go
+var provider trace.TracerProvider
+```
+*/}
 
 Each statement gets a span.

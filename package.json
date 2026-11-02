@@ -10,6 +10,7 @@
     "clear": "docusaurus clear && rm -rf .docusaurus-build",
     "check:samples": "cd tools/doccheck && go run ./cmd/doccheck ../../docs",
     "fix:samples": "cd tools/doccheck && go run ./cmd/doccheck -fix ../../docs",
+    "api": "cd tools/doccheck && go run ./cmd/apiindex ../../src/remark/api.json",
     "check": "npm run check:samples && npm run build"
   },
   "dependencies": {

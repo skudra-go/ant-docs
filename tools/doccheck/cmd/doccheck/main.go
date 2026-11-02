@@ -1,5 +1,5 @@
-// Command doccheck type-checks every Go sample in the docs against the real ant
-// source, so a sample cannot name an API that does not exist.
+// Command doccheck type-checks every Go sample in the docs against the ant release
+// go.mod names, so a sample cannot name an API that users do not get.
 //
 // A sample may be a whole file, declarations, statements, or declarations followed
 // by statements. Statements run inside a function, with the page's earlier
@@ -71,6 +71,7 @@ var imports = []string{
 	`"time"`,
 	`"github.com/skudra-go/ant"`,
 	`"github.com/skudra-go/ant/anttest"`,
+	`"github.com/skudra-go/ant/contrib/otel"`,
 	`"github.com/skudra-go/ant/dialect"`,
 	`"github.com/skudra-go/ant/dialect/mysql"`,
 	`"github.com/skudra-go/ant/dialect/postgres"`,
@@ -83,6 +84,7 @@ var imports = []string{
 	`"github.com/skudra-go/ant/schema"`,
 	`"github.com/skudra-go/ant/secure"`,
 	`"github.com/skudra-go/ant/validate"`,
+	`"go.opentelemetry.io/otel/trace"`,
 	`"example.com/app/migrations"`,
 	`"example.com/app/models"`,
 }

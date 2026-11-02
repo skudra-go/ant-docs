@@ -1,7 +1,15 @@
 // @ts-check
 const antPrism = require('./src/theme/prism-ant');
 
+const api = require('./src/remark/api.json');
+const apiLinks = require('./src/remark/api-links');
+
 const repo = 'https://github.com/skudra-go/ant';
+
+// The release the docs are checked against, as tools/doccheck/go.mod names it, and
+// its reference on pkg.go.dev.
+const release = api.version;
+const reference = api.packages.ant.url;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -23,7 +31,13 @@ const config = {
     },
   },
 
-  clientModules: ['./src/fonts.js'],
+  clientModules: ['./src/fonts.js', './src/api-cards.js'],
+
+  customFields: {
+    release,
+    reference,
+    repo,
+  },
 
   // assets/ holds the logo and favicon sources, served beside static/.
   staticDirectories: ['static', 'assets'],
@@ -42,6 +56,7 @@ const config = {
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
           breadcrumbs: false,
+          remarkPlugins: [apiLinks],
           editUrl: 'https://github.com/skudra-go/ant-docs/edit/main/',
         },
         blog: false,
@@ -65,6 +80,7 @@ const config = {
         highlightSearchTermsOnTargetPage: true,
         explicitSearchResultPath: true,
         searchBarShortcutKeymap: 'mod+k',
+        ignoreCssSelectors: ['.api-card'],
       }),
     ],
   ],
@@ -102,13 +118,14 @@ const config = {
           {to: '/models/defining-models', label: 'Models', position: 'left'},
           {to: '/queries/conditions', label: 'Queries', position: 'left'},
           {to: '/migrations/overview', label: 'Migrations', position: 'left'},
+          {href: reference, label: 'API', position: 'right'},
           {href: 'https://github.com/skudra-go/ant-examples', label: 'Examples', position: 'right'},
           {href: repo, label: 'GitHub', position: 'right'},
         ],
       },
       footer: {
         style: 'light',
-        copyright: 'ant is open source under the Apache License 2.0.',
+        copyright: 'ant is open source under the MIT License.',
       },
       tableOfContents: {
         minHeadingLevel: 2,

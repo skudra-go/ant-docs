@@ -1,12 +1,14 @@
 import React from 'react';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 
-const base = 'https://github.com/skudra-go/ant/tree/main/tests/features/';
-
-// Tests links a page to the feature tests that pin down what it says.
+// Tests links a page to the feature tests that pin down what it says, as of the
+// release the docs are checked against.
 export default function Tests({path}) {
+  const {release, repo} = useDocusaurusContext().siteConfig.customFields;
+
   return (
     <p className="tests-link">
-      See it tested: <a href={base + path}>tests/features/{path}</a>
+      See it tested: <a href={`${repo}/tree/${release}/tests/features/${path}`}>tests/features/{path}</a>
     </p>
   );
 }

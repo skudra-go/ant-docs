@@ -7,14 +7,12 @@ Let's go from an empty folder to a saved row on PostgreSQL. You'll need Go 1.27 
 
 ## Set up
 
-ant isn't tagged yet, so for now your module points at a copy of it sitting next to your project.
+Make a module, then add ant and a PostgreSQL driver to it:
 
 ```bash
-git clone https://github.com/skudra-go/ant
 mkdir hello && cd hello
 go mod init example.com/hello
-go mod edit -require=github.com/skudra-go/ant@v0.0.0 -replace=github.com/skudra-go/ant=../ant
-go get github.com/jackc/pgx/v5/stdlib
+go get github.com/skudra-go/ant github.com/jackc/pgx/v5/stdlib
 ```
 
 ant sits on top of `database/sql`, so the driver is your choice. For PostgreSQL, that's `pgx`.
