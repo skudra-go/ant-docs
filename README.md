@@ -14,7 +14,19 @@ Search only works in a production build: `npm run build && npm run serve`. A bui
 
 The sample check needs Go 1.27. It checks against the ant release that `tools/doccheck/go.mod` requires, downloaded like any other module, so the docs describe what users get.
 
-`DOCS_URL` and `DOCS_BASE_URL` set where the site is hosted when building it.
+`DOCS_URL` and `DOCS_BASE_URL` set where the site is hosted when building it. The default is `https://skudra.net`.
+
+## Deploying
+
+The site is published to [skudra.net](https://skudra.net) as a Cloudflare Worker that serves the static build, configured in `wrangler.jsonc`.
+
+```sh
+npm run preview     # build, then serve it locally the way Cloudflare will
+npx wrangler login  # once, in a browser
+npm run deploy      # build, then publish
+```
+
+A push to `main` deploys by itself (`.github/workflows/deploy.yml`), once the samples check and the site builds. That needs two repository secrets: `CLOUDFLARE_API_TOKEN`, made from the "Edit Cloudflare Workers" token template, and `CLOUDFLARE_ACCOUNT_ID`. Pull requests run the same check without deploying.
 
 ## Writing a page
 

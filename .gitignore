@@ -8,3 +8,6 @@ build/
 # A local go.work points doccheck at an unreleased ant.
 go.work
 go.work.sum
+
+# wrangler
+.wrangler/
