@@ -1,0 +1,23 @@
+// Cloudflare Workers config for the docs site. The site is static: wrangler
+// uploads the Docusaurus build and serves it from Cloudflare, with no Worker code.
+//
+//   npm run deploy    build, then publish to skudra.net
+//   npm run preview   build, then serve it locally the way Cloudflare will
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ant-docs",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./build",
+    // Docusaurus writes /concepts as concepts.html (trailingSlash: false), and
+    // its own 404.html for anything else.
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "skudra.net",
+      "custom_domain": true
+    }
+  ]
+}

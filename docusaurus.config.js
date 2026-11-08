@@ -17,7 +17,7 @@ const config = {
   tagline: 'A Go ORM with plain structs, compiler-checked queries, and no code generation',
   favicon: 'img/favicon.svg',
 
-  url: process.env.DOCS_URL ?? 'https://skudra-go.github.io',
+  url: process.env.DOCS_URL ?? 'https://skudra.net',
   baseUrl: process.env.DOCS_BASE_URL ?? '/',
   organizationName: 'skudra-go',
   projectName: 'ant-docs',
