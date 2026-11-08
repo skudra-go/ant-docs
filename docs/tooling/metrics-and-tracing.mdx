@@ -1,50 +1,21 @@
 ---
 title: Metrics and tracing
-description: Prometheus text with no dependencies, and OpenTelemetry in its own module.
+description: Prometheus metrics with no dependencies, and OpenTelemetry tracing in a module of its own.
 ---
 
-Both are interceptors, so they see every statement, and neither adds a dependency to ant's root module.
+Both are [interceptors](/tooling/interceptors), so they see every statement a context runs, raw SQL included. Neither adds a dependency to ant's root module.
 
-## Metrics
+## OpenTelemetry tracing
 
-The `metrics` package counts statements with no dependencies, and writes Prometheus text format, which most monitoring systems read.
-
-```go
-// spot-next-line
-m := metrics.New()
-
-db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(m))
-
-// spot-next-line
-http.Handle("/metrics", m)
-```
-
-`m.Snapshot()` returns the numbers as data, per kind of statement, so a few lines of your own can publish them through any meter.
-
-```go
-for _, s := range m.Snapshot() {
-	fmt.Println(s.Kind, s.Count, s.Errors, s.Duration)
-}
-```
-
-{/*
-```go
-var m *metrics.Metrics
-```
-*/}
-
-## OpenTelemetry
-
-Tracing is its own module, kept apart so the OpenTelemetry SDK stays out of ant's core:
+The tracer is a separate module, so the OpenTelemetry SDK stays out of ant's core. It starts one span per statement, as a child of the span in the caller's context.
 
 ```bash
 go get github.com/skudra-go/ant/contrib/otel
 ```
 
-Hand it a tracer from your provider:
+Pass a tracer from your provider:
 
 ```go
-// spot-next-line
 tracer := otel.New(provider.Tracer("ant"))
 
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(tracer))
@@ -56,4 +27,114 @@ var provider trace.TracerProvider
 ```
 */}
 
-Each statement gets a span.
+### A complete setup
+
+The program below imports the package as `antotel`, because OpenTelemetry's own package is also named `otel`. It sends traces to an OpenTelemetry collector over OTLP. Replace the exporter to send them elsewhere.
+
+```go no-check
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/skudra-go/ant"
+	antotel "github.com/skudra-go/ant/contrib/otel"
+	"github.com/skudra-go/ant/dialect/postgres"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Exports to localhost:4317, or to OTEL_EXPORTER_OTLP_ENDPOINT.
+	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+	defer provider.Shutdown(ctx)
+
+	otel.SetTracerProvider(provider)
+
+	db, err := ant.Open[AppDB](
+		ctx,
+		postgres.Dialect,
+		dsn,
+		ant.WithInterceptor(antotel.New(otel.Tracer("ant"))),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// ... serve requests, passing each request's context to ant
+}
+```
+
+### What a span holds
+
+| | |
+| --- | --- |
+| Name | `db.` and the statement's first word in lower case: `db.select`, `db.insert`, `db.update`, `db.delete` |
+| Kind | Client |
+| `db.query.text` | The SQL, with placeholders. Values are never recorded |
+| Status | Error, with the error recorded, when the statement fails |
+
+Pass the request's context to every ant call. The span becomes a child of the request's span only if the context carries it. With an HTTP server instrumented by `otelhttp`, a request's trace then shows each statement under it.
+
+In v0.2.0 the tracer sets `db.system` to `postgresql` for every database, so on MySQL, SQLite or SQL Server, relabel that attribute in your collector. The next release adds a `WithDialect` option to `otel.New`, which names the database ([#61](https://github.com/skudra-go/ant/issues/61)).
+
+## Metrics
+
+The `metrics` package counts statements by kind (`SELECT`, `INSERT` and so on) and serves them in Prometheus text format. It has no dependencies.
+
+```go
+m := metrics.New()
+
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(m))
+
+http.Handle("/metrics", m)
+```
+
+{/*
+```go
+var m *metrics.Metrics
+```
+*/}
+
+Each kind exports a count, an error count and a duration histogram with buckets from 1 ms to 5 s:
+
+```text
+ant_statements_total{kind="SELECT"} 42
+ant_statement_errors_total{kind="SELECT"} 0
+ant_statement_seconds_bucket{kind="SELECT",le="0.005"} 40
+ant_statement_seconds_sum{kind="SELECT"} 0.113
+ant_statement_seconds_count{kind="SELECT"} 42
+```
+
+Duration ends when the database answers, before rows are read.
+
+### Read the numbers in code
+
+`Snapshot` returns the totals as data, so a few lines of your own can publish them through any meter, such as an OpenTelemetry callback gauge:
+
+```go
+for _, s := range m.Snapshot() {
+	fmt.Println(s.Kind, s.Count, s.Errors, s.Duration)
+}
+```
+
+### Use both
+
+Interceptors stack. Pass `WithInterceptor` once for each:
+
+```go no-check
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
+	ant.WithInterceptor(m),
+	ant.WithInterceptor(antotel.New(otel.Tracer("ant"))),
+)
+```

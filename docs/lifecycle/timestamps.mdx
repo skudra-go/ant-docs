@@ -1,11 +1,11 @@
 ---
 title: Timestamps
-description: CreatedAt and UpdatedAt, maintained for you on any model.
+description: CreatedAt and UpdatedAt are set by ant on any model that has them.
 ---
 
-Fields named `CreatedAt` and `UpdatedAt` are kept up to date for you, whether they come from `ant.Base` or not. You never have to set them.
+A model with fields named `CreatedAt` and `UpdatedAt` gets them filled in on every write, whether they come from `ant.Base` or are declared on the model. You never set them yourself.
 
-## What moves them
+## Add the fields
 
 ```go
 type Note struct {
@@ -18,18 +18,53 @@ type Note struct {
 }
 ```
 
+## What moves them
+
 | Action | `CreatedAt` | `UpdatedAt` |
 | --- | --- | --- |
 | `Insert`, `InsertMany`, `Upsert` | Set | Set |
+| `Merge`, row inserted | Set | Set |
+| `Merge`, row matched | | Moved |
 | `SaveChanges` with a change | | Moved |
 | `SaveChanges` with no change | | Left alone |
+| Unlinking a child from a to-many relation | | Moved |
 | Bulk `Update` | | Moved |
 
-Times are stored at the database's precision, so the value on your struct matches what's in the table. If you set a time yourself, it's kept on insert, and `ant.Set(&U.UpdatedAt, t)` wins on update.
+An update writes `updated_at` next to the columns you changed:
 
-## A clock for tests
+```go
+user.Name = "Carol"
+err := db.SaveChanges(ctx)
+// UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
 
-`ant.WithNow` lets you set the clock, which keeps tests predictable.
+```go
+_, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Update(ctx, ant.Set(&U.Age, 31))
+// UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."name" = $3
+```
+
+Times are stored at the database's precision, so the value on your struct matches what is in the table.
+
+Unlinking a child sets its foreign key to `NULL` with an `UPDATE`, which is a write like any other. It moves `UpdatedAt` and, on a versioned model, the [version](/lifecycle/optimistic-concurrency). `Merge` fills in the same columns as `Insert` and `Update` do, unless one of its assignments gives the column a value.
+
+## Set a time yourself
+
+A `CreatedAt` you set is kept on insert. An `UpdatedAt` that the write gives wins over ant's, so you can backfill or import without ant overwriting it:
+
+```go
+_, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Update(ctx, ant.Set(&U.UpdatedAt, imported))
+// UPDATE "users" SET "updated_at" = $1 WHERE "users"."name" = $2
+```
+
+{/*
+```go
+var imported time.Time
+```
+*/}
+
+## Fix the clock in tests
+
+`ant.WithNow` replaces the clock ant reads, so tests can assert exact times.
 
 ```go
 now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -40,9 +75,9 @@ clock := ant.WithNow(func() time.Time { return now })
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, clock)
 ```
 
-## Unix seconds
+## Store Unix seconds
 
-`ant.UnixTime` stores a time as an integer, and it's kept up to date all the same.
+`ant.UnixTime` stores a time as an integer. It is maintained the same way.
 
 ```go
 type Stamped struct {
@@ -54,9 +89,9 @@ type Stamped struct {
 }
 ```
 
-## Opting out
+## Turn it off
 
-`b.NoTimestamps` turns all of this off for one model, and leaves the fields as you set them.
+`b.NoTimestamps` stops ant from touching the fields on one model. Use it when another system owns them.
 
 ```go
 func (Note) Configure(b *ant.ModelBuilder[Note]) {

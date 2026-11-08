@@ -3,9 +3,9 @@ title: Logging
 description: Statements through log/slog, with values kept out by default.
 ---
 
-`ant.WithLogger` logs statements through `log/slog`. Values stay out of the logs unless you opt in, and there's a test that proves it.
+`ant.WithLogger` logs every statement through `log/slog`. Values stay out of the logs unless you ask for them.
 
-## Turning it on
+## Log statements
 
 ```go
 logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -16,9 +16,11 @@ logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithLogger(logger))
 ```
 
-Statements log at debug, slow ones at warning, and failures at error.
+Each line carries the SQL, the duration and the number of arguments. Statements log at debug, slow ones at warning, and failures at error. Set the handler's level to debug to see them all.
 
 ## Slow queries
+
+With `SlowThreshold`, statements at or over the limit log at warning. Without it, none do.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
@@ -27,9 +29,9 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 )
 ```
 
-## Values
+## Log values
 
-`ant.LogValues` puts values in logs, for development.
+`ant.LogValues` adds the argument values to each line. Use it in development only, since values can be passwords or personal data.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
@@ -38,7 +40,9 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 )
 ```
 
-`.Sensitive()` keeps a column out even then, on inserts, updates, `Set`, and conditions. It logs as `[redacted]`.
+## Keep a column out of the logs
+
+`.Sensitive()` marks a column so its value is never logged, even with `LogValues`, on inserts, updates, `Set` and conditions. It logs as `[redacted]`.
 
 ```go
 type Account struct {
@@ -62,7 +66,7 @@ var logger *slog.Logger
 
 :::warning[Limits]
 
-`ant.SQL` arguments aren't covered by `.Sensitive()`, since ant can't tell which column they belong to. And a database error's message can quote a value, so don't return `err.Error()` to users.
+`ant.SQL` arguments are not covered by `.Sensitive()`, because ant cannot tell which column they belong to. A database error's message can also quote a value, so do not return `err.Error()` to users.
 
 :::
 

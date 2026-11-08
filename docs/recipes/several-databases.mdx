@@ -1,13 +1,13 @@
 ---
 title: Several databases
-description: Separate databases per area, and routing by tenant.
+description: Use one context per database, and route requests to a database per tenant.
 ---
 
-For read replicas of a single database, see [read replicas](/transactions/connections#read-replicas). This page is about databases that hold different data.
+This page is for databases that hold different data. For read replicas of a single database, see [read replicas](/transactions/connections#read-replicas).
 
-## One context per database
+## Use one context per database
 
-Declare a context for each. Each has its own models, migrations, and `cmd/migrate`.
+Declare a context for each. Each has its own models, migrations and `cmd/migrate`, and its own connection pool.
 
 ```go keep-db
 type Invoice struct {
@@ -29,9 +29,18 @@ type BillingDB struct {
 
 A relation can't cross databases. Keep the key, and load the other side in a second query. Mark such a relation `.NoForeignKey()`.
 
-## Routing by tenant
+The two contexts can use different databases. `Open` each with its own dialect and DSN:
+
+```go
+mainDB, err := ant.Open[MainDB](ctx, postgres.Dialect, "postgres://localhost/main")
+billingDB, err := ant.Open[BillingDB](ctx, mysql.Dialect, "app:app@tcp(localhost:3306)/billing?parseTime=true")
+```
+
+## Route requests to a database per tenant
 
 To give each large tenant a database of its own, keep a map of open contexts and pick one per request. Open each one once: an ant context owns a connection pool.
+
+Hand each request its own session. A context tracks the entities it loads, and a tracking context serves one operation at a time, so two requests sharing one get `ErrConcurrentUse`. `ant.Session` shares the pool and gives the request a tracker of its own.
 
 ```go
 type Router struct {
@@ -39,8 +48,18 @@ type Router struct {
 	dbs map[string]*AppDB
 }
 
-// spot-start
 func (r *Router) For(ctx context.Context, tenant string) (*AppDB, error) {
+	shared, err := r.pool(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+
+	// spot-next-line
+	return ant.Session(shared), nil
+}
+
+// spot-start
+func (r *Router) pool(ctx context.Context, tenant string) (*AppDB, error) {
 	r.mu.RLock()
 	db := r.dbs[tenant]
 	r.mu.RUnlock()
@@ -69,6 +88,23 @@ func (r *Router) For(ctx context.Context, tenant string) (*AppDB, error) {
 
 func dsnFor(tenant string) string {
 	return "postgres://localhost/" + tenant
+}
+```
+
+Close the pools when the process stops:
+
+```go
+func (r *Router) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var errs []error
+
+	for _, db := range r.dbs {
+		errs = append(errs, db.Close())
+	}
+
+	return errors.Join(errs...)
 }
 ```
 

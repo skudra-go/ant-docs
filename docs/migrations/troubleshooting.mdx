@@ -3,15 +3,15 @@ title: Troubleshooting
 description: What each migration failure means, and what to do about it.
 ---
 
-Every failure here stops before it can do more damage, and tells you what to fix.
+Each failure below stops before it does more damage, and the message says what to fix.
 
 ## A migration failed
 
-It ran in a transaction, so none of it stuck, and later migrations didn't run. The error names the file, the line, and what the database said. Fix the file and run `up` again.
+It ran in a transaction, so none of it stuck, and later migrations didn't run. The error names the file, the line, and what the database said. Fix the file and run `up` again. [Fill a new column from existing data](/migrations/generated-sql#fill-a-new-column-from-existing-data) shows this case and its fix.
 
 ```text
-ant: migration 0002_add_post_slug failed and was rolled back: ERROR: could not create unique index "posts_slug_key" (SQLSTATE 23505)
-  Key (slug)=() is duplicated.
+Error: ant: migration 0016_add_handle failed and was rolled back: ERROR: could not create unique index "people_handle_key" (SQLSTATE 23505)
+  Key (handle)=() is duplicated.
 ```
 
 ## A no-transaction migration failed partway
@@ -25,13 +25,47 @@ Some of it may have run, so `up` refuses to continue. Look at the database, then
 
 Someone edited a file that has already run. Put it back, and make the change in a new migration. If the edit truly changes nothing, such as a comment, run `repair`. Line endings don't count as an edit.
 
+```text
+Error: ant: applied migration was changed: 0015_orders. Applied migrations must not change: put the file back, write a new migration, or run repair if the edit changes nothing
+```
+
+`status` shows the file as `changed`. After `repair`, it is `applied` again.
+
 ## `applied migration is missing`
 
 A file that ran is gone. Put it back. If this is a Go migration, make sure the program imports the package that registers it. `repair` forgets it, if it's gone on purpose.
 
 ## `drift` reports something you did on purpose
 
-If it should be permanent, add it to the models and run `snapshot`, or put it in `Config.Ignore`.
+If it should be permanent, add it to the models and run `snapshot`, or put it in `Config.Ignore`. Each line says what the database would need to do to match, so a line that says `drop index people_nick_idx` means the database has an index the snapshot doesn't.
+
+```text
+The database differs from the snapshot. To match, it would need to:
+  drop index people_nick_idx on people
+  drop column people.nick
+```
+
+## `diff` stops on a rename
+
+A `--rename` whose new name isn't a table or column the models have, or that the snapshot already has, writes nothing. The message lists the names that are new in the models:
+
+```text
+Error: ant: rename "users=peple": models have no table peple; new tables in the models: people
+```
+
+See [renames](/migrations/generated-sql#rename-a-column-or-table).
+
+## `diff` refuses a name
+
+A name over 63 bytes would be cut by PostgreSQL. `diff` says which one; give it a shorter name.
+
+```text
+Error: ant: index name "tickets_a_very_long_index_name_that_goes_well_beyond_the_limit_of_sixty_three_bytes" is 83 bytes, and postgres keeps only 63: give it a shorter one
+```
+
+## `script` refuses a no-transaction migration
+
+`script` guards each migration with a check on the history table, and a migration that runs without a transaction can't be wrapped. Use `script --plain`, or `up`. See [deploying](/migrations/deploying#hand-the-sql-to-someone-else).
 
 ## `diff` wrote something you do not want
 

@@ -1,62 +1,59 @@
 ---
 title: Reading rows
-description: All, First, Single, Find, Each, and everything else that runs a query.
+description: All, First, Single, Find, Each, Pluck, Count and the other calls that run a query.
 ---
 
 A query runs when you call one of these. Which one you pick says how many rows you expect back.
 
-## All
+## Get every matching row
 
-Every matching row, as `[]*T`. No matches means an empty result, not an error.
+`All` returns the rows as `[]*T`. No matches is an empty slice, not an error.
 
 ```go
-// spot-next-line
 users, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(ctx)
-if err != nil {
-	return err
-}
-
-for _, user := range users {
-	fmt.Println(user.Name)
-}
+// SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
 
-## First
+## Get the first row
 
-One row, or `ant.ErrNotFound`.
+`First` returns one row, or `ant.ErrNotFound`. Order the query to say which row is first.
 
 ```go
-// spot-next-line
 oldest, err := db.Users.OrderByDesc(&U.Age).First(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."age" DESC LIMIT $1
+
 if errors.Is(err, ant.ErrNotFound) {
 	return nil
 }
 ```
 
-## Single
+## Get the one row that must exist
 
-Exactly one row. You get `ant.ErrNotFound` if there's none, and `ant.ErrMultipleRows` if there's more, which suits looking up something that should be unique.
+`Single` is for a lookup that should match exactly one row. It returns `ant.ErrNotFound` for none and `ant.ErrMultipleRows` for more than one.
 
 ```go
-// spot-next-line
 user, err := db.Users.Where(ant.Eq(&U.Email, "ada@example.com")).Single(ctx)
+// SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2   -- $2 = 2
 ```
 
-## Find
+It asks for two rows so it can tell one from many.
 
-One row by primary key, or `ant.ErrNotFound`. For a composite key, use [`FindKey`](/models/keys#composite-keys).
+## Find by primary key
+
+`Find` returns the row with that key, or `ant.ErrNotFound`. For a composite key, use [`FindKey`](/models/keys#composite-keys).
 
 ```go
-// spot-next-line
 user, err := db.Users.Find(ctx, id)
+// SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
 ```
 
-## Each
+With tracking on, a `Find` for a row the context already tracks sends no query and returns the tracked instance, unsaved changes included.
 
-Streams rows one at a time, for results too big to hold in memory. It's a Go iterator, and `break` releases the connection.
+## Stream a large result {#each}
+
+`Each` is a Go iterator that yields rows one at a time, for results too big to hold in memory. `break` releases the connection.
 
 ```go
-// spot-next-line
 for user, err := range db.Users.OrderBy(&U.Name).Each(ctx) {
 	if err != nil {
 		return err
@@ -64,60 +61,102 @@ for user, err := range db.Users.OrderBy(&U.Name).Each(ctx) {
 
 	fmt.Println(user.Name)
 }
+// SELECT ... FROM "users" ORDER BY "users"."name"
 ```
 
-If the query has a mistake, it arrives as the only item. `Each` yields values, so its rows aren't tracked, and it refuses `Include` because rows are still streaming in. Use [`Chunk`](/queries/ordering-and-paging#chunks) for that.
+If the query has a mistake, it arrives as the only item. `Each` yields values, so its rows aren't tracked, and it refuses `Include` with `ant.ErrIncludeInEach` because rows are still streaming in. To process a large result in batches with `Include`, use [`Chunk`](/queries/ordering-and-paging#chunks).
 
-## Counting and checking
+## Count and check
+
+`Count` returns the number of matching rows. `Exists` and `DoesNotExist` answer a yes or no without fetching them.
 
 ```go
-// spot-start
 n, err := db.Users.Where(ant.Gt(&U.Age, 18)).Count(ctx)
+// SELECT COUNT(*) FROM "users" WHERE "users"."age" > $1
+
 found, err := db.Users.Where(ant.Eq(&U.Name, "Ada")).Exists(ctx)
+// SELECT EXISTS (SELECT 1 FROM "users" WHERE "users"."name" = $1)
+
 missing, err := db.Users.Where(ant.Eq(&U.Name, "Ada")).DoesNotExist(ctx)
-// spot-end
 ```
 
-`Count` honors `Limit`, `Offset`, and `Distinct`.
-
-## One column
-
-`ant.Pluck` reads a single column into a slice of its type. With a pointer column, `NULL`s stay `nil`.
+`Count` honors `Limit`, `Offset` and `Distinct` by counting the rows of the limited query:
 
 ```go
-// spot-start
-names, err := ant.Pluck(ctx, db.Users.OrderBy(&U.Name), &U.Name)
-bios, err := ant.Pluck(ctx, db.Users.Where(), &U.Bio)
-// spot-end
+n, err := db.Users.OrderBy(&U.Name).Limit(5).Count(ctx)
+// SELECT COUNT(*) FROM (SELECT ... FROM "users" LIMIT $1) AS "ant_counted"
 ```
 
-## Part of a row
+On a query built with `FromCTE` or `Recursive`, `Count` and `Exists` write the `WITH` at the start of the statement on every database, because SQL Server takes it nowhere else. See [CTEs](/queries/subqueries-and-sets#common-table-expressions).
+
+## Read one column
+
+`ant.Pluck` reads a single column into a slice of its Go type. It is the call for a dropdown or a list of ids.
+
+```go
+names, err := ant.Pluck(ctx, db.Users.Where(ant.Gte(&U.Age, 18)).OrderBy(&U.Name), &U.Name)
+// SELECT "users"."name" FROM "users" WHERE "users"."age" >= $1 ORDER BY "users"."name"
+```
+
+With a pointer column, `NULL`s come back as `nil`:
+
+```go
+bios, err := ant.Pluck(ctx, db.Users.Where(), &U.Bio) // []*string
+// SELECT "users"."bio" FROM "users"
+```
+
+## Load part of a row
 
 `Column` and `Omit` load only some columns. The other fields keep their zero value, which is why these rows are never tracked: they can't be saved by mistake.
 
 ```go
-// spot-start
 names, err := db.Users.Column(&U.ID).Column(&U.Name).All(ctx)
+// SELECT "users"."id", "users"."name" FROM "users"
+
 small, err := db.Users.Omit(&U.Bio).All(ctx)
-// spot-end
+// SELECT "users"."id", "users"."created_at", "users"."updated_at", "users"."name", "users"."email", "users"."age" FROM "users"
 ```
 
-## Distinct
+For results in a shape of your own, see [projections](/queries/projections).
+
+## Distinct values
 
 ```go
-// spot-next-line
 ages, err := db.Users.Column(&U.Age).Distinct().All(ctx)
+// SELECT DISTINCT "users"."age" FROM "users"
 ```
 
-## Skipping the tracker
+## Skip the tracker
 
 Results are tracked by default, so `SaveChanges` can see what you change. For reads you won't change, `NoTracking` skips the snapshot.
 
 ```go
-// spot-next-line
 users, err := db.Users.NoTracking().Where(ant.Gt(&U.Age, 18)).All(ctx)
 ```
 
 `NoTrackingResolved` skips it too, but still gives each row a single instance, which helps when a read returns the same parent many times.
+
+## One tracking context, one operation at a time
+
+A tracked read hands out the same instance of a row to every query on the context, and `Include` writes related rows into it. So a context that tracks serves one operation at a time. A tracked read, `Find` included, claims the tracker, and a second one that starts before the first ends returns `ant.ErrConcurrentUse` instead of waiting.
+
+Give each request or goroutine its own context with `ant.Session`. A context opened with `ant.WithTracking(false)` never claims, so it is safe to share.
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+	db := ant.Session(shared) // its own tracker
+
+	users, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(r.Context())
+	// ...
+}
+```
+
+{/*
+```go
+var shared *AppDB
+```
+*/}
+
+`Chunk` claims the tracker for one batch at a time and lets go before it calls your function, so the function can run queries on the same context. A hook that queries must pass on the `context.Context` it was given, so its query counts as part of the operation that ran it.
 
 <Tests path="querying" />

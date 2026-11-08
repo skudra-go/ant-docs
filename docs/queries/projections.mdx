@@ -11,9 +11,9 @@ A projection turns rows into a struct of your own. There are two ways to do it, 
 | Fetches | Every column of each joined table | Only what you map |
 | Can use | Any Go code | Columns and expressions |
 
-## Select
+## Shape rows in Go with Select
 
-`Select` takes a typed closure on a join. It reads naturally and can run any Go you like, because Go can't look inside a closure to turn it into SQL.
+`Select` takes a typed closure on a [join](/queries/joins). It reads naturally and can run any Go you like, because Go can't look inside a closure to turn it into SQL.
 
 ```go
 type Summary struct {
@@ -24,43 +24,47 @@ type Summary struct {
 summaries, err := db.Posts.
 	Join(&P.User).
 	Where(ant.Eq(&P.Published, true)).
-	// spot-start
 	Select(func(p *Post, u *User) Summary {
 		return Summary{u.Name, p.Title}
 	}).
-	// spot-end
 	All(ctx)
+// SELECT "posts"."id", "posts"."created_at", ..., "users"."id", "users"."created_at", ...
+// FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "posts"."published" = $1
 ```
 
-The result has `All`, `First`, and `Each`, and it is `[]Summary`, not a slice of pointers.
+The result has `All`, `First` and `Each`, and it is `[]Summary`, not a slice of pointers.
 
-## Project
+## Shape rows in SQL with Project
 
 `Project` selects only the columns you map, so it's cheaper on wide tables. Each mapping is a pair of probes: where the value goes, then where it comes from.
 
 ```go
 var S = ant.Fields[Summary]()
 
-// spot-start
 summaries, err := ant.Project[Summary](
 	db.Posts.Join(&P.User).Where(ant.Eq(&P.Published, true)),
 	ant.Into(&S.Author, &U.Name),
 	ant.Into(&S.Title, &P.Title),
 ).All(ctx)
-// spot-end
+// SELECT "users"."name" AS "author", "posts"."title" AS "title"
+// FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "posts"."published" = $1
 ```
 
-`IntoExpr` maps an expression. A column that can be `NULL` needs a nullable destination.
+`IntoExpr` maps an [expression](/queries/expressions). A column that can be `NULL` needs a nullable destination.
 
 ```go
 ant.Project[Summary](
 	db.Users.Where(ant.Eq(&U.Name, "Bob")),
-	// spot-next-line
 	ant.IntoExpr(&S.Author, ant.Upper(&U.Name)),
 )
+// SELECT UPPER("users"."name") AS "author" FROM "users" WHERE "users"."name" = $1
 ```
 
-## A computed field
+`Project` is also how [grouped results](/queries/aggregates-and-grouping) and [window functions](/queries/window-functions) come back.
+
+## Add a computed field to whole models {#a-computed-field}
 
 To keep whole models and add a value to each, tag a field `computed` and fill it with `With`. It's never written.
 
@@ -69,14 +73,12 @@ type Author struct {
 	ID        int64
 	Name      string
 	Posts     []Post
-	// spot-next-line
 	PostCount int64 `ant:"computed"`
 }
 
 var A = ant.Fields[Author]()
 
 authors, err := db.Authors.
-	// spot-next-line
 	With(&A.PostCount, ant.CountRelated(&A.Posts)).
 	All(ctx)
 ```

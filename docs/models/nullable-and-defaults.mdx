@@ -1,11 +1,11 @@
 ---
 title: Nullable columns and defaults
-description: Pointers, sql.Null, and the one place a zero value means something.
+description: Pointers and sql.Null for NULL, and ant:"default" for database defaults.
 ---
 
-A plain field can't hold `NULL`, so ant never has to guess what a zero value means. Use a pointer or `sql.Null[T]` for any column that can be empty.
+A plain field can't hold `NULL`, so a zero value is always a real value that ant writes as it is. For a column that can be empty, use a pointer or `sql.Null[T]`. The one exception is a field tagged `default`, below.
 
-## Nullable fields
+## Allow NULL in a column
 
 ```go
 type Profile struct {
@@ -25,49 +25,70 @@ profile := &Profile{
 }
 ```
 
-`nil` is `NULL`, and a pointer to an empty string is an empty string. They come back from the database just as different as they went in.
+`nil` is `NULL`, and a pointer to an empty string is an empty string. They come back from the database as different values.
 
-Reading `NULL` into a plain field is an error, not a quiet zero.
+Reading `NULL` into a plain field is an error, not a quiet zero. If a column holds `NULL` in old rows, make the field a pointer or `sql.Null`. The same goes for custom types: use a pointer to the type.
 
 ## Querying for NULL
 
-`ant.Eq` with `nil` renders `IS NULL`, and a pointer value compares what it points to.
+`ant.Eq` with `nil` becomes `IS NULL`, and a pointer value compares what it points to.
 
 ```go
 // spot-start
 noBio, err := db.Users.Where(ant.Eq(&U.Bio, nil)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" IS NULL
+
 same, err := db.Users.Where(ant.IsNull(&U.Bio)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" IS NULL
+
 hasBio, err := db.Users.Where(ant.IsNotNull(&U.Bio)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" IS NOT NULL
+
 gophers, err := db.Users.Where(ant.Eq(&U.Bio, new("Gopher"))).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" = $1
 // spot-end
 ```
 
-Setting works the same way, with `nil` writing `NULL`.
+`In` and `NotIn` treat a `nil` among their values the same way. See [conditions](/queries/conditions#null).
+
+## Set a column to NULL
+
+`nil` in `ant.Set` writes `NULL`.
 
 ```go
 // spot-next-line
 _, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Bio, nil))
+// UPDATE "users" SET "bio" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+// -- $1 = NULL
 ```
 
 ## Database defaults
 
-`ant:"default"` says a zero value in this field should be left to the column's default. After the insert, the value the database chose is copied back.
+`ant:"default=expr"` says the column has a default, and that a zero value in this field means "use it". Insert leaves the column out when the field is zero, and copies the value the database chose back onto the struct.
 
 ```go
 type Account struct {
 	ID     int64
 	// spot-next-line
-	Status string `ant:"default"` // the column has DEFAULT 'new'
+	Status string `ant:"default='new'"`
 }
 
 account := &Account{}
 
 err := db.Accounts.Insert(ctx, account)
+// INSERT INTO "accounts" DEFAULT VALUES RETURNING "id", "status"
 
 fmt.Println(account.Status) // "new"
 ```
 
-Migrations need to know the default. `ant:"default=0"` is short for `b.Column(...).Default("0")`, and either one sets the column's `DEFAULT` too.
+A field with a value is written as given:
+
+```go
+err = db.Accounts.Insert(ctx, &Account{Status: "vip"})
+// INSERT INTO "accounts" ("status") VALUES ($1) RETURNING "id"
+```
+
+The expression is also the column's `DEFAULT` in migrations. The same default can be set in `Configure`, and the tag can then stay bare:
 
 ```go
 func (Post) Configure(b *ant.ModelBuilder[Post]) {
@@ -76,9 +97,11 @@ func (Post) Configure(b *ant.ModelBuilder[Post]) {
 }
 ```
 
+A bare `ant:"default"` works at run time, but `EnsureCreated` and migrations refuse it with `ErrBadSchema`, since the column would have no default to use.
+
 :::danger[A default makes zero mean "not set"]
 
-This is the one place ant does what it otherwise refuses to: treat zero as "not set". So only put a default on a field whose zero means nothing. With `Floor float64` and a default of `-100.00`, a real `0.00` silently becomes `-100.00`. Without a default, zero is written as zero.
+This is the one place ant treats a zero as missing. Put a default only on a field whose zero means nothing. With `Floor float64` and a default of `-100.00`, a real `0.00` becomes `-100.00`. Without the tag, zero is written as zero.
 
 :::
 

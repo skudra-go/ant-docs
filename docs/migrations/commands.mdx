@@ -29,7 +29,7 @@ Run each with `go run ./cmd/migrate <command>`.
 | `up --to <version>` | Stop after this version |
 | `up --dry-run` | Print what would run |
 | `status` | List every migration and where it stands |
-| `drift` | Compare the live database with the migrations, `--sql` for the fix |
+| `drift` | Compare the live database with the snapshot, `--sql` for the fix |
 | `db-show` | Summarize the live database: version, size, and tables |
 | `baseline [version]` | Record migrations as applied without running them |
 | `repair` | Accept changed files, clear failed runs, and forget missing files |
@@ -37,3 +37,78 @@ Run each with `go run ./cmd/migrate <command>`.
 | `reset` | Delete everything and apply all migrations, `--seed` to seed too |
 
 These take `--dsn`, and otherwise read `DATABASE_URL`, then `Config.DSN`.
+
+## Look at the models
+
+`inspect` lists the tables and columns the models describe, with no database:
+
+```bash
+go run ./cmd/migrate inspect tickets
+```
+
+```text
+tickets
+  id bigint NOT NULL GENERATED
+  qty bigint NOT NULL DEFAULT 1
+  status ticket_status NOT NULL DEFAULT 'waiting'
+  views bigint
+  due interval NOT NULL
+  level ticket_level NOT NULL
+  primary key (id)
+  index tickets_views_idx
+```
+
+`schema-dump` prints the whole schema as SQL, from the models, or from the snapshot with `--snapshot`.
+
+## Look at the database
+
+`db-show` gives the version, the size and a row estimate per table:
+
+```bash
+go run ./cmd/migrate db-show
+```
+
+```text
+docs_6 on postgres 17.11 (Debian 17.11-1.pgdg13+2), 8550 kB
+TABLE           ROWS (ESTIMATE)  SIZE
+ant_migrations  0                32 kB
+```
+
+`drift` lists what differs between the database and the snapshot, and exits with status 1 when anything does. With `--sql` it also prints the migration that would close the gap, which you can use as a starting point:
+
+```bash
+go run ./cmd/migrate drift --sql
+```
+
+```text
+The database differs from the snapshot. To match, it would need to:
+  drop index people_nick_idx on people
+  drop column people.nick
+  change column people.name: type character varying(50) to text
+```
+
+```sql
+DROP INDEX "people_nick_idx";
+
+-- WARNING: this drops column people.nick and its data.
+ALTER TABLE "people" DROP COLUMN "nick";
+
+-- WARNING: changing people.name from character varying(50) to text may fail or lose data, depending on existing values.
+ALTER TABLE "people" ALTER COLUMN "name" TYPE text USING "name"::text;
+```
+
+Before the first snapshot exists, `drift` compares with the models instead. That is how [adopting a database](/migrations/adopting) works. Names in `Config.Ignore` are left out of the comparison.
+
+## Fix the history table
+
+`repair` accepts the current contents of an applied file whose checksum changed:
+
+```bash
+go run ./cmd/migrate repair
+```
+
+```text
+Accepted the current contents of 0015_orders.
+```
+
+It also clears a failed no-transaction run, and forgets a migration whose file is gone. [Troubleshooting](/migrations/troubleshooting) says when to use each.

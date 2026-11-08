@@ -1,13 +1,13 @@
 ---
 title: Custom types
-description: Named types, Scanner and Valuer, JSON, and PostgreSQL's types.
+description: Named types, Scanner and Valuer, ant.JSON, and PostgreSQL types as column types.
 ---
 
-Any type `database/sql` can read and write works as a column. ant adds field types for the things most projects need, so the compiler can see those too.
+Any type that `database/sql` can read and write works as a column. ant adds types for what most projects need, such as JSON, so conditions on them stay typed too.
 
-## Named types
+## Enums and other named types
 
-A named basic type needs nothing extra, so Go-style enums work the way they always have.
+A named type over a basic type needs no methods. This is how Go enums map to a column.
 
 ```go
 // spot-next-line
@@ -25,6 +25,7 @@ var I = ant.Fields[Invoice]()
 
 // spot-next-line
 paid, err := db.Invoices.Where(ant.Eq(&I.Status, Paid)).All(ctx)
+// SELECT ... FROM "invoices" WHERE "invoices"."status" = $1
 ```
 
 {/*
@@ -34,13 +35,14 @@ type PageDB struct {
 	Invoices ant.Table[Invoice]
 	Devices  ant.Table[Device]
 	Items    ant.Table[Item]
+	Notes    ant.Table[Note]
 }
 ```
 */}
 
-## Your own conversions
+## Convert your own type
 
-Implement `sql.Scanner` and `driver.Valuer`, and the type converts itself wherever it appears, with nothing to register. A pointer to it's nullable, and conditions use the converted value.
+Implement `driver.Valuer` and `sql.Scanner`, and the type converts itself wherever it appears. Nothing is registered. A pointer to the type is a nullable column, and conditions send the converted value.
 
 ```go
 type Money struct {
@@ -76,9 +78,77 @@ func (m *Money) parse(text string) error {
 ```
 */}
 
+Without `ColumnType`, set the column type in `Configure` with `b.Column(&...).Type("numeric(19,4)")`, or migrations stop with `ant.ErrNoColumnType`.
+
+A custom type is the right choice when the value is one thing with its own encoding: money, a phone number, a coordinate, a comma-separated list. Use [`ant.JSON`](#json) when the value is a document you may want to look inside.
+
+### Slice types
+
+A slice type that implements both interfaces is one column. It is not a has-many relation, even when its elements are structs.
+
+```go
+type Tags []string
+
+func (t Tags) Value() (driver.Value, error) {
+	return strings.Join(t, ","), nil
+}
+
+func (t *Tags) Scan(src any) error {
+	text, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("tags: unexpected %T", src)
+	}
+
+	*t = strings.Split(text, ",")
+
+	return nil
+}
+
+func (Tags) ColumnType(dialect string) string {
+	return "text"
+}
+
+type Note struct {
+	ID   int64
+	Tags Tags
+}
+
+note := &Note{Tags: Tags{"go", "orm"}}
+
+err := db.Notes.Insert(ctx, note)
+// INSERT INTO "notes" ("tags") VALUES ($1) RETURNING "id" -- $1 = go,orm
+
+note.Tags = append(note.Tags, "sql")
+
+err = db.SaveChanges(ctx)
+// UPDATE "notes" SET "tags" = $1 WHERE "notes"."id" = $2 -- $1 = go,orm,sql
+```
+
+Tracking sees an edit inside the slice, as above.
+
+### Methods on a pointer
+
+`Value` may have a pointer receiver. ant binds such a field through a pointer, so the method runs, even when the field is not a pointer itself.
+
+```go
+type Temp struct {
+	Milli int64
+}
+
+func (t *Temp) Value() (driver.Value, error) {
+	return t.Milli, nil
+}
+
+func (t *Temp) Scan(src any) error {
+	t.Milli = src.(int64)
+
+	return nil
+}
+```
+
 ## JSON
 
-`ant.JSON[T]` stores a Go value in a JSON column, and ant notices a change anywhere inside it. It marshals as the document it holds, so a model can go straight into an API response.
+`ant.JSON[T]` stores a Go value in a JSON column (`jsonb` on PostgreSQL, `json` elsewhere). Tracking notices a change anywhere inside the value. It marshals as the document it holds, so a model can go straight into an API response.
 
 ```go
 type Prefs struct {
@@ -101,6 +171,7 @@ err := db.Devices.Insert(ctx, phone)
 phone.Prefs.V.Theme = "light"
 
 err = db.SaveChanges(ctx)
+// UPDATE "devices" SET "prefs" = $1 WHERE "devices"."id" = $2
 ```
 
 {/*
@@ -109,37 +180,62 @@ var D = ant.Fields[Device]()
 ```
 */}
 
-On PostgreSQL you can reach inside it:
+A `NULL` column reads as the zero value of `T`. Text that is not valid UTF-8 is refused with an error when the value is written, as a text column would refuse it. `encoding/json` would otherwise store U+FFFD in its place.
+
+`ant.JSON[[]string]` is the simple way to keep a list in a row.
+
+### Query inside JSON (PostgreSQL)
+
+The `postgres` package reads and updates parts of a document. Paths are bound as parameters.
 
 ```go
 // spot-start
 dark := postgres.JSONText(&D.Prefs, "theme").Eq("dark")
+// "devices"."prefs" #>> $1::text[] = $2   -- $1 = {"theme"}
+
 second := postgres.JSONText(&D.Prefs, "tags", "1").Eq("b")
+// "devices"."prefs" #>> $1::text[] = $2   -- $1 = {"tags","1"}
+
 contains := postgres.JSONContains(&D.Prefs, map[string]any{"theme": "light"})
+// ("devices"."prefs" @> $1::jsonb)
+
 hasKey := postgres.JSONHasKey(&D.Prefs, "theme")
+// (jsonb_exists("devices"."prefs", $1))
 // spot-end
 
 phones, err := db.Devices.Where(dark).All(ctx)
 ```
 
-`postgres.JSONSet` updates one value inside a document, and `postgres.JSONLength` measures one.
+`postgres.JSONSet` changes one value inside a document without loading it. `postgres.JSONLength` measures one.
 
 ```go
 _, err := db.Devices.Where(ant.Eq(&D.ID, id)).
 	// spot-next-line
 	Update(ctx, ant.SetExpr(&D.Prefs, postgres.JSONSet(&D.Prefs, "light", "theme")))
+// UPDATE "devices" SET "prefs" = jsonb_set("devices"."prefs", $1::text[], $2::jsonb)
+// WHERE "devices"."id" = $3
 ```
-
-`ant.JSON[[]string]` is the simple way to keep a list in a row.
 
 ## Other stored forms
 
 | Type | Stores |
 | --- | --- |
-| `ant.Gob[T]` | A Go value with `encoding/gob`, for what only Go reads |
-| `ant.UnixTime` | A time as whole seconds. Works as `CreatedAt` and `UpdatedAt` |
+| `ant.Gob[T]` | A Go value with `encoding/gob`, for data only Go reads |
+| `ant.UnixTime` | A time as whole seconds in a `bigint`. Works as `CreatedAt` and `UpdatedAt` |
 | `[]byte` | Binary data |
 | [`secure.Value[T]`](/recipes/encrypted-fields) | A value encrypted with AES-256-GCM |
+
+`ant.UnixTime` stores the zero time as `0`, and reads `0` back as the zero time. The Unix epoch (1970-01-01 00:00:00 UTC) is also stored as `0`, so it comes back as the zero time. `secure.Value`, like `ant.JSON`, refuses text that is not valid UTF-8.
+
+## Limits of the drivers
+
+Some values are refused by `database/sql` or by a driver, and ant doesn't work around them:
+
+- `sql.Null[uint64]` above `math.MaxInt64`. A plain `uint64` field is accepted.
+- `NULL` into a named `[]byte` type such as `json.RawMessage` or `net.IP`. Use a pointer to the type for a column that allows `NULL`.
+- PostgreSQL `INTERVAL` into a `time.Duration`. Store microseconds, or read it into `pgtype.Interval`.
+
+See [databases](/reference/databases) for the rest.
 
 ## PostgreSQL types
 

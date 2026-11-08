@@ -5,9 +5,9 @@ description: Single-table inheritance, table splitting, views, and schemas.
 
 A model usually has a table to itself. These are the cases where it doesn't.
 
-## One table, several models
+## Several models in one table
 
-Go has no inheritance, so each model is its own plain struct, and a discriminator column says which rows belong to which. Inserts set it for you, and each model's queries only see its own rows.
+Go has no inheritance, so each type is its own plain struct, and a discriminator column says which rows belong to which. Insert sets the discriminator for you, and each model's queries see only its own rows.
 
 ```go
 type Dog struct {
@@ -44,9 +44,33 @@ var (
 )
 ```
 
-Migrations see one table, and a column only one model declares allows `NULL`.
+```go
+err := db.Dogs.Insert(ctx, &Dog{Name: "Rex"})
+// INSERT INTO "animals" ("kind", "name") VALUES ($1, $2) RETURNING "id" -- $1 = dog
 
-Models can also share a table with no discriminator, which is table splitting: a small model for the common read, and a full one for the rest.
+dogs, err := db.Dogs.Where(ant.Eq(&DG.Name, "Rex")).All(ctx)
+// SELECT ... FROM "animals" WHERE "animals"."name" = $1 AND "animals"."kind" = $2 -- $2 = dog
+
+cats, err := db.Cats.Where(ant.Eq(&CT.Name, "Rex")).All(ctx)
+// SELECT ... FROM "animals" WHERE "animals"."name" = $1 AND "animals"."kind" = $2 -- $2 = cat
+```
+
+Migrations see one table. A column that only one model declares, such as `barks`, allows `NULL`.
+
+{/*
+```go
+type AnimalsDB struct {
+	ant.Context
+	Dogs     ant.Table[Dog]
+	Cats     ant.Table[Cat]
+	Invoices ant.Table[Invoice]
+}
+```
+*/}
+
+## Split one table into several models
+
+Models can share a table with no discriminator. This is table splitting: a small model for the common read, and a full one for the rest.
 
 ```go
 type UserName struct {
@@ -60,11 +84,11 @@ func (UserName) Configure(b *ant.ModelBuilder[UserName]) {
 }
 ```
 
-For a separate table per type, embed a shared struct in each model. That's plain Go, and no ant feature is involved.
+To keep a separate table per type, embed a shared struct in each model. That is plain Go.
 
-## Views
+## Map a model to a view
 
-`b.View` maps a model to a view. It reads like a table, and refuses every write with `ant.ErrReadOnly`. Define the view itself in [`migrations/code`](/migrations/hand-written#views-and-functions).
+`b.View` maps a model to a database view. It reads like a table and refuses every write with `ant.ErrReadOnly`. Create the view itself in [`migrations/code`](/migrations/hand-written#views-and-functions).
 
 ```go
 type ActiveUser struct {
@@ -78,15 +102,22 @@ func (ActiveUser) Configure(b *ant.ModelBuilder[ActiveUser]) {
 }
 ```
 
-## Schemas
+A tracked row from a view can't be saved either: `SaveChanges` returns `ant.ErrReadOnly`.
 
-`b.Schema` places a table in a database schema. Migrations create the schema and qualify everything.
+## Put a table in a schema
+
+`b.Schema` places a table in a database schema. Migrations create the schema and qualify every name.
 
 ```go
 func (Invoice) Configure(b *ant.ModelBuilder[Invoice]) {
 	// spot-next-line
 	b.Schema("billing")
 }
+```
+
+```go
+invoices, err := db.Invoices.All(ctx)
+// SELECT ... FROM "billing"."invoices"
 ```
 
 {/*

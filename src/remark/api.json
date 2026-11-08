@@ -1,10 +1,10 @@
 {
 	"module": "github.com/skudra-go/ant",
-	"version": "v0.1.0",
+	"version": "v0.2.0",
 	"packages": {
 		"ant": {
 			"path": "github.com/skudra-go/ant",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0",
 			"symbols": {
 				"Action": {
 					"kind": "type",
@@ -13,7 +13,7 @@
 				},
 				"Add": {
 					"kind": "func",
-					"decl": "func Add[T any](h Handle, entity *T) error",
+					"decl": "func Add[T any](ctx context.Context, h Handle, entity *T) error",
 					"doc": "Add schedules a new entity for insertion by the next SaveChanges."
 				},
 				"Added": {
@@ -111,7 +111,7 @@
 				},
 				"Attach": {
 					"kind": "func",
-					"decl": "func Attach[T any](h Handle, entity *T) error",
+					"decl": "func Attach[T any](ctx context.Context, h Handle, entity *T) error",
 					"doc": "Attach tracks an entity as it is, assuming it matches the database."
 				},
 				"Attempts": {
@@ -435,7 +435,7 @@
 				},
 				"Context.ClearTracked": {
 					"kind": "method",
-					"decl": "func (c *Context) ClearTracked()",
+					"decl": "func (c *Context) ClearTracked(ctx context.Context) error",
 					"doc": "ClearTracked stops tracking everything, forgetting unsaved changes."
 				},
 				"Context.Close": {
@@ -455,7 +455,7 @@
 				},
 				"Context.DebugTracked": {
 					"kind": "method",
-					"decl": "func (c *Context) DebugTracked() string",
+					"decl": "func (c *Context) DebugTracked(ctx context.Context) (string, error)",
 					"doc": "DebugTracked describes every tracked entity, for logs and debugging."
 				},
 				"Context.Dialect": {
@@ -475,8 +475,8 @@
 				},
 				"Context.HasChanges": {
 					"kind": "method",
-					"decl": "func (c *Context) HasChanges() bool",
-					"doc": "HasChanges reports whether SaveChanges has anything to write."
+					"decl": "func (c *Context) HasChanges(ctx context.Context) (bool, error)",
+					"doc": "HasChanges reports whether SaveChanges has anything to write: an entity added, removed, or changed, and an entity added to, taken out of, or moved between the relations it loaded."
 				},
 				"Context.Release": {
 					"kind": "method",
@@ -574,7 +574,7 @@
 				},
 				"Detach": {
 					"kind": "func",
-					"decl": "func Detach[T any](h Handle, entity *T)",
+					"decl": "func Detach[T any](ctx context.Context, h Handle, entity *T) error",
 					"doc": "Detach stops tracking an entity."
 				},
 				"Detached": {
@@ -620,7 +620,7 @@
 				"EntityEntry": {
 					"kind": "type",
 					"decl": "type EntityEntry[] struct{ … }",
-					"doc": "EntityEntry inspects one entity's tracking state."
+					"doc": "EntityEntry is one entity's tracking state, as it was when Entry read it: a change to the entity, or a save, since does not show in it."
 				},
 				"EntityEntry.Changed": {
 					"kind": "method",
@@ -634,7 +634,7 @@
 				},
 				"Entry": {
 					"kind": "func",
-					"decl": "func Entry[T any](h Handle, entity *T) *EntityEntry[T]",
+					"decl": "func Entry[T any](ctx context.Context, h Handle, entity *T) (*EntityEntry[T], error)",
 					"doc": "Entry returns the tracking state of an entity."
 				},
 				"Eq": {
@@ -656,6 +656,11 @@
 					"kind": "var",
 					"decl": "var ErrConcurrency = errors.New(\"ant: row was changed or removed since it was loaded\")",
 					"doc": "ErrConcurrency reports that SaveChanges found a row changed or removed since it was loaded."
+				},
+				"ErrConcurrentUse": {
+					"kind": "var",
+					"decl": "var ErrConcurrentUse = errors.New( \"ant: a tracking context was used by two operations at once; give each \" + \"gorout...",
+					"doc": "ErrConcurrentUse reports a context with change tracking used by two operations at once."
 				},
 				"ErrCursor": {
 					"kind": "var",
@@ -1187,7 +1192,7 @@
 				"In": {
 					"kind": "func",
 					"decl": "func In[V comparable](field *V, values ...V) Cond",
-					"doc": "In matches rows where field equals one of values."
+					"doc": "In matches rows where field equals one of values, as Eq would."
 				},
 				"InSub": {
 					"kind": "func",
@@ -1244,6 +1249,16 @@
 					"decl": "func (i *IndexBuilder) Name(name string) *IndexBuilder",
 					"doc": "Name sets the index name, in place of table_columns_idx."
 				},
+				"IndexBuilder.NullsFirst": {
+					"kind": "method",
+					"decl": "func (i *IndexBuilder) NullsFirst() *IndexBuilder",
+					"doc": "NullsFirst puts NULLs first in the most recently added column, which only a column going up needs, as one going down has them first already."
+				},
+				"IndexBuilder.NullsLast": {
+					"kind": "method",
+					"decl": "func (i *IndexBuilder) NullsLast() *IndexBuilder",
+					"doc": "NullsLast puts NULLs last in the most recently added column, which only a column going down needs, as one going up has them last already."
+				},
 				"IndexBuilder.Unique": {
 					"kind": "method",
 					"decl": "func (i *IndexBuilder) Unique() *IndexBuilder",
@@ -1273,12 +1288,12 @@
 				"Interceptor.After": {
 					"kind": "method",
 					"decl": "After(ctx context.Context, s *Statement, o Outcome)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Interceptor.After"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Interceptor.After"
 				},
 				"Interceptor.Before": {
 					"kind": "method",
 					"decl": "Before(ctx context.Context, s *Statement) (context.Context, error)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Interceptor.Before"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Interceptor.Before"
 				},
 				"Into": {
 					"kind": "func",
@@ -1681,7 +1696,7 @@
 				},
 				"MarkModified": {
 					"kind": "func",
-					"decl": "func MarkModified[T any](h Handle, entity *T) error",
+					"decl": "func MarkModified[T any](ctx context.Context, h Handle, entity *T) error",
 					"doc": "MarkModified makes the next SaveChanges write every field of an entity."
 				},
 				"Max": {
@@ -2005,7 +2020,7 @@
 				"NotIn": {
 					"kind": "func",
 					"decl": "func NotIn[V comparable](field *V, values ...V) Cond",
-					"doc": "NotIn matches rows where field equals none of values."
+					"doc": "NotIn matches rows where field equals none of values, as Ne would."
 				},
 				"NotInSub": {
 					"kind": "func",
@@ -2089,12 +2104,12 @@
 				"Outcome.Duration": {
 					"kind": "field",
 					"decl": "Duration time.Duration",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Outcome.Duration"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Outcome.Duration"
 				},
 				"Outcome.Err": {
 					"kind": "field",
 					"decl": "Err error",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Outcome.Err"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Outcome.Err"
 				},
 				"Page": {
 					"kind": "type",
@@ -2700,7 +2715,7 @@
 				},
 				"Remove": {
 					"kind": "func",
-					"decl": "func Remove[T any](h Handle, entity *T) error",
+					"decl": "func Remove[T any](ctx context.Context, h Handle, entity *T) error",
 					"doc": "Remove schedules an entity for deletion by the next SaveChanges."
 				},
 				"Restrict": {
@@ -2818,7 +2833,7 @@
 					"kind": "method",
 					"decl": "func (s State) String() string",
 					"doc": "String returns the state's name.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/track#State.String"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/track#State.String"
 				},
 				"Statement": {
 					"kind": "type",
@@ -2828,18 +2843,18 @@
 				"Statement.Args": {
 					"kind": "field",
 					"decl": "Args []any",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Statement.Args"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.Args"
 				},
 				"Statement.Replica": {
 					"kind": "field",
 					"decl": "Replica bool",
 					"doc": "read from a replica",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Statement.Replica"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.Replica"
 				},
 				"Statement.SQL": {
 					"kind": "field",
 					"decl": "SQL string",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/exec#Statement.SQL"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.SQL"
 				},
 				"Sub": {
 					"kind": "type",
@@ -3178,12 +3193,12 @@
 				},
 				"TrackGraph": {
 					"kind": "func",
-					"decl": "func TrackGraph[T any](h Handle, root *T, decide func(GraphNode) State) error",
+					"decl": "func TrackGraph[T any](\n\tctx context.Context,\n\th Handle,\n\troot *T,\n\tdecide func(GraphNode) State,\n) error",
 					"doc": "TrackGraph walks a graph that came from outside, such as a request body, and tracks each entity in the state decide returns for it."
 				},
 				"Tracked": {
 					"kind": "func",
-					"decl": "func Tracked[T any](h Handle) []*T",
+					"decl": "func Tracked[T any](ctx context.Context, h Handle) ([]*T, error)",
 					"doc": "Tracked returns the tracked entities of type T, oldest first."
 				},
 				"TxOption": {
@@ -3205,19 +3220,19 @@
 					"kind": "method",
 					"decl": "func (UnixTime) ColumnType(string) string",
 					"doc": "ColumnType implements schema.Typed.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/meta#UnixTime.ColumnType"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.ColumnType"
 				},
 				"UnixTime.Scan": {
 					"kind": "method",
 					"decl": "func (t *UnixTime) Scan(src any) error",
 					"doc": "Scan implements sql.Scanner.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/meta#UnixTime.Scan"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.Scan"
 				},
 				"UnixTime.Value": {
 					"kind": "method",
 					"decl": "func (t UnixTime) Value() (driver.Value, error)",
 					"doc": "Value implements driver.Valuer.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/internal/meta#UnixTime.Value"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.Value"
 				},
 				"Unlink": {
 					"kind": "func",
@@ -3394,7 +3409,7 @@
 		},
 		"anttest": {
 			"path": "github.com/skudra-go/ant/anttest",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/anttest",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/anttest",
 			"symbols": {
 				"Factory": {
 					"kind": "type",
@@ -3470,7 +3485,7 @@
 		},
 		"dialect": {
 			"path": "github.com/skudra-go/ant/dialect",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect",
 			"symbols": {
 				"Bind": {
 					"kind": "func",
@@ -3608,6 +3623,11 @@
 					"decl": "func StateOf(err error) string",
 					"doc": "StateOf returns the SQLSTATE code a registered dialect finds in err, or \"\"."
 				},
+				"SubqueryWith": {
+					"kind": "const",
+					"decl": "const SubqueryWith Feature",
+					"doc": "The features a dialect can lack."
+				},
 				"Supports": {
 					"kind": "func",
 					"decl": "func Supports(d Dialect, f Feature) bool",
@@ -3663,6 +3683,11 @@
 					"decl": "MaxParameters int",
 					"doc": "MaxParameters is the most bound values in one statement."
 				},
+				"Syntax.MergeHoldLock": {
+					"kind": "field",
+					"decl": "MergeHoldLock bool",
+					"doc": "MergeHoldLock locks the key ranges a MERGE reads until it ends, for a database whose MERGE otherwise lets two at once both find no row and both insert it."
+				},
 				"Syntax.MergeSemicolon": {
 					"kind": "field",
 					"decl": "MergeSemicolon bool",
@@ -3672,6 +3697,11 @@
 					"kind": "field",
 					"decl": "Missing []Feature",
 					"doc": "Missing lists the features the database lacks."
+				},
+				"Syntax.NoArrayParams": {
+					"kind": "field",
+					"decl": "NoArrayParams bool",
+					"doc": "NoArrayParams leaves an IN list that would pass MaxParameters as it is, for a database that takes no array as a parameter."
 				},
 				"Syntax.NoBooleans": {
 					"kind": "field",
@@ -3713,6 +3743,11 @@
 					"decl": "func (s *Syntax) ParameterLimit() int",
 					"doc": "ParameterLimit returns the most bound values in one statement."
 				},
+				"Syntax.RecursiveUnionAll": {
+					"kind": "field",
+					"decl": "RecursiveUnionAll bool",
+					"doc": "RecursiveUnionAll writes a recursive WITH without RECURSIVE and joins its members with UNION ALL, for a database that demands both."
+				},
 				"Syntax.SavepointCommands": {
 					"kind": "method",
 					"decl": "func (s *Syntax) SavepointCommands() (save, rollback, release string)",
@@ -3741,7 +3776,12 @@
 				"Syntax.WrapLimitedIn": {
 					"kind": "field",
 					"decl": "WrapLimitedIn bool",
-					"doc": "WrapLimitedIn puts a derived table around a subquery with a LIMIT inside IN, for a database that refuses it directly."
+					"doc": "WrapLimitedIn puts a derived table around a subquery with a LIMIT or an OFFSET inside IN, for a database that refuses it directly."
+				},
+				"Syntax.WrapSelfReads": {
+					"kind": "field",
+					"decl": "WrapSelfReads bool",
+					"doc": "WrapSelfReads puts a derived table around a subquery of an UPDATE or DELETE that reads the table being written, for a database that refuses such a read but reads a derived table, which it materializes first."
 				},
 				"SyntaxOf": {
 					"kind": "func",
@@ -3752,7 +3792,7 @@
 		},
 		"ids": {
 			"path": "github.com/skudra-go/ant/ids",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/ids",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/ids",
 			"symbols": {
 				"NewSnowflake": {
 					"kind": "func",
@@ -3783,7 +3823,7 @@
 		},
 		"metrics": {
 			"path": "github.com/skudra-go/ant/metrics",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/metrics",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/metrics",
 			"symbols": {
 				"Metrics": {
 					"kind": "type",
@@ -3845,7 +3885,7 @@
 		},
 		"migrate": {
 			"path": "github.com/skudra-go/ant/migrate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/migrate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/migrate",
 			"symbols": {
 				"Absorbed": {
 					"kind": "const",
@@ -4297,7 +4337,7 @@
 		},
 		"mysql": {
 			"path": "github.com/skudra-go/ant/dialect/mysql",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect/mysql",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/mysql",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -4339,7 +4379,7 @@
 		},
 		"pgxext": {
 			"path": "github.com/skudra-go/ant/dialect/postgres/pgxext",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect/postgres/pgxext",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/postgres/pgxext",
 			"symbols": {
 				"Batch": {
 					"kind": "type",
@@ -4390,7 +4430,7 @@
 		},
 		"postgres": {
 			"path": "github.com/skudra-go/ant/dialect/postgres",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect/postgres",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/postgres",
 			"symbols": {
 				"Array": {
 					"kind": "type",
@@ -4568,7 +4608,7 @@
 		},
 		"qb": {
 			"path": "github.com/skudra-go/ant/qb",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/qb",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/qb",
 			"symbols": {
 				"Aliased": {
 					"kind": "func",
@@ -4635,6 +4675,10 @@
 					"kind": "type",
 					"decl": "type CTE struct{ … }",
 					"doc": "CTE is one WITH entry."
+				},
+				"CTE.Key": {
+					"kind": "field",
+					"decl": "Key []string"
 				},
 				"CTE.Name": {
 					"kind": "field",
@@ -5406,7 +5450,7 @@
 		},
 		"schema": {
 			"path": "github.com/skudra-go/ant/schema",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/schema",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/schema",
 			"symbols": {
 				"AddCheck": {
 					"kind": "type",
@@ -5461,16 +5505,29 @@
 				"AddEnumValue": {
 					"kind": "type",
 					"decl": "type AddEnumValue struct{ … }",
-					"doc": "AddEnumValue adds a value to an enum."
+					"doc": "AddEnumValue adds a value to an enum, before value Before if it is set, and last otherwise, so that the enum sorts as the models list it."
+				},
+				"AddEnumValue.Before": {
+					"kind": "field",
+					"decl": "Before string"
 				},
 				"AddEnumValue.Enum": {
 					"kind": "field",
 					"decl": "Enum string"
 				},
+				"AddEnumValue.RunsOnline": {
+					"kind": "method",
+					"decl": "func (c AddEnumValue) RunsOnline() bool",
+					"doc": "RunsOnline reports whether the value must be committed before the rest of the plan runs."
+				},
 				"AddEnumValue.String": {
 					"kind": "method",
 					"decl": "func (c AddEnumValue) String() string",
 					"doc": "String implements Change."
+				},
+				"AddEnumValue.Used": {
+					"kind": "field",
+					"decl": "Used bool"
 				},
 				"AddEnumValue.Value": {
 					"kind": "field",
@@ -5478,7 +5535,8 @@
 				},
 				"AddEnumValue.Warning": {
 					"kind": "method",
-					"decl": "func (AddEnumValue) Warning() string"
+					"decl": "func (c AddEnumValue) Warning() string",
+					"doc": "Warning implements Change."
 				},
 				"AddForeignKey": {
 					"kind": "type",
@@ -5561,6 +5619,15 @@
 					"kind": "field",
 					"decl": "From *Column"
 				},
+				"AlterColumn.FromEnum": {
+					"kind": "field",
+					"decl": "FromEnum bool"
+				},
+				"AlterColumn.Replaces": {
+					"kind": "method",
+					"decl": "func (c AlterColumn) Replaces() bool",
+					"doc": "Replaces reports whether the column is dropped and added again, which is how it becomes generated or gets a new expression."
+				},
 				"AlterColumn.String": {
 					"kind": "method",
 					"decl": "func (c AlterColumn) String() string",
@@ -5577,6 +5644,29 @@
 				"AlterColumn.Warning": {
 					"kind": "method",
 					"decl": "func (c AlterColumn) Warning() string",
+					"doc": "Warning implements Change."
+				},
+				"AlterSequence": {
+					"kind": "type",
+					"decl": "type AlterSequence struct{ … }",
+					"doc": "AlterSequence changes how a sequence counts."
+				},
+				"AlterSequence.From": {
+					"kind": "field",
+					"decl": "From *Sequence"
+				},
+				"AlterSequence.String": {
+					"kind": "method",
+					"decl": "func (c AlterSequence) String() string",
+					"doc": "String implements Change."
+				},
+				"AlterSequence.To": {
+					"kind": "field",
+					"decl": "To *Sequence"
+				},
+				"AlterSequence.Warning": {
+					"kind": "method",
+					"decl": "func (c AlterSequence) Warning() string",
 					"doc": "Warning implements Change."
 				},
 				"Backfill": {
@@ -5612,6 +5702,11 @@
 				"Check.Name": {
 					"kind": "field",
 					"decl": "Name string"
+				},
+				"CheckNames": {
+					"kind": "func",
+					"decl": "func CheckNames(d Dialect, c Change) error",
+					"doc": "CheckNames returns an error for a name the change gives that is longer than the database keeps."
 				},
 				"Column": {
 					"kind": "type",
@@ -5653,6 +5748,11 @@
 					"kind": "field",
 					"decl": "Type string"
 				},
+				"Comment": {
+					"kind": "func",
+					"decl": "func Comment(text string) string",
+					"doc": "Comment returns text for a -- comment: a line break in it, as a name may hold, would end the comment early and make the rest of it SQL, so each is written as \\n or \\r."
+				},
 				"CreateEnum": {
 					"kind": "type",
 					"decl": "type CreateEnum struct{ … }",
@@ -5675,6 +5775,10 @@
 					"kind": "type",
 					"decl": "type CreateIndex struct{ … }",
 					"doc": "CreateIndex adds an index."
+				},
+				"CreateIndex.Atomic": {
+					"kind": "field",
+					"decl": "Atomic bool"
 				},
 				"CreateIndex.Index": {
 					"kind": "field",
@@ -5875,6 +5979,10 @@
 					"decl": "type DropColumn struct{ … }",
 					"doc": "DropColumn removes a column."
 				},
+				"DropColumn.Again": {
+					"kind": "field",
+					"decl": "Again *Column"
+				},
 				"DropColumn.Column": {
 					"kind": "field",
 					"decl": "Column *Column"
@@ -5959,6 +6067,10 @@
 					"kind": "type",
 					"decl": "type DropIndex struct{ … }",
 					"doc": "DropIndex removes an index."
+				},
+				"DropIndex.Atomic": {
+					"kind": "field",
+					"decl": "Atomic bool"
 				},
 				"DropIndex.Index": {
 					"kind": "field",
@@ -6185,6 +6297,11 @@
 					"decl": "func (h Hint) Flag() string",
 					"doc": "Flag returns the value for a rename in Diff that takes up this hint."
 				},
+				"Hint.Schema": {
+					"kind": "field",
+					"decl": "Schema string",
+					"doc": "Schema is set when the table seems to have moved to another schema."
+				},
 				"Hint.String": {
 					"kind": "method",
 					"decl": "func (h Hint) String() string",
@@ -6255,6 +6372,10 @@
 					"kind": "field",
 					"decl": "Expr string"
 				},
+				"IndexPart.Nulls": {
+					"kind": "field",
+					"decl": "Nulls string"
+				},
 				"Key": {
 					"kind": "type",
 					"decl": "type Key struct{ … }",
@@ -6268,10 +6389,41 @@
 					"kind": "field",
 					"decl": "Name string"
 				},
+				"MoveTable": {
+					"kind": "type",
+					"decl": "type MoveTable struct{ … }",
+					"doc": "MoveTable moves a table to another schema, and gives it a new name there if To is set."
+				},
+				"MoveTable.Schema": {
+					"kind": "field",
+					"decl": "Schema string"
+				},
+				"MoveTable.String": {
+					"kind": "method",
+					"decl": "func (c MoveTable) String() string",
+					"doc": "String implements Change."
+				},
+				"MoveTable.Table": {
+					"kind": "field",
+					"decl": "Table Ref"
+				},
+				"MoveTable.To": {
+					"kind": "field",
+					"decl": "To string"
+				},
+				"MoveTable.Warning": {
+					"kind": "method",
+					"decl": "func (MoveTable) Warning() string"
+				},
 				"NoTransaction": {
 					"kind": "const",
 					"decl": "const NoTransaction = \"-- ant:no-transaction\"",
 					"doc": "NoTransaction is the directive that makes a migration run outside a transaction."
+				},
+				"NullsOrder": {
+					"kind": "func",
+					"decl": "func NullsOrder(desc, first bool) string",
+					"doc": "NullsOrder returns the Nulls value for a part going down or up whose NULLs come first or not: empty where that is the direction's default."
 				},
 				"Of": {
 					"kind": "func",
@@ -6486,6 +6638,30 @@
 				"RenameTable.Warning": {
 					"kind": "method",
 					"decl": "func (RenameTable) Warning() string"
+				},
+				"ReorderEnum": {
+					"kind": "type",
+					"decl": "type ReorderEnum struct{ … }",
+					"doc": "ReorderEnum reports an enum whose values sort in another order than the models list, which needs a person: PostgreSQL cannot reorder them."
+				},
+				"ReorderEnum.Enum": {
+					"kind": "field",
+					"decl": "Enum string"
+				},
+				"ReorderEnum.String": {
+					"kind": "method",
+					"decl": "func (c ReorderEnum) String() string",
+					"doc": "String implements Change."
+				},
+				"ReorderEnum.Values": {
+					"kind": "field",
+					"decl": "Values []string",
+					"doc": "as the models list them"
+				},
+				"ReorderEnum.Warning": {
+					"kind": "method",
+					"decl": "func (c ReorderEnum) Warning() string",
+					"doc": "Warning implements Change."
 				},
 				"Schema": {
 					"kind": "type",
@@ -6743,7 +6919,7 @@
 		},
 		"secure": {
 			"path": "github.com/skudra-go/ant/secure",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/secure",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/secure",
 			"symbols": {
 				"ErrNoKeys": {
 					"kind": "var",
@@ -6808,7 +6984,7 @@
 		},
 		"sqlite": {
 			"path": "github.com/skudra-go/ant/dialect/sqlite",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect/sqlite",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/sqlite",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -6819,7 +6995,7 @@
 		},
 		"sqlserver": {
 			"path": "github.com/skudra-go/ant/dialect/sqlserver",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/dialect/sqlserver",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/sqlserver",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -6830,7 +7006,7 @@
 		},
 		"validate": {
 			"path": "github.com/skudra-go/ant/validate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.1.0/validate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/validate",
 			"symbols": {
 				"All": {
 					"kind": "func",

@@ -1,105 +1,135 @@
 ---
 title: Ordering and paging
-description: OrderBy, Limit, numbered pages, cursors, and chunks.
+description: OrderBy, Limit and Offset, numbered pages, cursors and chunks.
 ---
 
-Ordering takes field probes, so a request can never smuggle in a column name. For large results there are three ways through, and each suits a different job.
+Ordering takes [field probes](/models/field-probes), so a request can't smuggle in a column name. For large results there are three ways through, and each suits a different job.
 
-## Ordering
+## Order by a column
+
+`OrderBy` and `OrderByDesc` start an ordering. `ThenBy` and `ThenByDesc` add to it.
 
 ```go
-users, err := db.Users.
-	// spot-start
-	OrderBy(&U.Age).
-	ThenByDesc(&U.Name).
-	// spot-end
-	All(ctx)
+users, err := db.Users.OrderBy(&U.Age).ThenByDesc(&U.Name).All(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."age", "users"."name" DESC
 ```
 
-`OrderBy` and `OrderByDesc` start an ordering. `ThenBy` and `ThenByDesc` continue one, and without one they return `ant.ErrThenWithoutOrder`.
+`ThenBy` without an ordering before it returns `ant.ErrThenWithoutOrder`.
 
-For expressions and `NULL` placement, `Order` takes terms directly.
+## Order by an expression or place NULLs
+
+`Order` takes terms built from [expressions](/queries/expressions), for case-insensitive sorts and for `NULL` placement.
 
 ```go
 users, err := db.Users.
-	// spot-start
 	Order(
 		ant.Col(&U.Bio).Asc().NullsLast(),
 		ant.Lower(&U.Name).Desc(),
 	).
-	// spot-end
 	All(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."bio" NULLS LAST, LOWER("users"."name") DESC
 ```
 
-And a few shortcuts:
+## Newest, oldest, random
 
 ```go
-// spot-start
 newest, err := db.Users.Query().Latest(&U.CreatedAt).First(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."created_at" DESC LIMIT $1
+
 oldest, err := db.Users.Query().Oldest(&U.CreatedAt).First(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."created_at" LIMIT $1
+
 shuffled, err := db.Users.Query().OrderByRandom().All(ctx)
+// SELECT ... FROM "users" ORDER BY RANDOM()
+```
+
+`ClearOrder` removes an ordering, which is useful when a shared query is ordered and you only want a count.
+
+```go
 plain, err := db.Users.OrderBy(&U.Name).ClearOrder().All(ctx)
-// spot-end
 ```
 
 ## Limit and offset
 
 ```go
-// spot-next-line
-page, err := db.Users.OrderBy(&U.Name).Limit(10).Offset(20).All(ctx)
+users, err := db.Users.OrderBy(&U.Name).Limit(10).Offset(20).All(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."name" LIMIT $1 OFFSET $2   -- $1 = 10, $2 = 20
 ```
+
+Without an ordering, the database picks which rows `Offset` skips.
 
 ## Numbered pages
 
-`Page` gives you the rows plus the totals you need for paging links. Pages count from 1, and past the end you get empty `Items` with the right `Total`.
+`Page` returns the rows plus the totals you need for paging links. Pages count from 1, and a page past the end has empty `Items` and the right `Total`. A page or size below 1 is an error.
 
 ```go
-// spot-next-line
 page, err := db.Users.OrderBy(&U.Name).Page(ctx, 2, 10)
+// SELECT COUNT(*) FROM "users"
+// SELECT ... FROM "users" ORDER BY "users"."name" LIMIT $1 OFFSET $2   -- $1 = 10, $2 = 10
 if err != nil {
 	return err
 }
 
-// spot-start
 fmt.Println(page.Items)     // this page's rows
 fmt.Println(page.Total)     // rows in all
 fmt.Println(page.Pages())   // pages in all
 fmt.Println(page.HasNext()) // is there another?
-// spot-end
 ```
 
-Order the query, or pages may overlap. On large tables, counting and skipping rows gets slow, and that's what a cursor is for.
+Order the query, or pages may overlap. The count ignores the ordering. On large tables, counting and skipping rows gets slow, and that is what a cursor is for.
 
-## Cursors
+## Cursors for infinite scroll
 
-`After` pages by position in the ordering. Every page costs the same however deep you go, and rows added in the meantime don't shift anything. Hand `Next` to the client, and take it back as the cursor.
+`After` pages by position in the ordering. Every page costs the same however deep it goes, and rows added in the meantime don't shift anything, which suits an infinite scroll or a public API. Pass `""` for the first page. Hand `Next` to the client, and take it back as the cursor.
 
 ```go
 query := db.Users.OrderBy(&U.Name)
 
-// spot-next-line
-page, err := query.After(ctx, "", 20) // "" is the first page
-if err != nil {
-	return err
-}
+page, err := query.After(ctx, "", 20)
+// SELECT ... FROM "users" ORDER BY "users"."name", "users"."id" LIMIT $1   -- $1 = 21
 
-// spot-next-line
 next, err := query.After(ctx, page.Next, 20)
+// SELECT ... FROM "users"
+// WHERE (("users"."name" > $1) OR ("users"."name" = $2 AND "users"."id" > $3))
+// ORDER BY "users"."name", "users"."id" LIMIT $4
 ```
 
-`Next` is empty on the last page. The key breaks ties, so no row is lost at a page boundary, and with no ordering at all it pages by key.
+`After` asks for one row more than the page size to know whether another page exists. `Next` is empty on the last page. The key is added to the ordering as a tie-breaker, so no row is lost at a page boundary, and with no ordering at all it pages by key.
 
-The ordering has to use plain columns of this table that are never `NULL`, and ant refuses anything else rather than silently skip rows. A cursor that's been tampered with is `ant.ErrCursor`.
+The ordering has to use plain columns of this table that are never `NULL`, and ant refuses anything else with `ant.ErrCursor` rather than silently skip rows. A cursor that has been tampered with is `ant.ErrCursor` too.
 
-## Chunks
-
-`Chunk` reads a large result in groups, holding only one group in memory at a time. `Include` works per group, and returning an error stops it.
+In an HTTP handler, the cursor is a query parameter:
 
 ```go
-// spot-next-line
+func listUsers(w http.ResponseWriter, r *http.Request) {
+	page, err := db.Users.OrderByDesc(&U.CreatedAt).After(r.Context(), r.URL.Query().Get("cursor"), 20)
+	if errors.Is(err, ant.ErrCursor) {
+		http.Error(w, "bad cursor", http.StatusBadRequest)
+
+		return
+	}
+
+	// write page.Items and page.Next as JSON
+}
+```
+
+{/*
+```go
+var db *AppDB
+```
+*/}
+
+## Process everything in batches {#chunks}
+
+`Chunk` reads a large result in groups of the size you give, holding one group in memory at a time. `Include` works per group, and returning an error stops it. A size below 1 is an error.
+
+```go
 err := db.Users.OrderBy(&U.Name).Chunk(ctx, 500, func(users []*User) error {
 	return send(users)
 })
+// SELECT ... FROM "users" ORDER BY "users"."name" LIMIT $1 OFFSET $2   -- 500, 0
+// SELECT ... FROM "users" ORDER BY "users"."name" LIMIT $1 OFFSET $2   -- 500, 500
+// ... until a group comes back short
 ```
 
 {/*
@@ -110,14 +140,13 @@ func send(users []*User) error {
 ```
 */}
 
-:::warning[Changing rows while you read]
+On a tracking context, `Chunk` claims the tracker for one group at a time and releases it before it calls your function, so the function can run its own queries on the same context. See [one tracking context, one operation at a time](/queries/reading-rows#one-tracking-context-one-operation-at-a-time).
+
+### Changing rows while you read
 
 `Chunk` pages by offset, so deleting rows in the callback makes it skip others. `ChunkByKey` keeps its place by key instead, in key order, so the callback can change or delete whatever it reads.
 
-:::
-
 ```go
-// spot-next-line
 err := db.Users.Where(ant.Gt(&U.Age, 100)).ChunkByKey(ctx, 500, func(users []*User) error {
 	for _, user := range users {
 		if err := db.Users.DeleteByID(ctx, user.ID); err != nil {
@@ -127,7 +156,11 @@ err := db.Users.Where(ant.Gt(&U.Age, 100)).ChunkByKey(ctx, 500, func(users []*Us
 
 	return nil
 })
+// SELECT ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users"."id" LIMIT $2
+// SELECT ... FROM "users" WHERE "users"."age" > $1 AND "users"."id" > $2 ORDER BY "users"."id" LIMIT $3
 ```
+
+`ChunkByKey` returns `ant.ErrNoKey` for a model without a primary key.
 
 ## Which one
 

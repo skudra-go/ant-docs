@@ -1,58 +1,396 @@
 ---
 title: Generated SQL
-description: Warnings, renames, new required columns, and editing the result.
+description: What diff writes for each kind of change, which changes it warns about, and how to edit the result.
 ---
 
-`diff` gives you a starting point, and the file is yours from then on. It flags anything risky, and takes care of the cases that usually go wrong.
+`diff` gives you a starting point, and the file is yours from then on. It orders the statements so PostgreSQL accepts them, warns about anything that can lose data or fail, and leaves a comment when a choice is yours to make. The examples below are real output; the models are the ones in the section.
 
-## Warnings
+## Read the warnings
 
-Anything that could lose data or fail gets a comment above the statement, and shows up in the command's output too.
+A statement that can lose data or fail gets a comment above it. The same text is printed when `diff` finishes.
 
 ```sql
--- spot-next-line
 -- WARNING: this drops column users.bio and its data.
 ALTER TABLE "users" DROP COLUMN "bio";
 ```
 
-## New required columns
+```text
+Wrote migrations/versions/0017_drop_ip.up.sql
+  drop column tickets.ip
+Warning: this drops column tickets.ip and its data.
+Review it, then apply it with: up
+```
 
-A new `NOT NULL` column has to put something in the rows that already exist. ant fills them with the field's zero value, then drops the default, so the column ends up exactly as the model declares it. If zero is the wrong value, edit it.
+`grep WARNING` over a new file is a quick review step.
+
+## Add a required column to a table with rows
+
+A new `NOT NULL` column has to put something in the rows that exist. `diff` adds the column with a default, then removes the default, so the column ends up as the model declares it.
+
+```go
+type User struct {
+	ID   int64
+	Name string
+	// spot-next-line
+	Age  int64
+}
+```
 
 ```sql
 -- WARNING: existing rows of users get 0 in age. Change the DEFAULT below to fill them differently.
--- spot-start
 ALTER TABLE "users" ADD COLUMN "age" bigint NOT NULL DEFAULT 0;
 ALTER TABLE "users" ALTER COLUMN "age" DROP DEFAULT;
--- spot-end
 ```
 
-## Renames
+The value is the field's zero value: `0`, `''`, `false`. If that is wrong for your rows, change the `DEFAULT` in the file before you apply it. Types without an obvious zero get one too:
 
-A renamed column looks exactly like one dropped and one added, and only you know which you meant. In a terminal, `diff` asks you. Elsewhere, tell it with a flag, which you can repeat.
+| Column type | Existing rows get |
+| --- | --- |
+| `time` | `'00:00:00'` |
+| `timetz` | `'00:00:00+00'` |
+| `interval` | `'0'` |
+| `inet` | `'0.0.0.0'` |
+| `cidr` | `'0.0.0.0/0'` |
+| `money` | `0` |
+| `bit(3)` | `B'000'` |
+| an enum | its first value |
+
+For an enum, the value is the first one the migration itself can use.
+
+```sql
+-- WARNING: existing rows of tickets get 'low' in level. Change the DEFAULT below to fill them differently.
+ALTER TABLE "tickets" ADD COLUMN "level" ticket_level NOT NULL DEFAULT 'low';
+ALTER TABLE "tickets" ALTER COLUMN "level" DROP DEFAULT;
+```
+
+## Fill a new column from existing data
+
+The usual reason to edit a file. `Handle` is required and unique, so the zero value gives every existing user the same empty string:
+
+```go
+type User struct {
+	ID     int64
+	Name   string
+	// spot-next-line
+	Handle string `ant:"unique"`
+}
+```
+
+`up` stops, and rolls the file back:
+
+```text
+Error: ant: migration 0016_add_handle failed and was rolled back: ERROR: could not create unique index "people_handle_key" (SQLSTATE 23505)
+  Key (handle)=() is duplicated.
+```
+
+Edit the file to add the column as nullable, fill it, then make it required and unique:
+
+```sql
+ALTER TABLE "people" ADD COLUMN "handle" text;
+
+UPDATE "people" SET "handle" = lower("name");
+
+ALTER TABLE "people" ALTER COLUMN "handle" SET NOT NULL;
+
+ALTER TABLE "people" ADD CONSTRAINT "people_handle_key" UNIQUE ("handle");
+```
+
+The snapshot records your models, not the SQL, so an edit that reaches the same schema changes nothing else. `drift` confirms it did:
+
+```text
+Applied 0016_add_handle (2ms)
+No drift: the database matches the snapshot.
+```
+
+For a large table, do the `UPDATE` in batches in a [Go migration](/migrations/hand-written#data-in-go) with `migrate.NoTransaction`.
+
+## Rename a column or table
+
+A rename looks exactly like a drop and an add, and only you know which you meant. In a terminal, `diff` asks "Is this a rename?". Elsewhere, such as a script or CI, it writes the drop and the add, and puts the statement that keeps the data in a comment:
+
+```sql
+-- WARNING: column users.bio was removed and about was added. If this is a rename, keep the data by
+-- replacing the drop and add below with:
+--   ALTER TABLE "users" RENAME COLUMN "bio" TO "about";
+
+-- WARNING: this drops column users.bio and its data.
+ALTER TABLE "users" DROP COLUMN "bio";
+
+ALTER TABLE "users" ADD COLUMN "about" text;
+```
+
+You can edit the file as that comment says, or tell `diff` with `--rename old=new`, which you can repeat:
 
 ```bash
 go run ./cmd/migrate diff rename_bio --rename users.bio=about
-go run ./cmd/migrate diff rename_table --rename users=people
 ```
-
-If you do neither, the file warns you and shows the statement to use instead. Constraints and indexes follow a rename on their own, and they're renamed, not rebuilt.
-
-## Editing the file
-
-Here's the most common reason to edit one. `slug` is required and unique, and as generated, the file would give every existing post the same empty slug.
 
 ```sql
-ALTER TABLE "posts" ADD COLUMN "slug" text;
--- spot-next-line
-UPDATE "posts" SET "slug" = lower(regexp_replace("title", '[^a-zA-Z0-9]+', '-', 'g'));
-ALTER TABLE "posts" ALTER COLUMN "slug" SET NOT NULL;
-ALTER TABLE "posts" ADD CONSTRAINT "posts_slug_key" UNIQUE ("slug");
+ALTER TABLE "users" RENAME COLUMN "bio" TO "about";
 ```
 
-The snapshot records your models, not the SQL, so an edit that reaches the same schema doesn't change anything else. `drift` will confirm it did.
+Rename a table the same way: `--rename users=people`. Indexes and constraints that follow the table's name are renamed with it, not rebuilt:
 
-## Changing a file before it ships
+```sql
+ALTER TABLE "users" RENAME TO "people";
+
+ALTER TABLE "people" RENAME COLUMN "about" TO "bio";
+
+ALTER TABLE "people" RENAME CONSTRAINT "users_pkey" TO "people_pkey";
+
+ALTER TABLE "people" RENAME CONSTRAINT "users_email_key" TO "people_email_key";
+```
+
+That file came from `--rename users.about=bio --rename users=people`. Indexes, checks and generated columns that name a renamed column are rewritten in the snapshot as PostgreSQL rewrites them in the database, so nothing is rebuilt for them.
+
+### A typo in a rename stops diff
+
+The new name has to be a table or column the models have and the snapshot doesn't, in the same schema. Anything else stops `diff` before it writes a file, and the error lists the names it could have meant:
+
+```bash
+go run ./cmd/migrate diff rename_users --rename users=peple
+```
+
+```text
+Error: ant: rename "users=peple": models have no table peple; new tables in the models: people
+```
+
+Before this check, a typo renamed the table to the typo and then dropped it, with its rows.
+
+### Several renames at once
+
+Renames are planned together. Table renames come first, so a column can be named under its table's old name or the new one. This renames a column and its table in one file:
+
+```bash
+go run ./cmd/migrate diff rename_users --rename users.about=bio --rename users=people
+```
+
+Two names can swap. The plan goes through a spare name:
+
+```bash
+go run ./cmd/migrate diff swap --rename pairs.a=b --rename pairs.b=a
+```
+
+```sql
+ALTER TABLE "pairs" RENAME COLUMN "a" TO "ant_rename_1";
+
+ALTER TABLE "pairs" RENAME COLUMN "b" TO "a";
+
+ALTER TABLE "pairs" RENAME COLUMN "ant_rename_1" TO "b";
+```
+
+### Move a table to another schema
+
+Give the new name with its schema. The schema has to be one the models use, through `b.Schema`.
+
+```bash
+go run ./cmd/migrate diff archive_orders --rename sales.orders=archive.orders
+```
+
+```sql
+CREATE SCHEMA IF NOT EXISTS "archive";
+
+ALTER TABLE "sales"."orders" SET SCHEMA "archive";
+```
+
+Without the flag, the file drops `sales.orders` and creates `archive.orders`, with a comment that shows this `SET SCHEMA` statement instead.
+
+### Names with dots
+
+A table or column whose name has a dot in it is found as it is. If that is ambiguous, quote it: `--rename '"a.b"=c'`.
+
+## Change a column's type
+
+`diff` orders the statements so the default, the key and the identity don't get in the way, and warns that the cast can fail on your data.
+
+A default is dropped before the type changes and set again after, because the old default may not cast to the new type:
+
+```sql
+-- WARNING: changing tickets.qty from text to bigint may fail or lose data, depending on existing values.
+ALTER TABLE "tickets" ALTER COLUMN "qty" DROP DEFAULT;
+ALTER TABLE "tickets" ALTER COLUMN "qty" TYPE bigint USING "qty"::bigint;
+ALTER TABLE "tickets" ALTER COLUMN "qty" SET DEFAULT 1;
+```
+
+A foreign key whose column changes type, or whose target column does, is dropped first and made again last. Here a key moves from `bigint` to `text` on both sides:
+
+```sql
+ALTER TABLE "members" DROP CONSTRAINT "members_org_code_fkey";
+
+-- WARNING: changing members.org_code from bigint to text may fail or lose data, depending on existing values.
+ALTER TABLE "members" ALTER COLUMN "org_code" TYPE text USING "org_code"::text;
+
+-- WARNING: changing orgs.code from bigint to text may fail or lose data, depending on existing values.
+ALTER TABLE "orgs" ALTER COLUMN "code" TYPE text USING "code"::text;
+
+-- WARNING: this fails if a row of members refers to a row that does not exist.
+ALTER TABLE "members" ADD CONSTRAINT "members_org_code_fkey" FOREIGN KEY ("org_code") REFERENCES "orgs" ("code");
+```
+
+A column that moves from one enum to another goes through text, since PostgreSQL has no cast between enums:
+
+```sql
+CREATE TYPE "ticket_priority" AS ENUM ('low', 'high');
+
+-- WARNING: changing tickets.level from ticket_level to ticket_priority may fail or lose data, depending on existing values.
+ALTER TABLE "tickets" ALTER COLUMN "level" TYPE ticket_priority USING "level"::text::ticket_priority;
+
+DROP TYPE "ticket_level";
+```
+
+An identity column that stops being generated, with `b.Key(&M.ID).NotGenerated()`, loses its identity, and one that becomes an identity gets it in the order PostgreSQL needs:
+
+```sql
+ALTER TABLE "members" ALTER COLUMN "id" DROP IDENTITY;
+```
+
+## Change a generated column
+
+PostgreSQL 17 can change a generated column's expression in place, but ant supports 13 and later, and a migration is written without knowing which server runs it. So a new expression, or a column that becomes generated, means dropping the column and adding it again. The drop takes the column's indexes, constraints and comment with it, so the file drops them first and makes them again after. Foreign keys that point at the column are handled the same way.
+
+```go
+type Badge struct {
+	ID    int64
+	Label string
+	Slug  string
+}
+
+var B = ant.Fields[Badge]()
+
+func (Badge) Configure(b *ant.ModelBuilder[Badge]) {
+	// spot-next-line
+	b.Column(&B.Slug).Generated("lower(trim(label))")
+	b.Index(&B.Label).And(&B.Slug).Concurrently().Name("badges_label_slug_idx")
+}
+```
+
+Changing `lower(label)` to `lower(trim(label))` gives:
+
+```sql
+DROP INDEX "badges_label_slug_idx";
+
+-- WARNING: badges.slug gets a new expression, so it is dropped and added again further down, which rewrites the table and rebuilds its indexes and constraints.
+ALTER TABLE "badges" DROP COLUMN "slug";
+
+ALTER TABLE "badges" ADD COLUMN "slug" text NOT NULL GENERATED ALWAYS AS (lower(trim(label))) STORED;
+
+-- WARNING: badges_label_slug_idx is built without CONCURRENTLY, which blocks writes to badges while it builds, because this migration replaces a column and must run in one transaction. To build it online, move it to a migration of its own.
+CREATE INDEX "badges_label_slug_idx" ON "badges" ("label", "slug");
+```
+
+The file has to run whole or not at all, so every index in it is built inside its transaction, even one that asked for `Concurrently()`. A warning names each one. To build an index online anyway, put it in a migration of its own.
+
+A generated column is also dropped before a column it reads is dropped or changes type, and added after. New generated columns come after the columns they read, whatever order the struct declares them in.
+
+A column that stops being generated keeps its values:
+
+```sql
+ALTER TABLE "badges" ALTER COLUMN "slug" DROP EXPRESSION;
+```
+
+## Add an enum value
+
+A new value is one `ALTER TYPE`, placed `BEFORE` the value that follows it in the models, so a migrated database sorts the enum as the models list it.
+
+```go
+type Ticket struct {
+	ID     int64
+	Status string
+}
+
+var T = ant.Fields[Ticket]()
+
+func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
+	// spot-next-line
+	b.Column(&T.Status).Enum("ticket_status", "open", "waiting", "closed")
+}
+```
+
+```sql
+ALTER TYPE "ticket_status" ADD VALUE IF NOT EXISTS 'waiting' BEFORE 'closed';
+```
+
+PostgreSQL lets a transaction use a value it added only after the value is committed. When the same file uses the new value, in a default, a check, a generated column or an index, the file runs without a transaction and says so:
+
+```sql
+-- ant:no-transaction
+-- WARNING: a statement below cannot run in a transaction, so this file runs without one.
+-- If it fails partway, finish it by hand. Consider keeping such statements in a file of their own.
+
+-- WARNING: this migration uses the new value waiting of enum ticket_status, which PostgreSQL allows only once the value is committed, so the file runs without a transaction. To keep one, add the value in a migration of its own.
+ALTER TYPE "ticket_status" ADD VALUE IF NOT EXISTS 'waiting' BEFORE 'closed';
+
+ALTER TABLE "tickets" ALTER COLUMN "status" SET DEFAULT 'waiting';
+```
+
+To keep the transaction, add the value in one migration and use it in the next.
+
+PostgreSQL can't remove an enum value or reorder the existing ones. `diff` writes a warning and no statement, so the models and the database part ways until someone rebuilds the type:
+
+```sql
+-- WARNING: PostgreSQL cannot reorder the values of enum ticket_status to waiting, open, closed. Rebuild the type by hand: create a new one, move the columns over, and drop the old one.
+```
+
+## Change a sequence
+
+A sequence whose increment or start changes is altered in place. Its current value stays.
+
+```sql
+-- WARNING: a new start for sequence org_numbers does not move its current value. Run ALTER SEQUENCE ... RESTART by hand if you mean that.
+ALTER SEQUENCE "org_numbers" START WITH 2000;
+```
+
+## Build an index without blocking writes
+
+`Concurrently()` on an index builds it with `CREATE INDEX CONCURRENTLY`, which can't run in a transaction. The file gets `-- ant:no-transaction`, and runs one statement at a time:
+
+```sql
+-- ant:no-transaction
+-- WARNING: a statement below cannot run in a transaction, so this file runs without one.
+-- If it fails partway, finish it by hand. Consider keeping such statements in a file of their own.
+
+CREATE INDEX CONCURRENTLY "tickets_qty_idx" ON "tickets" ("qty");
+```
+
+A table created in the same file has no writers yet, so its indexes are built plainly. If such a file fails partway, see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
+
+## Order NULLs in an index
+
+Where NULLs sort is part of the index. `NullsFirst()` and `NullsLast()` state it when it differs from the direction's default, and `drift` sees a database whose index disagrees.
+
+```go
+type Ticket struct {
+	ID    int64
+	Views *int64
+}
+
+var T = ant.Fields[Ticket]()
+
+func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
+	// spot-next-line
+	b.Index(&T.Views).Desc().NullsLast()
+}
+```
+
+```sql
+CREATE INDEX "tickets_views_idx" ON "tickets" ("views" DESC NULLS LAST);
+```
+
+## Names PostgreSQL would cut
+
+PostgreSQL keeps 63 bytes of a name and drops the rest, and two long names can end up as one. `diff` refuses a name longer than that instead:
+
+```text
+Error: ant: index name "tickets_a_very_long_index_name_that_goes_well_beyond_the_limit_of_sixty_three_bytes" is 83 bytes, and postgres keeps only 63: give it a shorter one
+```
+
+The names ant makes up itself are shortened with a hash.
+
+## Names with line breaks
+
+Warnings are `--` comments that quote table and column names. A name with a line break in it would end the comment and turn the rest into SQL, so the script escapes line breaks in comments.
+
+## Throw away a file before it ships
 
 If `diff` wrote something you don't want, delete the file and restore the snapshot.
 
@@ -61,3 +399,5 @@ git checkout migrations/versions/schema.snapshot.json
 ```
 
 <Tests path="migrations/diff_test.go" />
+<Tests path="migrations/generated_test.go" />
+<Tests path="migrations/rename_target_test.go" />

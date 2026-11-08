@@ -5,70 +5,93 @@ description: Your own SQL, scanned into the same structs.
 
 Raw SQL is a proper way out, not a hack. `ant.Raw` runs your statement and scans the result into a model, any struct, or a single value.
 
-## Into a model
+## Scan into a model
 
 ```go
-// spot-next-line
 users, err := ant.Raw[User](db, `SELECT * FROM users WHERE age > ? ORDER BY name`, 18).All(ctx)
+// SELECT * FROM users WHERE age > $1 ORDER BY name
 ```
 
 `All` returns values, as `[]User`, and `First` returns one row or `ant.ErrNotFound`. Raw results aren't tracked.
 
-## Into any struct
+## Scan into any struct
 
 Columns match fields by name. Columns with no field are ignored, and fields with no column stay zero.
 
 ```go
-// spot-start
 type Summary struct {
 	Name    string
 	YearsOn int
 }
-// spot-end
 
 rows, err := ant.Raw[Summary](db, `SELECT name, age + 1 AS years_on FROM users`).All(ctx)
 ```
 
 [`ant.WithStrict`](/tooling/errors#strict-scanning) makes a column with no field an error, which catches a model that has fallen behind its table.
 
-## Single values
+## Scan a single value
 
 ```go
-// spot-start
 count, err := ant.Raw[int](db, `SELECT count(*) FROM users`).First(ctx)
 names, err := ant.Raw[string](db, `SELECT name FROM users ORDER BY name`).All(ctx)
 now, err := ant.Raw[time.Time](db, `SELECT now()`).First(ctx)
-// spot-end
 ```
 
 `NULL` needs a nullable type: `ant.Raw[sql.Null[string]]`.
 
-## Arguments
+## Pass arguments
 
-`?` works on every database and becomes the right placeholder for it. A slice fills `IN (?)`, and named arguments work too. `$1` still works on PostgreSQL, and so does the `jsonb` `?` operator.
+`?` works on every database and becomes the right placeholder for it. `$1` still works on PostgreSQL, and so does the `jsonb` `?` operator.
+
+```go
+a, err := ant.Raw[User](db, `SELECT * FROM users WHERE age > ? AND name <> ?`, 18, "Alice").All(ctx)
+// SELECT * FROM users WHERE age > $1 AND name <> $2
+```
+
+A slice fills `IN (?)`, one placeholder per element, and named arguments work too:
 
 ```go
 ages := []int{17, 30}
 
-// spot-start
-a, err := ant.Raw[User](db, `SELECT * FROM users WHERE age > ? AND name <> ?`, 18, "Alice").All(ctx)
 b, err := ant.Raw[User](db, `SELECT * FROM users WHERE age IN (?)`, ages).All(ctx)
+// SELECT * FROM users WHERE age IN ($1, $2)
+
 c, err := ant.Raw[User](db, `SELECT * FROM users WHERE age IN (@ages)`, sql.Named("ages", ages)).All(ctx)
-// spot-end
+// SELECT * FROM users WHERE age IN ($1, $2)
 ```
 
-An empty slice in `IN (?)` matches nothing, and so does an empty slice in `NOT IN (?)`, which is what SQL itself says, and differs from `ant.NotIn`. Outside `IN`, a slice is one array value, as in `age = ANY($1)`.
+An empty slice in `IN (?)` matches nothing, and so does an empty slice in `NOT IN (?)`, which is what SQL itself says, and differs from `ant.NotIn`:
 
-## Statements that return nothing
+```go
+d, err := ant.Raw[User](db, `SELECT * FROM users WHERE age NOT IN (?)`, []int{}).All(ctx)
+// SELECT * FROM users WHERE age NOT IN (NULL)
+```
+
+Outside `IN`, a slice is one array value, as in `age = ANY($1)`.
+
+### Times
+
+On SQLite and SQL Server, where a time column keeps no time zone, ant binds every time in UTC, and that includes the arguments of a raw query: a `time.Time`, a `*time.Time`, `sql.NullTime`, an `sql.Null` of a time, and each element of a slice that fills an `IN` list. A time in another zone stores and compares as the same instant.
+
+```go
+since := time.Date(2026, 11, 1, 9, 0, 0, 0, time.FixedZone("EET", 2*3600))
+
+recent, err := ant.Raw[User](db, `SELECT * FROM users WHERE created_at > ?`, since).All(ctx)
+// on SQLite and SQL Server, bound as 2026-11-01 07:00:00 UTC
+```
+
+A `driver.Valuer` of your own is passed as it is, so have it give a time in UTC. See [databases](/reference/databases).
+
+## Run a statement that returns nothing
 
 `Exec` returns the rows affected.
 
 ```go
-// spot-next-line
 n, err := ant.Raw[any](db, `UPDATE users SET age = age + 1 WHERE age < ?`, 18).Exec(ctx)
+// UPDATE users SET age = age + 1 WHERE age < $1
 ```
 
-## SQL in a file
+## Keep SQL in a file
 
 `ant.RawFile` loads a statement from any `fs.FS`, including `go:embed`. A missing file is reported at the terminal call.
 
@@ -77,23 +100,23 @@ n, err := ant.Raw[any](db, `UPDATE users SET age = age + 1 WHERE age < ?`, 18).E
 var queries embed.FS
 
 func adults(ctx context.Context, db *AppDB) ([]User, error) {
-	// spot-next-line
 	return ant.RawFile[User](db, queries, "queries/adults.sql", sql.Named("min", 18)).All(ctx)
 }
 ```
 
-## Building on raw SQL
+## Build on raw SQL
 
-`ant.FromRaw` starts from your SQL and keeps going with typed methods. The SQL must return the model's columns.
+`ant.FromRaw` starts from your SQL and keeps going with typed methods. The SQL must return the model's columns, and ant wraps it as a derived table.
 
 ```go
-// spot-next-line
 adults := ant.FromRaw[User](db, `SELECT * FROM users WHERE age > ?`, 18)
 
 page, err := adults.Where(ant.Lt(&U.Age, 35)).OrderBy(&U.Name).Limit(10).All(ctx)
+// SELECT ... FROM (SELECT * FROM users WHERE age > $1) AS "users"
+// WHERE "users"."age" < $2 ORDER BY "users"."name" LIMIT $3
 ```
 
-For a fragment inside a typed query, use [`ant.SQL` and `ant.SQLCond`](/queries/expressions#a-sql-fragment).
+`Count` works on it too, and counts the wrapped rows. For a fragment inside a typed query, use [`ant.SQL` and `ant.SQLCond`](/queries/expressions#a-sql-fragment). An `Update` or `Delete` on a `FromRaw` query is refused, because ant can't see which columns your SQL returns. See [bulk writes](/writing/bulk).
 
 :::danger[Filters do not apply]
 

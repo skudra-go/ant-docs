@@ -1,11 +1,11 @@
 ---
 title: Insert
-description: Insert one row, several, or a whole graph.
+description: Insert one row, several, or a whole graph of related entities.
 ---
 
-`Insert` writes one entity or several. Every field is written as it is, so a zero is stored as zero, and generated keys come back on your struct.
+`Insert` writes new entities and fills in the generated keys on your structs. Every field is written as it is, so a zero is stored as zero.
 
-## One or several
+## Insert one row
 
 ```go
 alice := &User{
@@ -21,22 +21,31 @@ if err != nil {
 }
 
 fmt.Println(alice.ID) // set by the database
+// INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
+// VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id"
 ```
 
-Several go in together, all or nothing: if one fails, every row is rolled back and the keys it set are cleared.
+`CreatedAt` and `UpdatedAt` are filled in when the model has them.
+
+## Insert several rows
+
+Several entities go in as one multi-row statement inside a transaction. If one fails, every row is rolled back and the keys that were set are cleared.
 
 ```go
 // spot-next-line
 err := db.Users.Insert(ctx, alice, bob)
+// INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...) RETURNING "id"
 
 // A slice of pointers spreads.
 // spot-next-line
 err = db.Users.Insert(ctx, users...)
 ```
 
-## A whole graph
+For thousands of rows, use [`InsertMany`](/writing/bulk#insert-many-rows), which splits the work into batches.
 
-`Insert` also saves the entities a new struct points at, parents first, filling in foreign keys as it goes.
+## Insert a whole graph
+
+`Insert` also saves the new entities a struct points at, parents first, and fills in the foreign keys.
 
 ```go
 alice := &User{
@@ -47,38 +56,39 @@ alice := &User{
 }
 
 err := db.Users.Insert(ctx, alice)
+// INSERT INTO "users" (...) VALUES (...) RETURNING "id"
+// INSERT INTO "posts" (...) VALUES (...), (...) RETURNING "id"
 
 fmt.Println(alice.Posts[1].UserID == alice.ID) // true
 ```
 
-It works from the child too, and an existing parent is linked, not inserted again.
+It works from the child too. A parent that already has its key is linked, not inserted again:
 
 ```go
 // spot-next-line
 post := &Post{Title: "New", User: alice}
 
 err := db.Posts.Insert(ctx, post)
-```
-
-```sql
-INSERT INTO "users" (...) VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id"
-INSERT INTO "posts" (...) VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10) RETURNING "id"
+// INSERT INTO "posts" (...) VALUES ($1, $2, $3, $4, $5) RETURNING "id"  -- $3 = alice.ID
 ```
 
 New rows that depend on each other in a loop are refused with `ant.ErrCycle`.
 
-## Ignoring relations
+On a [session](/tracking/sessions), an entity inserted with its relations is tracked as if you had loaded it with them. A later `SaveChanges` doesn't write the new join rows again, and a child you remove from its slice is deleted.
 
-`InsertOnly` writes the row and leaves its relation fields alone.
+## Insert without relations
+
+`InsertOnly` writes the row and leaves its relation fields alone. Nothing is tracked for those relations.
 
 ```go
 // spot-next-line
 err := db.Users.InsertOnly(ctx, alice)
+// INSERT INTO "users" (...) VALUES (...) RETURNING "id"
 ```
 
 ## Find or create
 
-`FirstOrCreate` returns the first row that matches the conditions, or inserts yours. The bool tells you which happened. If another writer gets there first, a unique constraint stops this insert, and you get the winner's row back.
+`FirstOrCreate` returns the first row that matches the conditions, or inserts yours. The bool says which happened.
 
 ```go
 // spot-start
@@ -88,18 +98,24 @@ user, created, err := db.Users.FirstOrCreate(
 	ant.Eq(&U.Email, "ada@example.com"),
 )
 // spot-end
+// SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2
+// INSERT INTO "users" (...) VALUES (...) RETURNING "id"
 ```
 
-`FirstOrNew` is the same without saving. Its bool reports whether a row was found.
+If another writer inserts the row between the read and the insert, the unique constraint stops yours and you get the winner's row back. The conditions should therefore match a unique column. Inside a transaction the re-read takes a lock, so it sees the row even on MySQL's default `REPEATABLE READ`.
+
+`FirstOrNew` does the same without saving. Its bool reports whether a row was found.
 
 ```go
 // spot-next-line
 user, found, err := db.Users.FirstOrNew(ctx, &User{Name: "Ada"}, ant.Eq(&U.Name, "Ada"))
 ```
 
-## Copying a row
+To update a row that exists instead of returning it, use an [upsert](/writing/upsert-and-merge).
 
-`ant.Clone` copies an entity with its key and relations cleared, ready to insert as a new row.
+## Copy a row
+
+`ant.Clone` copies an entity with its key and relations cleared, ready to insert as a new row. It suits templates and "duplicate this" buttons.
 
 ```go
 // spot-next-line
@@ -109,9 +125,9 @@ twin.Email = "twin@example.com"
 err := db.Users.Insert(ctx, twin)
 ```
 
-## When a constraint fails
+## Handle a constraint failure
 
-A constraint failure is the database's own error, and the [`Is` helpers](/tooling/errors) read it on every database.
+A constraint failure is the database's own error. The [`Is` helpers](/tooling/errors) read it the same way on every database.
 
 ```go
 err := db.Users.Insert(ctx, &User{Email: alice.Email})

@@ -3,29 +3,31 @@ title: Joins
 description: Follow relations, or join on any condition, across up to four models.
 ---
 
-A join follows a relation, or any condition you give it. The result is typed by the models in it, and conditions and ordering can use any of them.
+A join follows a relation, or any condition you give it. The result is typed by the models in it, and conditions and ordering can use any of them. `Select` turns each joined row into a value of your own.
 
-## Through a relation
+## Join through a relation
 
-`Join` follows a `*T` relation, and `JoinMany` follows a `[]T` one, giving one result per related row. `Select` then shapes each row.
+`Join` follows a `*T` relation, and `JoinMany` follows a `[]T` one, giving one result per related row.
 
 ```go
 rows, err := db.Posts.
-	// spot-next-line
 	Join(&P.User).
 	Where(ant.Eq(&U.Name, "Alice")).
 	OrderBy(&P.Title).
-	// spot-next-line
 	Select(func(p *Post, u *User) string { return u.Name + ": " + p.Title }).
 	All(ctx)
+// SELECT ... FROM "posts"
+// JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "users"."name" = $1
+// ORDER BY "posts"."title"
 ```
 
 ```go
 titles, err := db.Users.
-	// spot-next-line
 	JoinMany(&U.Posts).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
+// SELECT ... FROM "users" JOIN "posts" ON "users"."id" = "posts"."user_id"
 ```
 
 :::tip[`Join` or `Include`?]
@@ -34,41 +36,52 @@ A join gives you one flat row per match, to project or filter on. To load whole 
 
 :::
 
-## Left joins
+## Keep rows with no match {#left-joins}
 
 `LeftJoin` and `LeftJoinMany` keep rows with no match, and the missing side is `nil`.
 
 ```go
 rows, err := db.Users.
-	// spot-next-line
 	LeftJoinMany(&U.Posts).
 	Select(func(u *User, p *Post) string {
-		// spot-start
 		if p == nil {
 			return u.Name + " has no posts"
 		}
-		// spot-end
 
 		return u.Name + ": " + p.Title
 	}).
 	All(ctx)
+// SELECT ... FROM "users" LEFT JOIN "posts" ON "users"."id" = "posts"."user_id"
 ```
 
-## On any condition
+## Join on any condition
 
 `JoinOn` needs no relation. The other model is a type argument.
 
 ```go
 rows, err := db.Users.
-	// spot-next-line
 	JoinOn[Post](ant.EqCol(&U.ID, &P.UserID), ant.Eq(&P.Published, true)).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
+// SELECT ... FROM "users"
+// JOIN "posts" ON "users"."id" = "posts"."user_id" AND "posts"."published" = $1
 ```
 
-`LeftJoinOn`, `RightJoinOn`, and `FullJoinOn` work the same way. `CrossJoin[Post]()` takes no condition, and `JoinUsing[Post](&U.ID)` joins on a column both tables have.
+Conditions in the join put the filter in the `ON` clause. On a left join this matters: a published-only condition in `ON` keeps users with no published posts, and the same condition in `Where` drops them.
 
-`FULL JOIN` depends on the database: see [databases](/reference/databases).
+`LeftJoinOn`, `RightJoinOn` and `FullJoinOn` work the same way. `CrossJoin[Post]()` takes no condition and pairs every row with every row:
+
+```go
+pairs, err := db.Users.
+	CrossJoin[Post]().
+	Select(func(u *User, p *Post) string { return u.Name + "/" + p.Title }).
+	All(ctx)
+// SELECT ... FROM "users" CROSS JOIN "posts"
+```
+
+`JoinUsing[Post](&U.ID)` joins on a column both tables have, and is called on a query: `db.Users.Query().JoinUsing[Post](&U.ID)`.
+
+`FULL JOIN` depends on the database: PostgreSQL, SQLite and SQL Server have it, MySQL and MariaDB don't. See [databases](/reference/databases).
 
 ## Three and four models
 
@@ -85,15 +98,16 @@ type Comment struct {
 var C = ant.Fields[Comment]()
 
 rows, err := db.Comments.
-	// spot-next-line
 	Join(&C.Post).Join(&P.User).
 	Where(ant.Eq(&U.Name, "Ann")).
-	// spot-start
 	Select(func(c *Comment, p *Post, u *User) string {
 		return u.Name + "/" + p.Title + "/" + c.Text
 	}).
-	// spot-end
 	All(ctx)
+// SELECT ... FROM "comments"
+// JOIN "posts" ON "comments"."post_id" = "posts"."id"
+// JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "users"."name" = $1
 ```
 
 {/*
@@ -117,19 +131,19 @@ var F = ant.Fields[Folder]()
 ```
 */}
 
-## A table with itself
+## Join a table with itself
 
-Each side of a self-join is its own row.
+Each side of a self-join is its own row. The second copy gets an alias.
 
 ```go
 pairs, err := db.Folders.
-	// spot-next-line
 	Join(&F.Parent).
 	Select(func(child, parent *Folder) string { return parent.Name + "/" + child.Name }).
 	All(ctx)
+// SELECT ... FROM "folders" JOIN "folders" AS "t1" ON "folders"."parent_id" = "t1"."id"
 ```
 
-## Joining a query
+## Join a query
 
 `JoinSub` joins the results of a query, so they can be narrowed first. Probes of the joined model refer to its columns.
 
@@ -137,29 +151,37 @@ pairs, err := db.Folders.
 published := db.Posts.Where(ant.Eq(&P.Published, true))
 
 rows, err := ant.
-	// spot-next-line
 	JoinSub(db.Users.OrderBy(&U.Name), published, ant.EqCol(&U.ID, &P.UserID)).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
+// SELECT ... FROM "users"
+// JOIN (SELECT ... FROM "posts" WHERE "posts"."published" = $1) AS "posts"
+//   ON "users"."id" = "posts"."user_id"
+// ORDER BY "users"."name"
 ```
 
-`LeftJoinSub` keeps rows with no match.
+`LeftJoinSub` keeps rows with no match. To join a list held in memory, see [`ant.Values`](/queries/subqueries-and-sets#rows-held-in-memory).
 
 ## The newest rows per parent
 
 A lateral join runs once per row, so it can read the top few rows for each parent, which a plain join can't do.
 
 ```go
-// spot-next-line
 newest := db.Posts.Where(ant.EqCol(&P.UserID, &U.ID)).OrderByDesc(&P.ID).Limit(2)
 
 rows, err := ant.
-	// spot-next-line
 	JoinLateral(db.Users.OrderBy(&U.Name), newest).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
+// SELECT ... FROM "users"
+// JOIN LATERAL (
+//   SELECT ... FROM "posts"
+//   WHERE "posts"."user_id" = "users"."id"
+//   ORDER BY "posts"."id" DESC LIMIT $1
+// ) AS "posts" ON 1 = 1
+// ORDER BY "users"."name"
 ```
 
-`LeftJoinLateral` keeps users with no posts. Lateral joins depend on the database.
+`LeftJoinLateral` keeps users with no posts. Lateral joins work on PostgreSQL and MySQL only. See [databases](/reference/databases).
 
 <Tests path="relations/join_test.go" />

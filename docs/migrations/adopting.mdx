@@ -3,23 +3,23 @@ title: Adopting a database
 description: Start from a schema you already have, with drift as the check.
 ---
 
-ant won't generate structs from a database, and that's deliberate. The mapping is ambiguous: a `text` column could be a `string`, a pointer, a named type, or an enum, and foreign keys say little about which relations you actually want. A person, or an AI assistant, does a better job, given a dump and a way to check the result. `drift` is that check.
+ant doesn't generate structs from a database. The mapping is ambiguous: a `text` column could be a `string`, a pointer, a named type or an enum, and foreign keys say little about which relations you want. A person, or an AI assistant, does it better, given a dump and a way to check the result. `drift` is that check.
 
-Your database, and whatever runs it today, stays exactly as it's until the very last step.
+Your database, and whatever runs it today, stays untouched until the last step.
 
-## 1. Dump the schema
+## Dump the schema
 
 ```bash
 pg_dump --schema-only "$DATABASE_URL" > schema.sql
 ```
 
-## 2. Write the models
+## Write the models
 
-By hand or with an assistant. Add a [`cmd/migrate/main.go`](/migrations/overview#set-up), and start from [the prompt below](#a-prompt-for-your-assistant).
+Write them by hand or with an assistant. Add a [`cmd/migrate/main.go`](/migrations/overview#set-up), and start from [the prompt below](#a-prompt-for-your-assistant).
 
-## 3. Compare until there is nothing left
+## Compare until nothing is left
 
-With no snapshot yet, `drift` compares the live database with your models, and lists every difference.
+With no snapshot yet, `drift` compares the live database with your models and lists every difference. Here the database has an `accounts` table whose `name` is `varchar(50)`, and a `legacy_log` table the models don't mention:
 
 ```bash
 go run ./cmd/migrate drift
@@ -27,41 +27,112 @@ go run ./cmd/migrate drift
 
 ```text
 The database differs from the models. To match, it would need to:
+  drop table legacy_log
   change column accounts.name: type character varying(50) to text
   add unique accounts_email_key on accounts
+Error: ant: database differs from the migrations: 3 differences
 ```
 
-Read each line as something your models have wrong, not something to change in the database. Tables you don't plan to model go in `Config.Ignore`, or get `b.ExcludeFromMigrations()`. Keep going until it says `No drift`.
+Read each line as something the models get wrong, not something to change in the database. `accounts.name` is `varchar(50)`, so the model says so with `Length(50)`. The `Email` field doesn't have a unique constraint in the database, so the tag comes off.
 
-## 4. Start the history
+```go
+type Account struct {
+	ID    int64
+	Name  string
+	Email string
+}
 
-From the dump. This is usually the right choice, because a new database then gets everything, including what your models don't describe.
+var A = ant.Fields[Account]()
+
+func (Account) Configure(b *ant.ModelBuilder[Account]) {
+	// spot-next-line
+	b.Column(&A.Name).Length(50)
+}
+```
+
+### Leave tables out
+
+A table you don't plan to model goes in `Config.Ignore`, or its model gets `b.ExcludeFromMigrations()`. `Ignore` takes names and patterns, such as `legacy_*` or `users.handmade_idx`.
+
+```go title="cmd/migrate/main.go"
+package main
+
+import (
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/skudra-go/ant/dialect/postgres"
+	"github.com/skudra-go/ant/migrate"
+
+	"example.com/app/models"
+)
+
+func main() {
+	// spot-next-line
+	migrate.Main[models.AppDB](postgres.Dialect, migrate.Config{Ignore: []string{"legacy_*"}})
+}
+```
+
+Keep going until `drift` prints:
+
+```text
+No drift: the database matches the models.
+```
+
+## Start the history
+
+There are three ways to write the first migration.
+
+### From the dump
+
+This is usually the right choice, because a new database then gets everything, including what your models don't describe. `adopt` strips the psql commands recent `pg_dump` versions write, such as `\restrict`, and records a snapshot from your models.
 
 ```bash
 go run ./cmd/migrate adopt schema.sql
 ```
 
-From the models, if they cover everything:
+```text
+Wrote migrations/versions/0001_baseline.up.sql, and the snapshot from your models.
+New databases run that file. On each database that already has this schema, run: baseline
+```
+
+### From the models
+
+If the models cover everything:
 
 ```bash
 go run ./cmd/migrate diff baseline
 ```
 
-From your existing files, if you want to keep the history. Copy them into `migrations/versions`, then run `snapshot`. `0001_x.up.sql`, `0001_x.sql`, and `V1__x.sql` all work as they are, and `.down.sql` files are ignored. Goose and dbmate keep up and down in one file, so split those first.
+### From your existing files
 
-## 5. Mark each existing database as done
+To keep the history, copy the files into `migrations/versions`, then run `snapshot`. `0001_x.up.sql`, `0001_x.sql` and `V1__x.sql` all work as they are, and `.down.sql` files are ignored. Goose and dbmate keep up and down in one file, so split those first, or a new database would run the down part.
 
-This records the migrations as applied, without running them. It adds the `ant_migrations` table and touches nothing else.
+## Mark each existing database as done
+
+`baseline` records the migrations as applied, without running them. It adds the `ant_migrations` table and touches nothing else. Run it once on every database that already has the schema.
 
 ```bash
 go run ./cmd/migrate baseline
 ```
 
-From here on, `diff` and `up` work just as they do in a new project.
+```text
+Recorded 0001_baseline as applied, without running it.
+```
 
-## Keeping your current runner
+A new database skips this step and runs `up`. From here on, `diff` and `up` work as in any project:
 
-Run `snapshot` instead of steps 4 and 5, and only use `diff` and `check`, which don't need a database. `Config.Name` and `Config.Parse` can name the files the way your tool expects.
+```bash
+go run ./cmd/migrate status
+```
+
+```text
+MIGRATION      STATE    APPLIED
+0001_baseline  applied  2026-11-08 15:15:18 UTC
+```
+
+## Keep your current runner
+
+If another tool applies the migrations, run `snapshot` instead of the last two steps, and use only `diff` and `check`, which don't need a database. `Config.Name` and `Config.Parse` can name the files the way your tool expects.
 
 ## A prompt for your assistant
 

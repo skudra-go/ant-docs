@@ -5,33 +5,23 @@ sidebar_label: Introduction
 hide_title: true
 hide_table_of_contents: true
 pagination_next: quick-start
-description: ant is a Go ORM. Models are plain structs, queries are checked by the compiler, and there is no code generation step.
+description: ant is a typed ORM for Go. Models are plain structs, queries are checked by the compiler, and there is no code generation.
 ---
 
-import Hero, {Descriptors, Descriptor, Routes, Route} from '@site/src/components/Hero';
-import FieldTrace from '@site/src/components/FieldTrace';
-import SaveDemo from '@site/src/components/SaveDemo';
-import QueryLog from '@site/src/components/QueryLog';
-import LostUpdate from '@site/src/components/LostUpdate';
-import TwoPaths from '@site/src/components/TwoPaths';
+import Hero, {Routes, Route} from '@site/src/components/Hero';
 
 <Hero />
 
-<Descriptors>
-  <Descriptor title="No strings">Columns are field pointers. Misspell one, or pass the wrong type, and it won't build.</Descriptor>
-  <Descriptor title="No code generation">Just generic Go. The structs you already wrote are the models.</Descriptor>
-  <Descriptor title="No hidden queries">You load what you ask for, in batches. Anything you didn't load stays empty.</Descriptor>
-  <Descriptor title="Plain SQL migrations">Written from your structs, read by you, and runnable by any tool.</Descriptor>
-</Descriptors>
+## Overview
 
-## A taste
+Columns are field pointers, not strings. `ant.Gt(&U.Age, 18)` is checked by the compiler, column and value both, and renaming a field updates every query that uses it.
 
 ```go title="main.go"
 type User struct {
 	ant.Base // ID, CreatedAt, UpdatedAt
 	Name     string
 	Age      int
-	Posts    []Post // 1:N, found through Post.UserID
+	Posts    []Post // 1:N through Post.UserID
 }
 
 type Post struct {
@@ -53,459 +43,59 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
 // spot-start
 adults, err := db.Users.
 	Where(ant.Gt(&U.Age, 18)). // ant.Gt(&U.Age, "18") won't compile
-	Include(&U.Posts).         // one batched query, not one per user
+	Include(&U.Posts).         // one query for all the posts
 	All(ctx)
+// SELECT ... FROM "users" WHERE "users"."age" > $1
+// SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, ...)
 
 adults[0].Age++
 
-err = db.SaveChanges(ctx) // UPDATE only what changed
+err = db.SaveChanges(ctx)
+// UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 // spot-end
 ```
 
-Everything in the lit part is checked by the compiler: the field, the type of the value, the relation. The rest is plain Go.
-
-## How `&U.Age` becomes a column
-
-Most Go ORMs name a column with a string, and the compiler can't see inside a string. ant uses a pointer to your struct field instead, and the compiler can check that.
-
-<FieldTrace />
-
-## What it fixes
-
-Go has some genuinely good database libraries, and each problem below has a workaround somewhere. These are the gaps ant closes by default. The other libraries' code comes from their own docs, and the GORM and Bun SQL is what v1.31 and v1.3 actually sent when this was run.
-
-{/*
-```go
-type User struct {
-	ant.Base
-	Name   string
-	Plan   string
-	Age    int
-	Active bool
-	Posts  []Post
-}
-```
-*/}
-
-<Pain>
-
-### Queries are strings
-
-When a column is a string, a typo still compiles. You find out when the query runs, and only if something runs it.
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="GORM"
-users, err := gorm.G[User](db).
-	Where(⟦-:"agee <= ?"⟧, 18).
-	Find(ctx)
-```
-
-```sql marks no-check title="Builds fine. Then, when it runs:"
-SELECT * FROM "users" WHERE ⟦-:agee⟧ <= 18
--- ERROR: column "agee" does not exist (SQLSTATE 42703)
-```
-
-The typo goes straight into the SQL, and you hear about it from the database.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="Bun"
-err := db.NewSelect().Model(&users).
-	Where(⟦-:"agee <= ?"⟧, 18).
-	Scan(ctx)
-```
-
-```sql marks no-check title="Builds fine. Then, when it runs:"
-SELECT "user"."id", ... FROM "users" AS "user" WHERE (⟦-:agee⟧ <= 18)
--- ERROR: column "agee" does not exist (SQLSTATE 42703)
-```
-
-Same story. It reads nicely, like SQL, but to the compiler it's just a string.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="ent"
-users, err := client.User.Query().
-	Where(⟦-:user.AgeLTE(18)⟧).
-	All(ctx)
-```
-
-This one is checked: misspell `AgeLTE` and it won't build. The catch is that it's generated, from a schema you write in ent's own DSL, and it only exists after `go generate`.
-
-</Lib>
-</Others>
-<Ant>
-
-```go marks compile-fail title="ant"
-users, err := db.Users.
-	Where(ant.Lte(⟦-:&U.Agee⟧, 18)).
-	All(ctx)
-```
-
-```text title="go build"
-U.Agee undefined (type *User has no field or method Agee)
-```
-
-```sql title="Spelled right, it sends"
-SELECT "users"."id", ... FROM "users" WHERE "users"."age" <= $1
-```
-
-- The typo never gets as far as the database. Your build stops it.
-- `&U.Age` is a `*int`, so the value has to be an `int` too.
-- There's nothing to generate. The struct you already have is the schema.
-
-</Ant>
-</Compare>
-
-</Pain>
-
-<Pain>
-
-### Zero values disappear
-
-Go can't tell a field you set to `0` from one you never touched, so some libraries treat zero as "not set". The update compiles, looks right, and quietly skips your change.
-
-<SaveDemo />
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="GORM"
-db.Model(&user).Updates(User{
-	Name:   "Ada",
-	⟦-:Age:    0⟧,
-	⟦-:Active: false⟧,
-})
-```
-
-```sql no-check title="Sends"
-UPDATE "users" SET "updated_at"='…',"name"='Ada' WHERE "id" = 1
--- no age, no active
-```
-
-Only non-zero fields go out. You can fix it with `Select("Age", "Active")` or a map, as long as you remember to every time.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="Bun"
-_, err := db.NewUpdate().Model(&user).
-	⟦-:OmitZero()⟧.
-	WherePK().
-	Exec(ctx)
-```
-
-```sql no-check title="Sends"
-UPDATE "users" AS "user" SET "name" = 'Ada' WHERE ("user"."id" = 1)
--- no age, no active
-```
-
-At least you opt in. Once you do, though, a real `0` can't be written either. Leave it off and Bun writes every column.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="xorm"
-engine.ID(id).Update(&User{
-	Name: "Ada",
-	⟦-:Age:  0⟧,
-})
-```
-
-The same rule, unless you name the columns with `Cols` or `AllCols`.
-
-</Lib>
-</Others>
-<Ant>
-
-```go marks title="ant"
-user, err := db.Users.Find(ctx, id)
-
-user.Age = 0
-user.Active = false
-
-err = ⟦+:db.SaveChanges(ctx)⟧
-```
-
-```sql marks title="Sends"
-UPDATE "users" SET ⟦+:"age" = $1⟧, ⟦+:"active" = $2⟧, "updated_at" = $3
-WHERE "users"."id" = $4
-```
-
-- ant compares against what it loaded, so `0`, `false`, `""`, and `nil` count as changes like anything else.
-- Nothing is guessed from the value, so there's nothing to remember.
-- Zero only means something where you ask for it: a zero integer key means "generate one", and a field tagged [`default`](/models/nullable-and-defaults#database-defaults) leaves zero for the database to fill in.
-
-</Ant>
-</Compare>
-
-</Pain>
-
-<Pain>
-
-### One query per row
-
-A page loads a list, then loads something for each row. That's one query for the list, plus one per row: the N+1 problem. With 3 rows in development nobody notices. With 500 in production, the page crawls.
-
-<QueryLog />
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="pop"
-err := tx.⟦-:Eager("Books")⟧.All(&users)
-```
-
-```sql no-check title="Runs, as pop's docs describe it"
-SELECT * FROM users;
-SELECT * FROM books WHERE user_id=1
-SELECT * FROM books WHERE user_id=2
-SELECT * FROM books WHERE user_id=3
-```
-
-That's the default: one query per user. `EagerPreload` batches them, if you know to reach for it.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="GORM"
-err := db.⟦-:Preload("Posts")⟧.Find(&users).Error
-```
-
-```sql no-check title="Runs"
-SELECT * FROM "users"
-SELECT * FROM "posts" WHERE "posts"."user_id" IN (1,2,3)
-```
-
-Batched, which is exactly right. The relation is a string, though, so `Preload("Psots")` builds fine and fails when it runs.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="Bun"
-err := db.NewSelect().Model(&users).
-	⟦-:Relation("Posts")⟧.
-	Scan(ctx)
-```
-
-```sql no-check title="Runs"
-SELECT "user"."id", ... FROM "users" AS "user"
-SELECT "post"."id", ... FROM "posts" AS "post" WHERE ("post"."user_id" IN (1, 2, 3))
-```
-
-Batched too, with the same string.
-
-</Lib>
-</Others>
-<Ant>
-
-```go marks title="ant"
-users, err := db.Users.
-	⟦+:Include(&U.Posts)⟧.
-	All(ctx)
-```
-
-```sql title="Runs"
-SELECT "users"."id", ... FROM "users"
-SELECT "posts"."id", ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
-```
-
-- Always batched: one query for the users, one for all of their posts.
-- The relation is a typed pointer, so `Include(&U.Name)` won't build.
-- Reading a field never runs a query. A relation you didn't load is just `nil`.
-- If you write the loop by hand anyway, [diagnostics](/tooling/diagnostics) will warn you when one statement keeps repeating in a request.
-
-</Ant>
-</Compare>
-
-</Pain>
-
-<Pain>
-
-### Saving undoes someone else's change
-
-Two requests load the same user. If saving writes the whole row back, whichever finishes last quietly undoes the other one's change.
-
-<LostUpdate />
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="GORM"
-user.Name = "Ada L."
-
-⟦-:db.Save(&user)⟧
-```
-
-```sql marks no-check title="Sends"
-UPDATE "users" SET "created_at"='…',"updated_at"='…',"name"='Ada L.',
-	⟦-:"plan"='free'⟧,"age"=36,"active"=true
-WHERE "id" = 1
-```
-
-`Save` writes every field, including the plan it loaded before the upgrade. Bun's `Update` on a model does the same.
-
-</Lib>
-<Lib>
-
-```go marks no-check title="ent"
-u, err = u.Update().
-	SetName("Ada L.").
-	Save(ctx)
-```
-
-Safe: setters chain, and only what you name gets written. The cost is that the code doing the saving has to know what changed, so logic spread across functions has to pass that along.
-
-</Lib>
-<Lib>
-
-```sql marks no-check title="sqlc"
-UPDATE users SET
-	name = ⟦-:coalesce(sqlc.narg('name'), name)⟧,
-	plan = coalesce(sqlc.narg('plan'), plan)
-WHERE id = sqlc.arg('id');
-```
-
-Also safe, and also explicit: you write a statement for each shape of update, or a `coalesce` for every optional column.
-
-</Lib>
-</Others>
-<Ant>
-
-```go marks title="ant"
-user, err := db.Users.Find(ctx, id)
-
-user.Name = "Ada L."
-
-err = ⟦+:db.SaveChanges(ctx)⟧
-```
-
-```sql marks title="Sends"
-UPDATE "users" SET ⟦+:"name" = $1⟧, "updated_at" = $2
-WHERE "users"."id" = $3
-```
-
-- Only `name` is written, so the plan stays `pro`.
-- Your code changes fields wherever it likes, and nothing has to keep a list of what changed.
-- If both requests change the same field, the last one still wins. Add an [`ant:"version"`](/lifecycle/optimistic-concurrency) field and the second save fails instead.
-
-</Ant>
-</Compare>
-
-</Pain>
-
-## Your database, new or existing
-
-An ORM has to work with the database you actually have. ant never changes your schema behind your back: there's no auto-migrate, `Open` doesn't touch anything, and every change is a plain SQL file you get to read first.
-
-<TwoPaths />
-
-`drift` is what makes adopting safe. It compares your structs with the live database and lists every difference, so you know the models are right before anything depends on them.
-
-```text title="go run ./cmd/migrate drift"
-The database differs from the models. To match, it would need to:
-  change column users.name: type character varying(50) to text
-  add unique users_email_key on users
-```
-
-Read each line as something to fix in a struct, not in the database. Keep going until it says `No drift`.
-
-### What that means for your project
-
-- **Adopting doesn't touch your tables.** `baseline` records your schema as already applied. The only thing it adds is its own table, `ant_migrations`. Your data, and whatever runs your app today, carry on as before.
-- **You can keep your migration tool.** `diff` and `check` don't need a database, so ant can write the SQL while golang-migrate, or whatever you use now, keeps running it.
-- **You can start with just queries.** Structs that match your tables are all you need to read and write. Querying doesn't depend on migrations at all.
-- **You can leave.** The files are ordinary SQL in a common layout, and the history table is yours to drop.
-
-:::note[PostgreSQL only, for now]
-
-Migrations run on PostgreSQL. On MySQL, MariaDB, SQLite, and SQL Server, ant reads and writes your existing tables, and your schema stays with whatever tool you use now.
-
-:::
-
-### Next to the alternatives
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="GORM"
-⟦-:db.AutoMigrate(&User{})⟧
-```
-
-It changes the live database directly, with no file to review, and in its own words "WON'T delete unused columns". For versioned migrations, its docs point you to a separate tool, Atlas.
-
-</Lib>
-<Lib>
-
-```bash no-check title="ent, with Atlas"
-atlas migrate diff add_bio \
-  --dir "file://ent/migrate/migrations" \
-  --to "ent://ent/schema" \
-  --dev-url "docker://mysql/8/ent"
-```
-
-Versioned SQL files you can review, from a solid tool. It needs ent's schema DSL, though, and a dev database to replay your history on.
-
-</Lib>
-<Lib>
-
-```text no-check title="sqlc"
-sqlc does not perform database migrations for you.
-```
-
-That's straight from its docs. It reads the files of whichever migration tool you pick.
-
-</Lib>
-</Others>
-<Ant>
-
-```text title="go run ./cmd/migrate diff add_bio"
-Wrote migrations/versions/0002_add_bio.up.sql
-  add column users.bio
-Review it, then apply it with: up
-```
-
-```sql title="0002_add_bio.up.sql"
-ALTER TABLE "users" ADD COLUMN "bio" text;
-```
-
-- It compares your structs with a stored snapshot, so generating doesn't need a database.
-- Risky statements come with a warning above them, and renames don't lose data.
-- It's plain SQL, committed with your code. There are no down migrations: to undo something, you write a new one.
-
-</Ant>
-</Compare>
-
-The [migrations guide](/migrations/overview) covers the rest, and [adopting a database](/migrations/adopting) walks the existing-project path step by step.
-
-## Where it stands
-
-ant hasn't reached 1.0, so the API can still change between releases. It needs Go 1.27 or later, because it leans on generic methods.
+## Features
+
+<Routes>
+  <Route to="/queries/conditions" title="Typed queries">Conditions, joins, projections, aggregates, subqueries, CTEs and window functions, all checked by the compiler.</Route>
+  <Route to="/models/defining-models" title="Plain structs">Your types are the models. Conventions cover the common case, and `Configure` covers the rest.</Route>
+  <Route to="/relations/loading" title="Relations">One-to-one, one-to-many and many-to-many, loaded with `Include` in batches. Nothing loads behind your back.</Route>
+  <Route to="/tracking/save-changes" title="Change tracking">Load, change fields, call `SaveChanges`. Only the columns that changed are written.</Route>
+  <Route to="/writing/upsert-and-merge" title="Writes">Inserts, updates, deletes, upserts, `MERGE` and bulk writes, with a guard against unfiltered updates.</Route>
+  <Route to="/transactions" title="Transactions">Savepoints, isolation levels, retries on deadlocks and serialization failures, and read replicas.</Route>
+  <Route to="/lifecycle/soft-deletes" title="Lifecycle">Soft deletes, timestamps, global filters, hooks, validation and optimistic concurrency.</Route>
+  <Route to="/migrations/overview" title="Migrations">Plain SQL generated from your structs, reviewed before it runs, with drift checks. PostgreSQL.</Route>
+  <Route to="/queries/raw-sql" title="Raw SQL">Raw queries scan into structs, and raw fragments fit inside typed queries.</Route>
+  <Route to="/tooling/metrics-and-tracing" title="OpenTelemetry and metrics">A span per statement with `contrib/otel`, Prometheus metrics, and logging through `log/slog`.</Route>
+  <Route to="/tooling/antvet" title="antvet">A `go vet` analyzer that catches field pointers from the wrong model and `Find` keys of the wrong type.</Route>
+  <Route to="/testing" title="Testing">`anttest` gives each test a rolled-back transaction, plus fixtures and factories.</Route>
+</Routes>
+
+## Install
 
 ```bash
 go get github.com/skudra-go/ant
+go get github.com/jackc/pgx/v5/stdlib  # or the driver for your database
 ```
 
-The [reference on pkg.go.dev](https://pkg.go.dev/github.com/skudra-go/ant) has every exported name with its doc comment. These pages link to it too: the first time a page mentions a name like `ant.Open`, it's a link, and hovering it shows the declaration.
+ant needs Go 1.27 or later, because it uses generic methods. It hasn't reached 1.0, so the API can still change between releases; each [release](https://github.com/skudra-go/ant/releases) lists its breaking changes.
 
-**PostgreSQL gets everything.** MySQL, MariaDB, SQLite, and SQL Server run the same queries, writes, relations, tracking, and transactions, but no migrations yet, and they're covered by a smaller test suite. [Databases](/reference/databases) spells out exactly what differs.
+## Databases
 
-## Where to next
+|  | PostgreSQL | MySQL | MariaDB | SQLite | SQL Server |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Queries, writes, relations, tracking, transactions | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Migrations | ✓ |  |  |  |  |
+
+PostgreSQL gets every feature first. [Databases](/reference/databases) lists what each one lacks and how ant works around the differences.
+
+## Next
 
 <Routes>
-  <Route to="/quick-start" title="Quick start">From an empty folder to a saved row.</Route>
-  <Route to="/concepts" title="Concepts">The five ideas everything else builds on.</Route>
-  <Route to="/queries/conditions" title="Queries">Conditions, joins, aggregates, raw SQL.</Route>
-  <Route to="/relations/declaring" title="Relations">Conventions, loading, many-to-many.</Route>
-  <Route to="/tracking/save-changes" title="Change tracking">Load, change, save.</Route>
-  <Route to="/migrations/overview" title="Migrations">Structs to reviewed, plain SQL.</Route>
+  <Route to="/quick-start" title="Quick start">A program that saves and queries a user, in five minutes.</Route>
+  <Route to="/concepts" title="Concepts">The few ideas everything else builds on.</Route>
+  <Route to="/why-ant" title="Why ant">The problems ant fixes, next to GORM, Bun and ent.</Route>
 </Routes>
+
+The [API reference on pkg.go.dev](https://pkg.go.dev/github.com/skudra-go/ant) has every exported name. On these pages, the first mention of a name such as `ant.Open` links there, and hovering it shows the declaration.

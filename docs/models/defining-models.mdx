@@ -1,9 +1,9 @@
 ---
 title: Defining models
-description: Structs, ant.Base, the context, and the naming conventions.
+description: Structs as models, ant.Base, naming conventions, and how to override them.
 ---
 
-A model is just a struct. It doesn't need a base type, tags, or generated code.
+A model is a Go struct. It needs no base type, no tags and no generated code. Exported fields are columns, and the model is registered by listing it in your database struct.
 
 ## A model
 
@@ -24,11 +24,11 @@ type BlogDB struct {
 var A = ant.Fields[Article]()
 ```
 
-That maps to a table called `articles`, with `id` as a primary key the database generates.
+This maps to the table `articles`, with `id` as a primary key the database generates. `Open` reads the models in the struct, and fails at startup if one can't be mapped. See [keys](/models/keys) for other primary keys.
 
-## `ant.Base`
+## Add IDs and timestamps with ant.Base
 
-Embed `ant.Base` for the three fields most tables want. It's optional, and the fields behave like any others.
+`ant.Base` holds `ID`, `CreatedAt` and `UpdatedAt`. Embed it when a table wants all three.
 
 ```go
 type Article struct {
@@ -40,14 +40,17 @@ type Article struct {
 article := &Article{Title: "Hello"}
 
 err := db.Articles.Insert(ctx, article)
+// INSERT INTO "articles" ("created_at", "updated_at", "title") VALUES ($1, $2, $3) RETURNING "id"
 
 // spot-next-line
 fmt.Println(article.ID, article.CreatedAt, article.UpdatedAt) // all filled in
 ```
 
-There's nothing special about `ant.Base` itself: any model with a `CreatedAt` or `UpdatedAt` field gets the same [timestamps](/lifecycle/timestamps).
+`ant.Base` is optional and has no special status. Any model with a `time.Time` field named `CreatedAt` or `UpdatedAt` gets the same [timestamps](/lifecycle/timestamps).
 
-## Naming conventions
+## Table and column names
+
+ant derives names from Go names.
 
 | Go | Database |
 | --- | --- |
@@ -56,15 +59,11 @@ There's nothing special about `ant.Base` itself: any model with a `CreatedAt` or
 | `HTTPPort` | column `http_port` |
 | `ID` | primary key `id` |
 
-:::note[Plurals are simple]
+Table names are plural. ant adds `s`, or `es` after `s`, `x`, `ch` and `sh`, and turns a consonant followed by `y` into `ies`. That gives `categories` for `Category`, and also `persons` for `Person` and `childs` for `Child`. Set `b.Table` when the result reads wrong.
 
-ant adds `s`, or `es` after `s`, `x`, `ch`, and `sh`, and turns a consonant and `y` into `ies`. That gives `categories` for `Category`, but also `persons` for `Person` and `childs` for `Child`. Use `b.Table` when that reads wrong.
+## Rename a column or a table
 
-:::
-
-## Overriding names
-
-A tag renames a column, and `Configure` renames a table.
+A tag renames a column. `Configure` renames a table.
 
 ```go
 type Device struct {
@@ -79,9 +78,11 @@ func (Device) Configure(b *ant.ModelBuilder[Device]) {
 }
 ```
 
-## Leaving a field out
+Use this to map a model onto a table that already exists with names of its own.
 
-`ant:"-"` and unexported fields aren't columns, so they're never read, written, or queried.
+## Leave a field out
+
+A field tagged `ant:"-"`, and any unexported field, is not a column. ant never reads, writes or queries it. Use it for values you compute or cache on the struct.
 
 ```go
 type Session struct {
@@ -94,9 +95,9 @@ type Session struct {
 }
 ```
 
-## Your own naming strategy
+## Change the naming rules
 
-`ant.WithNaming` replaces the conventions, which is useful for an existing database with its own style. A nil function keeps the default, and any name you set explicitly stays.
+`ant.WithNaming` replaces the conventions for every model, which suits an existing database with its own style. A nil function keeps the default for that part, and a name you set explicitly stays as you set it.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
@@ -109,7 +110,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 )
 ```
 
-`ant.WithConvention` goes a step further and applies a rule to every model. `Configure` can still override it.
+`ant.WithConvention` runs a rule on every model as it is configured. This one gives every string column a length of 100. A model's `Configure` method runs after the rule and can override it.
 
 ```go
 rule := func(m *ant.ModelConvention) {
@@ -126,7 +127,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithConvention(rule))
 
 :::warning[Set once per process]
 
-Models are reflected once per process, so naming and conventions are global, and they come from the first `Open`.
+ant reflects each model once per process, so naming and conventions are global. They come from the first `Open`.
 
 :::
 

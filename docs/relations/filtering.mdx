@@ -1,55 +1,76 @@
 ---
 title: Filtering by relations
-description: Has, HasNone, and HasOne match rows by what they relate to.
+description: Has, HasNone, and HasOne match rows by the rows they relate to, without loading anything.
 ---
 
-`ant.Has` filters rows by what they're related to, without loading anything. Each one becomes an `EXISTS` inside the same query, so it costs no extra round trip.
+`ant.Has` and its relatives filter rows by what they're related to. Each becomes an `EXISTS` inside the same query, so it costs no extra round trip and loads no related rows. To load the related rows as well, use [`Include`](/relations/loading).
 
-## Has a related row
+## Rows that have a related row
 
 ```go
 // spot-next-line
 writers, err := db.Users.Where(ant.Has(&U.Posts)).All(ctx)
+// SELECT ... FROM "users" WHERE EXISTS (
+//   SELECT 1 FROM "posts" AS "ant_related" WHERE "ant_related"."user_id" = "users"."id")
 ```
 
-Add conditions on the related row.
+Add conditions on the related row to ask for a particular kind. This finds users with an unpublished post:
 
 ```go
 // spot-next-line
 drafting, err := db.Users.Where(ant.Has(&U.Posts, ant.Eq(&P.Published, false))).All(ctx)
+// SELECT ... FROM "users" WHERE EXISTS (
+//   SELECT 1 FROM "posts" AS "ant_related"
+//   WHERE "ant_related"."user_id" = "users"."id" AND ("ant_related"."published" = $1))
 ```
 
-## Has none
+## Rows with no related row
 
 ```go
 // spot-next-line
 silent, err := db.Users.Where(ant.HasNone(&U.Posts)).All(ctx)
+// SELECT ... FROM "users" WHERE NOT EXISTS (
+//   SELECT 1 FROM "posts" AS "ant_related" WHERE "ant_related"."user_id" = "users"."id")
 ```
 
-`HasNone` with conditions matches rows with no related row that meets them.
+With conditions, `HasNone` matches rows that have no related row meeting them. Users with no published post may still have drafts:
 
-## The other direction
+```go
+// spot-next-line
+unpublished, err := db.Users.Where(ant.HasNone(&U.Posts, ant.Eq(&P.Published, true))).All(ctx)
+```
 
-`ant.HasOne` follows a many-to-one or one-to-one relation.
+This is also how to [delete with a join](/writing/update-and-delete#delete-by-relation).
+
+## Follow a relation to its owner
+
+`ant.HasOne` follows a many-to-one or one-to-one relation, so a child can be filtered by its parent.
 
 ```go
 // spot-next-line
 byAdults, err := db.Posts.Where(ant.HasOne(&P.User, ant.Gt(&U.Age, 18))).All(ctx)
+// SELECT ... FROM "posts" WHERE EXISTS (
+//   SELECT 1 FROM "users" AS "ant_related"
+//   WHERE "ant_related"."id" = "posts"."user_id" AND ("ant_related"."age" > $1))
 ```
 
-## Combining
+## Combine with other conditions
 
-These are conditions like any other.
+These are conditions like any other, so they go in `Where` beside the rest and inside `And`, `Or`, and `Not`.
 
 ```go
 // spot-next-line
 young, err := db.Users.Where(ant.Has(&U.Posts), ant.Lt(&U.Age, 18)).All(ctx)
+// SELECT ... FROM "users" WHERE EXISTS (...) AND "users"."age" < $1
 
 // spot-next-line
 same, err := db.Users.Where(ant.Not(ant.Has(&U.Posts))).Count(ctx)
+// SELECT COUNT(*) FROM "users" WHERE NOT (EXISTS (...))
 ```
 
-They work on many-to-many and through relations too, and a global filter on the related model still applies.
+They work on [many-to-many](/relations/many-to-many#read-through-the-join-table) and through relations too.
+
+A [global filter](/lifecycle/global-filters) on the related model still applies, and so does a [scope](/relations/advanced#scoped-relations-and-latest-of-many) on the relation.
 
 :::warning[Build it at run time]
 

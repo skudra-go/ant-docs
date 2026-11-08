@@ -1,101 +1,146 @@
 ---
 title: Subqueries, sets, and CTEs
-description: Queries inside queries, unions, WITH clauses, and recursion.
+description: Queries inside queries, unions, WITH clauses, recursion, and rows from memory.
 ---
 
-A query can sit inside another one as a list of values, a single value, or a table. Global filters and soft deletes still apply inside it.
+A query can sit inside another one as a list of values, a single value, or a table. [Global filters](/lifecycle/global-filters) and soft deletes still apply inside it.
 
-## A list of values
+## Match a list of values from another query
 
-`ant.SubOf` turns a query and a column into something `InSub` can use.
+`ant.SubOf` turns a query and a column into something `InSub` and `NotInSub` can use.
 
 ```go
-// spot-next-line
 authors := ant.SubOf(db.Posts.Where(ant.Eq(&P.Published, true)), &P.UserID)
 
-// spot-start
 wrote, err := db.Users.Where(ant.InSub(&U.ID, authors)).All(ctx)
+// SELECT ... FROM "users"
+// WHERE "users"."id" IN (SELECT "posts"."user_id" FROM "posts" WHERE "posts"."published" = $1)
+
 quiet, err := db.Users.Where(ant.NotInSub(&U.ID, authors)).All(ctx)
-// spot-end
+// SELECT ... FROM "users"
+// WHERE "users"."id" NOT IN (SELECT "posts"."user_id" FROM "posts" WHERE "posts"."published" = $1)
 ```
 
-## Exists
+`InSub` is also the way past the limit on parameters in a long [`In`](/queries/conditions#match-one-of-several-values) list.
+
+## Check whether related rows exist
 
 A subquery can refer to the outer row with `EqCol`.
 
 ```go
-// spot-next-line
 theirs := db.Posts.Where(ant.EqCol(&P.UserID, &U.ID))
 
-// spot-start
 wrote, err := db.Users.Where(ant.Exists(theirs)).All(ctx)
+// SELECT ... FROM "users"
+// WHERE EXISTS (SELECT 1 FROM "posts" WHERE "posts"."user_id" = "users"."id")
+
 quiet, err := db.Users.Where(ant.NotExists(theirs)).All(ctx)
-// spot-end
+// SELECT ... FROM "users"
+// WHERE NOT EXISTS (SELECT 1 FROM "posts" WHERE "posts"."user_id" = "users"."id")
 ```
 
 For a relation, [`ant.Has`](/relations/filtering) says the same thing more briefly.
 
-## A single value
+## Compare with a single value
 
 `ant.SubExpr` runs a query for a single value, which you can use anywhere an expression goes.
 
 ```go
-// spot-next-line
 oldest := ant.SubExpr(db.Users.Where(), ant.Max(&U.Age)).Expr()
 
 users, err := db.Users.Where(ant.Col(&U.Age).EqExpr(oldest)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."age" = (SELECT MAX("users"."age") FROM "users")
 ```
 
-It works for ordering, and for updates too.
+It works for ordering too. This sorts users by how many posts they have:
 
 ```go
-// spot-next-line
 posts := ant.SubExpr(db.Posts.Where(ant.EqCol(&P.UserID, &U.ID)), ant.Count()).Expr()
 
 busiest, err := db.Users.Order(posts.Desc()).All(ctx)
+// SELECT ... FROM "users"
+// ORDER BY (SELECT COUNT(*) FROM "posts" WHERE "posts"."user_id" = "users"."id") DESC
 ```
 
-## From a subquery
+## Query a subquery
+
+`From` replaces the table a query reads with another query, so conditions added afterward apply to its result.
 
 ```go
 adults := db.Users.Where(ant.Gt(&U.Age, 18))
 
-// spot-next-line
 users, err := db.Users.Query().From(adults).Where(ant.Lt(&U.Age, 35)).All(ctx)
+// SELECT ... FROM (SELECT ... FROM "users" WHERE "users"."age" > $1) AS "users"
+// WHERE "users"."age" < $2
 ```
 
 `Include` can't be part of a subquery, and returns `ant.ErrIncludeInSubquery`.
 
+An `Update` or `Delete` on a query like this selects its rows by key in a subquery. [Bulk writes](/writing/bulk) lists what a derived source must hold for that to work.
+
 ## Union, intersect, except
 
-These combine queries of one model. Conditions and ordering added afterward apply to the combined rows, so the result is a normal query.
+These combine queries of one model. Conditions, ordering and paging added afterward apply to the combined rows, so the result is a normal query.
 
 ```go
 young := db.Users.Where(ant.Lt(&U.Age, 35))
 old := db.Users.Where(ant.Gt(&U.Age, 25))
 
-// spot-start
 either, err := young.Union(old).OrderBy(&U.Name).All(ctx)
-repeats, err := young.UnionAll(old).All(ctx)
-both, err := young.Intersect(old).All(ctx)
-onlyYoung, err := young.Except(old).All(ctx)
-// spot-end
+// SELECT ... FROM (
+//   SELECT ... FROM "users" WHERE "users"."age" < $1
+//   UNION (SELECT ... FROM "users" WHERE "users"."age" > $2)
+// ) AS "users" ORDER BY "users"."name"
+
+repeats, err := young.UnionAll(old).All(ctx) // UNION ALL keeps duplicates
+both, err := young.Intersect(old).All(ctx)   // INTERSECT
+onlyYoung, err := young.Except(old).All(ctx) // EXCEPT
 ```
+
+The sides must select the model's columns in the same order, which they do when both come from the same model.
+
+### Page each side
+
+Each side keeps its own `OrderBy`, `Limit` and `Offset`, and they choose that side's rows before the sides combine. This gets the two youngest users and the two oldest in one query:
+
+```go
+youngest := db.Users.OrderBy(&U.Age).Limit(2)
+oldest := db.Users.OrderByDesc(&U.Age).Limit(2)
+
+extremes, err := youngest.Union(oldest).OrderBy(&U.Name).All(ctx)
+// SELECT ... FROM (
+//   SELECT * FROM (SELECT ... FROM "users" ORDER BY "users"."age" LIMIT $1) AS "users"
+//   UNION (SELECT * FROM (SELECT ... FROM "users" ORDER BY "users"."age" DESC LIMIT $2) AS "users")
+// ) AS "users" ORDER BY "users"."name"
+```
+
+A side with a `Limit` or `Offset` is wrapped in a derived table, which every database reads as one side. A side that orders without paging loses its order, because order can't change which rows a set holds. Order and page the combined rows by calling `OrderBy` and `Limit` after the set operation, as `OrderBy(&U.Name)` does above.
 
 ## Common table expressions
 
-`FromCTE` names a subquery in a `WITH` clause.
+`FromCTE` names a query in a `WITH` clause and reads from it.
 
 ```go
 named := db.Users.Where(ant.Like(&U.Name, "A%"))
 
-// spot-next-line
 users, err := db.Users.Query().FromCTE("named", named).OrderBy(&U.Name).All(ctx)
+// WITH "named" AS (SELECT ... FROM "users" WHERE "users"."name" LIKE $1)
+// SELECT ... FROM "named" AS "users" ORDER BY "users"."name"
 ```
 
-## Recursion
+`Count` and `Exists` on such a query keep the `WITH` at the start of the statement, on every database:
 
-`Recursive` follows a model's relation to itself as far as it goes, and `RecursiveOne` walks up instead. A loop in the data doesn't hang it, because rows it has already seen are dropped.
+```go
+n, err := db.Users.Query().FromCTE("named", db.Users.Where(ant.Like(&U.Name, "A%"))).Count(ctx)
+// WITH "named" AS (SELECT ... FROM "users" WHERE "users"."name" LIKE $1)
+// SELECT COUNT(*) FROM "named" AS "users"
+```
+
+SQL Server takes `WITH` only at the start of a statement, so it can't run an `Update` or `Delete` after `FromCTE` or `Recursive`, and returns `ant.ErrUnsupported`. See [bulk writes](/writing/bulk) and [databases](/reference/databases).
+
+## Walk a tree
+
+`Recursive` follows a model's relation to itself as far as it goes, starting from the rows of the query. `RecursiveOne` walks up to the parents instead. Use them for a category tree, a folder and everything under it, or the breadcrumb above a page.
 
 ```go
 type Folder struct {
@@ -108,18 +153,34 @@ type Folder struct {
 
 var F = ant.Fields[Folder]()
 
-// spot-start
 tree, err := db.Folders.Where(ant.Eq(&F.ID, id)).
 	Recursive(&F.Children).
 	OrderBy(&F.Name).
 	All(ctx)
-	// spot-end
+// WITH RECURSIVE "ant_tree" AS (
+//   SELECT ... FROM "folders" WHERE "folders"."id" = $1
+//   UNION (SELECT ... FROM "folders" JOIN "ant_tree" ON "folders"."parent_id" = "ant_tree"."id")
+// ) SELECT ... FROM "ant_tree" AS "folders" ORDER BY "folders"."name"
 
-// spot-start
 ancestors, err := db.Folders.Where(ant.Eq(&F.ID, id)).
 	RecursiveOne(&F.Parent).
 	All(ctx)
-// spot-end
+// WITH RECURSIVE "ant_tree" AS (
+//   SELECT ... FROM "folders" WHERE "folders"."id" = $1
+//   UNION (SELECT ... FROM "folders" JOIN "ant_tree" ON "folders"."id" = "ant_tree"."parent_id")
+// ) SELECT ... FROM "ant_tree" AS "folders"
+```
+
+A loop in the data doesn't hang the query. The parts are joined with `UNION`, which drops a row it has already seen, and a row reached from two starting rows comes back once.
+
+The starting rows can be limited and ordered like the sides of a set operation. This walks the tree under the first folder by name:
+
+```go
+first, err := db.Folders.OrderBy(&F.Name).Limit(1).Recursive(&F.Children).All(ctx)
+// WITH RECURSIVE "ant_tree" AS (
+//   SELECT * FROM (SELECT ... FROM "folders" ORDER BY "folders"."name" LIMIT $1) AS "folders"
+//   UNION (SELECT ... FROM "folders" JOIN "ant_tree" ON "folders"."parent_id" = "ant_tree"."id")
+// ) SELECT ... FROM "ant_tree" AS "folders"
 ```
 
 {/*
@@ -133,9 +194,11 @@ type PageDB struct {
 ```
 */}
 
+On SQL Server the statement is written differently, with the same result. Its recursive `WITH` has no `RECURSIVE` and joins its parts only with `UNION ALL`, which neither ends a cycle nor drops a repeated row. So each row carries the path of keys that reached it, a row already on its path isn't followed again, and the query reads one row per key. ant also adds `OPTION (MAXRECURSION 0)`, which lifts SQL Server's limit of 100 levels. MySQL, MariaDB and SQLite use `UNION` as PostgreSQL does. See [databases](/reference/databases).
+
 ## Rows held in memory
 
-`ant.Values` treats rows in your program as a table, so you can join against a list. It needs a dialect with migration support, which means PostgreSQL for now, and an empty list is `ant.ErrNoRows`.
+`ant.Values` treats rows in your program as a table, so you can join against a list. An empty list is `ant.ErrNoRows`, because SQL has no empty `VALUES`.
 
 ```go
 type Wanted struct {
@@ -145,17 +208,23 @@ type Wanted struct {
 
 var W = ant.Fields[Wanted]()
 
-// spot-next-line
 wanted := ant.Values(db, Wanted{alice.ID, "first"}, Wanted{bob.ID, "second"})
 
 rows, err := ant.JoinSub(db.Users.Query(), wanted, ant.EqCol(&U.ID, &W.UserID)).
 	Select(func(u *User, w *Wanted) string { return w.Label + ": " + u.Name }).
 	All(ctx)
+// SELECT ... FROM "users"
+// JOIN (SELECT "wanteds"."user_id", "wanteds"."label" FROM (VALUES
+//   (CAST($1 AS bigint), CAST($2 AS text)), (CAST($3 AS bigint), CAST($4 AS text))
+// ) AS "wanteds" ("user_id", "label")) AS "wanteds"
+//   ON "users"."id" = "wanteds"."user_id"
 ```
+
+`Values` works on every database. PostgreSQL casts the values to the column types. SQLite and MySQL write the rows as `SELECT ... UNION ALL SELECT ...`, and SQL Server as `VALUES` without casts. Results aren't tracked.
 
 ## Table functions
 
-`ant.FromFunc` reads a function that returns rows, and queries build on it.
+`ant.FromFunc` reads a function that returns rows, and queries build on it. The call is SQL for your database, with `?` for arguments.
 
 ```go
 type Number struct {
@@ -165,10 +234,11 @@ type Number struct {
 var N = ant.Fields[Number]()
 
 numbers, err := ant.
-	// spot-next-line
 	FromFunc[Number](db, "generate_series(?::bigint, ?::bigint) AS numbers(n)", 1, 5).
 	Where(ant.Gt(&N.N, 3)).
 	All(ctx)
+// SELECT "numbers"."n" FROM (SELECT * FROM generate_series($1::bigint, $2::bigint) AS numbers(n)) AS "numbers"
+// WHERE "numbers"."n" > $3
 ```
 
 <Tests path="querying" />

@@ -1,13 +1,13 @@
 ---
 title: Multi-tenancy
-description: Keep customers apart in one database, in a way that cannot be forgotten.
+description: Keep customers apart in one database with a tenant filter that cannot be forgotten.
 ---
 
-To keep customers apart in one database, every query needs a tenant condition. The only reliable way is to make it impossible to forget.
+To keep customers apart in one database, every query needs a tenant condition. The reliable way is to make it impossible to forget.
 
-## A global filter
+## Filter every query by tenant
 
-A [filter](/lifecycle/global-filters) applies to every query of a model, and reaches joins, `Include`, `Has`, and subqueries by itself.
+A [global filter](/lifecycle/global-filters) applies to every query of a model. It reaches joins, `Include`, `Has`, subqueries and bulk writes without anyone asking for it, and it reads the tenant from the request's context when the query runs.
 
 ```go
 type tenantKey struct{}
@@ -33,22 +33,50 @@ func (Invoice) Configure(b *ant.ModelBuilder[Invoice]) {
 {/*
 ```go
 type Invoice struct {
-	Tenanted
-	ID    int64
-	Total int64
+	ID       int64
+	TenantID int64
+	Total    int64
 }
 
 var I = ant.Fields[Invoice]()
 
 var ErrNoTenant = errors.New("no tenant in context")
+
+var B = ant.Fields[Bill]()
+
+type AppDB struct {
+	ant.Context
+	Invoices ant.Table[Invoice]
+	Bills    ant.Table[Bill]
+}
 ```
 */}
 
-**Fail closed.** With no tenant in the context, the filter returns an error and the query fails. If it returned an empty condition instead, code that forgot to set a tenant would see every tenant's rows, which is the worst way this can go wrong.
+Put the tenant in the context where the request starts, and pass that context to every call:
 
-## Every model at once
+```go
+ctx = WithTenant(ctx, 7)
 
-An embedded struct with `ConfigureMixin` brings the column, the filter, and the value on insert all at once, so a model can't get just part of it wrong.
+invoices, err := db.Invoices.Where(ant.Gt(&I.Total, 100)).All(ctx)
+// SELECT ... FROM "invoices" WHERE "invoices"."total" > $1 AND "invoices"."tenant_id" = $2
+// -- $1 = 100, $2 = 7
+
+_, err = db.Invoices.Where(ant.Eq(&I.ID, 1)).Update(ctx, ant.Set(&I.Total, 0))
+// UPDATE "invoices" SET "total" = $1 WHERE "invoices"."id" = $2 AND "invoices"."tenant_id" = $3
+```
+
+### Fail closed
+
+With no tenant in the context, the filter returns `ant.FailedCond` and the query fails with `ErrNoTenant`, before any SQL is sent. If it returned an empty condition instead, code that forgot to set a tenant would see every tenant's rows, which is the worst way this can go wrong.
+
+```go
+_, err := db.Invoices.All(context.Background())
+// err is ErrNoTenant
+```
+
+## Add the column, filter and insert value to every model
+
+An embedded struct with `ConfigureMixin` brings the column, the filter and the value on insert all at once, so a model can't end up with only part of it.
 
 ```go
 type Tenanted struct {
@@ -86,7 +114,7 @@ func TenantOf(ctx context.Context) (int64, error) {
 }
 ```
 
-Now a model only has to embed it.
+A model only has to embed it.
 
 ```go
 type Bill struct {
@@ -97,6 +125,20 @@ type Bill struct {
 }
 ```
 
+Reads and writes then carry the tenant, and an insert without one is refused:
+
+```go
+err := db.Bills.Insert(WithTenant(ctx, 7), &Bill{Total: 5})
+// INSERT INTO "bills" ("tenant_id", "total") VALUES ($1, $2) RETURNING "id"
+// -- $1 = 7, $2 = 5
+
+err = db.Bills.Insert(ctx, &Bill{Total: 5})
+// err is ErrNoTenant: BeforeInsert fails, and the insert is rolled back
+
+n, err := db.Bills.Where(ant.Eq(&B.ID, 1)).Delete(WithTenant(ctx, 7))
+// DELETE FROM "bills" WHERE "bills"."id" = $1 AND "bills"."tenant_id" = $2
+```
+
 The [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) is built this way.
 
 ## What a filter does not cover
@@ -104,6 +146,7 @@ The [ledger example](https://github.com/skudra-go/ant-examples/tree/main/example
 - `ant.Raw` runs your SQL as written, so a raw query has to name the tenant itself.
 - `q.IgnoreFilters()` turns filters off, on purpose, for admin tools. Search for it in reviews.
 - Unique constraints are per table, so a value unique per tenant needs the tenant in the key.
+- The tenant comes from the context you pass. A call with a context that has no tenant fails, but one with the wrong tenant returns that tenant's rows.
 
 ```go
 func (Member) Configure(b *ant.ModelBuilder[Member]) {
@@ -124,4 +167,6 @@ var M = ant.Fields[Member]()
 ```
 */}
 
-For a harder boundary, PostgreSQL's row-level security enforces the same rule in the database. Set the tenant per transaction with `SET LOCAL`, inside `db.Tx`.
+## Enforce it in the database
+
+A filter is a convenience, not a security boundary. For a harder one, PostgreSQL's row-level security enforces the same rule in the database. Set the tenant per transaction with `SET LOCAL`, inside `db.Tx`.

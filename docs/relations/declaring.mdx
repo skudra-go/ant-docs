@@ -1,11 +1,11 @@
 ---
 title: Declaring relations
-description: A relation is a field, found by name or configured in Go.
+description: Declare a relation as a field on the struct, found by name or configured in Go.
 ---
 
-A relation is just a field on the struct. `[]Post` is one-to-many, and `*User` is many-to-one or one-to-one. Most need no configuration at all, because ant finds the foreign key by name.
+A relation is a field on the struct. `[]Post` is one-to-many, and `*User` is many-to-one or one-to-one. ant finds the foreign key by name, so most relations need no configuration.
 
-## By convention
+## Declare a relation by name
 
 ```go
 type Person struct {
@@ -32,9 +32,15 @@ type Pet struct {
 }
 ```
 
-Relation fields aren't columns, and a query leaves them empty until you [load them](/relations/loading). You can declare a relation on one side only.
+The foreign key is the owner's name plus `ID`: `Pet.PersonID` joins to `Person.ID`. Relation fields aren't columns, and a query leaves them empty until you [load them](/relations/loading). You can declare a relation on one side only, and use it from that side.
 
-## Configuring a relation
+```go
+users, err := db.Users.Include(&U.Posts).All(ctx)
+// SELECT ... FROM "users"
+// SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
+```
+
+## Name the foreign key
 
 When names can't find the key, `Configure` names it. Either side can do this.
 
@@ -75,11 +81,11 @@ var (
 | `b.BelongsTo(&P.User)` | many-to-one, key on this side |
 | `b.ManyToMany(&U.Roles)` | [through a join table](/relations/many-to-many) |
 
-A relation nothing connects returns `ant.ErrNoForeignKey` at the terminal call.
+A relation that nothing connects returns `ant.ErrNoForeignKey` at the terminal call (`All`, `First` and so on), not when the model is declared.
 
-## A key other than the primary key
+## Join on a column other than the key
 
-`References` points at another column, which must be unique.
+`References` points at another column of the owner, which must be unique. Use it when children refer to a natural key such as a handle or a SKU.
 
 {/*
 ```go
@@ -107,9 +113,9 @@ func (Author) Configure(b *ant.ModelBuilder[Author]) {
 var Qt = ant.Fields[Quote]()
 ```
 
-## What happens on delete
+## Choose what happens on delete
 
-Delete behavior is `NO ACTION` unless you set it, so nothing is removed that you didn't ask for.
+The foreign key is `NO ACTION` unless you set it, so deleting a parent that still has children fails and nothing is removed that you didn't ask for.
 
 ```go
 func (Post) Configure(b *ant.ModelBuilder[Post]) {
@@ -118,9 +124,9 @@ func (Post) Configure(b *ant.ModelBuilder[Post]) {
 }
 ```
 
-The actions are `ant.Cascade`, `ant.SetNull`, `ant.Restrict`, and `ant.NoAction`. They become part of the foreign key in [migrations](/migrations/models-to-tables), and the database enforces them.
+The actions are `ant.Cascade` (delete the children too), `ant.SetNull`, `ant.Restrict`, and `ant.NoAction`. They become part of the foreign key in [migrations](/migrations/models-to-tables), and the database enforces them.
 
-## Other relation options
+## Skip the constraint or the index
 
 ```go
 func (Post) Configure(b *ant.ModelBuilder[Post]) {
@@ -131,9 +137,9 @@ func (Post) Configure(b *ant.ModelBuilder[Post]) {
 }
 ```
 
-## A model that points at itself
+## Point a model at itself
 
-The parent is found through `ParentID`, and the children through the matching back-reference.
+The parent is found through `ParentID`, and the children through the matching back-reference. Use it for trees such as folders and categories.
 
 ```go
 type Folder struct {
@@ -147,6 +153,6 @@ type Folder struct {
 }
 ```
 
-Use a pointer key, so a root can have no parent.
+Use a pointer key, so a root can have no parent. For many-to-many, [declare it through a join table](/relations/many-to-many).
 
 <Tests path="relations" />

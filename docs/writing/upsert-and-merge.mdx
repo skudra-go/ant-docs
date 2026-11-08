@@ -1,9 +1,31 @@
 ---
 title: Upsert and merge
-description: Insert or update on a conflict, and MERGE for what upsert cannot do.
+description: Insert or update on a conflict with Upsert, and MERGE for what an upsert cannot do.
 ---
 
-`Upsert` inserts a row, or follows your instructions if a unique constraint says it's already there.
+`Upsert` inserts a row, or follows your instructions if a unique constraint says the row is already there. `Merge` covers the cases an upsert can't, such as deleting rows in the same statement.
+
+{/*
+```go
+type Doc struct {
+	ant.Base
+	Title   string `ant:"unique"`
+	Views   int
+	Version int64 `ant:"version"`
+}
+
+var D = ant.Fields[Doc]()
+
+type PageDB struct {
+	ant.Context
+	Users  ant.Table[User]
+	Hits   ant.Table[Hit]
+	Docs   ant.Table[Doc]
+	Stock  ant.Table[Stock]
+	Staged ant.Table[Staged]
+}
+```
+*/}
 
 ## Upsert
 
@@ -16,31 +38,63 @@ user := &User{
 
 // spot-next-line
 wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&U.Email))
+// INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
+// VALUES ($1, $2, $3, $4, $5, $6)
+// ON CONFLICT ("email") DO UPDATE SET
+//   "updated_at" = "excluded"."updated_at", "name" = "excluded"."name",
+//   "age" = "excluded"."age", "bio" = "excluded"."bio"
+// RETURNING "id", "created_at", "updated_at", "name", "email", "age", "bio"
 ```
 
-By default, every column except the key and the constraint's own is overwritten, and your struct receives the stored row, key included. A zero value overwrites too: no guessing here either.
+`OnConflict` names the unique column. By default every column except the key and the constraint's own is overwritten, and your struct receives the stored row, key included. A zero value overwrites too.
 
-## Choosing what changes
+Run it twice and you get one row. That makes it the tool for idempotent imports: a feed can be applied again after a crash, and rows that changed are updated.
 
-`DoUpdate` names the columns to overwrite, and `Set` assigns values, including ones based on the existing row.
+## Choose what changes
+
+`DoUpdate` names the columns to overwrite:
 
 ```go
 onEmail := ant.OnConflict(&U.Email)
 
-// spot-start
+// spot-next-line
 wrote, err := db.Users.Upsert(ctx, user, onEmail.DoUpdate(ant.F(&U.Age)))
-
-wrote, err = db.Users.Upsert(ctx, user, onEmail.Set(ant.Inc(&U.Age, 1)))
-// spot-end
+// ... ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age"
 ```
 
-## Skipping existing rows
+`Set` assigns values, including ones based on the existing row. A counter is the usual case: the first call inserts the row at 1, and later calls add 1.
 
-`DoNothing` keeps the row and reports `false`, leaving your struct as it was.
+```go
+type Hit struct {
+	ID    int64
+	Path  string `ant:"unique"`
+	Count int
+}
+
+var H = ant.Fields[Hit]()
+
+// spot-start
+hit := &Hit{Path: "/home", Count: 1}
+
+wrote, err := db.Hits.Upsert(ctx, hit, ant.OnConflict(&H.Path).Set(ant.Inc(&H.Count, 1)))
+// spot-end
+// INSERT INTO "hits" ("path", "count") VALUES ($1, $2)
+// ON CONFLICT ("path") DO UPDATE SET "count" = ("hits"."count" + $3)
+// RETURNING "id", "path", "count"
+```
+
+Because the insert and the increment happen in one statement, two requests at once don't lose a count.
+
+A column takes one value. Naming a field twice, in `DoUpdate`, `Set`, or both, returns an error before anything runs.
+
+## Skip existing rows
+
+`DoNothing` keeps the existing row and reports `false`, leaving your struct as it was. Use it to seed rows without touching ones that are already there.
 
 ```go
 // spot-next-line
 wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&U.Email).DoNothing())
+// ... ON CONFLICT ("email") DO NOTHING RETURNING ...
 ```
 
 ## A key on several columns
@@ -50,26 +104,64 @@ wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&U.Email).DoNothing())
 ```go
 // spot-next-line
 conflict := ant.OnConflict(&U.Email).And(ant.F(&U.Name))
+// ON CONFLICT ("email", "name")
 ```
 
-## Many rows
+## Upsert many rows
 
-`InsertMany` takes a conflict too.
+`InsertMany` takes a conflict too, so a whole file can be loaded with one statement per batch:
 
 ```go
 // spot-next-line
-n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&U.Email).DoNothing()))
+n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&U.Email).DoUpdate(ant.F(&U.Age))))
+// INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...)
+// ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age"
 ```
 
-:::warning[On MySQL and MariaDB]
+Rows that conflict may be skipped, so `InsertMany` doesn't copy keys back when it has a conflict clause.
 
-`ON DUPLICATE KEY` has no target, so any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns, and reports that it wrote nothing. Name the only unique key that can collide. SQL Server has no upsert: use `ant.Merge`.
+## Versioned rows
+
+On a model with a [version field](/lifecycle/optimistic-concurrency), every write that updates a row moves the version on by one: `Upsert`, `DoUpdate`, `Set`, `Merge`, and `InsertMany` with a conflict. A new row starts at 1.
+
+```go
+// ... ON CONFLICT ("title") DO UPDATE SET "views" = "excluded"."views",
+//   "version" = ("docs"."version" + 1)
+```
+
+The version is ant's to keep, so naming it in `DoUpdate`, `Set`, or a `Merge` assignment is an error before anything runs.
+
+An entity with a version of its own is a loaded copy, so `Upsert` applies its update only while the stored row still has that version. Otherwise it returns an `*ant.ConcurrencyError`, which matches `ant.ErrConcurrency`, as `SaveChanges` does. A zero version means a new entity and is not checked.
+
+```go
+doc := &Doc{Title: "T", Views: 3, Version: 1}
+
+// spot-next-line
+_, err := db.Docs.Upsert(ctx, doc, ant.OnConflict(&D.Title))
+// ... ON CONFLICT ("title") DO UPDATE SET ..., "version" = ("docs"."version" + 1)
+//   WHERE "docs"."version" = $6
+// errors.Is(err, ant.ErrConcurrency) when the stored version is not 1
+```
+
+`InsertMany` can't tell a row's own version from the 1 it gives a new row, so it moves versions on and doesn't check them.
+
+MySQL and MariaDB have no condition on `ON DUPLICATE KEY UPDATE`, so ant guards each assignment instead: `col = CASE WHEN version = ? THEN new ELSE col END`. A stale copy changes nothing and gets the same error. This reads the affected-row count, so keep the driver's `clientFoundRows` option off, which is its default.
+
+## On MySQL and MariaDB
+
+:::warning[One unique key]
+
+`ON DUPLICATE KEY` has no target, so any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns, and reports that it wrote nothing. Name the only unique key that can collide.
 
 :::
 
+MySQL refuses an upsert whose `Set` reads its own table. There, ant writes the rows as `INSERT ... SELECT` instead, which MySQL accepts. A `SELECT` has no `DEFAULT`, so `InsertMany` with a column left to its default and such a `Set` returns `ant.ErrUnsupported`. See [databases](/reference/databases).
+
+SQL Server has no upsert. Use `ant.Merge`.
+
 ## Merge
 
-`ant.Merge` decides, row by row, what a batch of source rows does to a table. One statement can update, insert, and delete, which `Upsert` can't. Clauses run in the order you add them, and the first one that fits a row wins. It needs PostgreSQL 15, or SQL Server.
+`ant.Merge` decides, row by row, what a batch of source rows does to a table. One statement can update, insert, and delete. Clauses run in the order you add them, and the first one that fits a row wins. It needs PostgreSQL 15 or SQL Server, and returns `ant.ErrUnsupported` elsewhere.
 
 ```go
 type Stock struct {
@@ -95,20 +187,32 @@ changed, err := ant.Merge(&db.Stock, db.Staged.Query(), ant.EqCol(&ST.SKU, &SG.S
 	WhenMatched(ant.SetExpr(&ST.Count, ant.Col(&SG.Count))).
 	WhenNotMatched(ant.Into(&ST.SKU, &SG.SKU), ant.Into(&ST.Count, &SG.Count)).
 	Exec(ctx)
-// spot-end
+	// spot-end
+// MERGE INTO "stocks"
+// USING (SELECT "stageds"."id", "stageds"."sku", "stageds"."count" FROM "stageds") AS "stageds"
+// ON ("stocks"."sku" = "stageds"."sku")
+// WHEN MATCHED AND "stageds"."count" = $1 THEN DELETE
+// WHEN MATCHED THEN UPDATE SET "count" = "stageds"."count"
+// WHEN NOT MATCHED THEN INSERT ("sku", "count") VALUES ("stageds"."sku", "stageds"."count")
 ```
 
-{/*
+A sold-out item is deleted, a known one is updated, and a new one is inserted. This is the shape of a nightly sync from a feed. `Exec` returns the rows changed.
+
+### What Merge fills in
+
+`Merge` builds its statement from what you give it, then adds what `Insert` and `Update` add. A matched update sets `UpdatedAt`. An insert sets `CreatedAt`, `UpdatedAt`, the version, and the model's discriminator. A mapping you give for one of these columns wins. On a stock model that has timestamps and a version, the statement above becomes:
+
 ```go
-type PageDB struct {
-	ant.Context
-	Users  ant.Table[User]
-	Stock  ant.Table[Stock]
-	Staged ant.Table[Staged]
-}
+// WHEN MATCHED THEN UPDATE SET "count" = "stageds"."count", "updated_at" = $2,
+//   "version" = ("stocks"."version" + 1)
+// WHEN NOT MATCHED THEN INSERT ("sku", "count", "version", "created_at", "updated_at")
+//   VALUES ("stageds"."sku", "stageds"."count", 1, $3, $4)
 ```
-*/}
 
-Here a sold-out item is deleted, a known one is updated, and a new one is inserted.
+A key from a Go generator is not filled. One statement inserts many rows, and a value made once would be the same for all of them. Map the key from the source, or let the database generate it.
+
+As with other writes, a column can have one assignment per clause, and naming the version is an error.
+
+On SQL Server, ant writes the statement `WITH (HOLDLOCK)`. Without it, two merges at once can both find no row and both insert it. On PostgreSQL, a merge that inserts a row another one inserted meanwhile fails with a unique violation, and the application retries. `Upsert` has no such failure there.
 
 <Tests path="writing/upsert_test.go" />

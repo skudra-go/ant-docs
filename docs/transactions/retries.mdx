@@ -3,11 +3,70 @@ title: Retries
 description: Run a transaction again after a deadlock or serialization conflict.
 ---
 
-When two transactions collide, the database cancels one, and running it again usually just works. ant can do that for you.
+When two transactions collide, the database cancels one, and running it again usually works. `ant.Attempts` and `ant.WithRetry` do that for you.
 
-## One transaction
+## Retry one transaction
 
-`ant.Attempts` reruns a transaction that lost a serialization conflict or a deadlock. The number is the total number of runs. An ordinary error is never retried.
+`ant.Attempts` reruns a transaction that lost a serialization conflict or a deadlock. The number is the total number of runs, and ant waits a little longer between runs. An ordinary error is never retried.
+
+This transfer reads two accounts and writes both at serializable isolation. If another transfer commits first, the database cancels this one with a serialization failure, and ant runs the function again:
+
+```go
+func transfer(ctx context.Context, db *BankDB, from, to string, amount int64) error {
+	return db.Tx(
+		ctx,
+		func(tx *BankDB) error {
+			// A tracker of its own, so every attempt reads the rows afresh.
+			tx = ant.Session(tx, ant.WithTracking(true))
+
+			source, err := tx.Accounts.Where(ant.Eq(&A.Owner, from)).Single(ctx)
+			if err != nil {
+				return err
+			}
+
+			target, err := tx.Accounts.Where(ant.Eq(&A.Owner, to)).Single(ctx)
+			if err != nil {
+				return err
+			}
+
+			source.Balance -= amount
+			target.Balance += amount
+
+			return tx.SaveChanges(ctx)
+		},
+		ant.Isolation(sql.LevelSerializable),
+		// spot-next-line
+		ant.Attempts(3),
+	)
+}
+```
+
+When another transfer commits between the reads and the writes, the statements look like this. The first run is cancelled at its first `UPDATE`, and the second run reads the new balances:
+
+```sql
+-- run 1
+SELECT ... FROM "accounts" WHERE "accounts"."owner" = $1 LIMIT $2
+SELECT ... FROM "accounts" WHERE "accounts"."owner" = $1 LIMIT $2
+SAVEPOINT ant_sp_1
+UPDATE "accounts" SET "balance" = $1, "updated_at" = $2, "version" = $3 WHERE "accounts"."id" = $4 AND "accounts"."version" = $5
+-- ERROR: could not serialize access due to concurrent update (SQLSTATE 40001)
+ROLLBACK TO SAVEPOINT ant_sp_1
+-- run 2
+SELECT ... FROM "accounts" WHERE "accounts"."owner" = $1 LIMIT $2
+SELECT ... FROM "accounts" WHERE "accounts"."owner" = $1 LIMIT $2
+SAVEPOINT ant_sp_1
+UPDATE "accounts" SET ... WHERE "accounts"."id" = $4 AND "accounts"."version" = $5
+UPDATE "accounts" SET ... WHERE "accounts"."id" = $4 AND "accounts"."version" = $5
+RELEASE SAVEPOINT ant_sp_1
+```
+
+:::note[Why the function takes a session]
+
+In v0.2.0, a rerun shares the tracker with the run that failed, so without `ant.Session` its tracked reads get the instances the failed run changed, and an entity it added is inserted twice. The next release forgets what a failed run loaded or added before rerunning ([#63](https://github.com/skudra-go/ant/issues/63)). Entities tracked before the transaction stay as they were, so load what the function changes inside it.
+
+:::
+
+The function runs from the top each time, with the same tracker. A tracked read returns the instance the tracker already holds, edits included, so a function that changes `source.Balance` on a shared tracker would subtract twice on the second run. Taking a session inside the function, as above, gives each run a clean tracker. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
 
 ```go
 err := db.Tx(
@@ -23,12 +82,43 @@ err := db.Tx(
 		return err
 	},
 	ant.Isolation(sql.LevelSerializable),
-	// spot-next-line
 	ant.Attempts(5),
 )
 ```
 
-## Every transaction
+{/*
+```go
+type Account struct {
+	ant.Base
+	Owner   string
+	Balance int64
+	Version int64 `ant:"version"`
+}
+
+type BankDB struct {
+	ant.Context
+	Accounts ant.Table[Account]
+}
+
+var A = ant.Fields[Account]()
+```
+*/}
+
+## What is retryable
+
+`ant.IsRetryable` reports whether an error is a deadlock or a serialization failure, on every database:
+
+| Database | Retryable errors |
+| --- | --- |
+| PostgreSQL | `40001` serialization failure, `40P01` deadlock |
+| MySQL, MariaDB | Deadlock (1213) |
+| MariaDB 11.6 and later | Error 1020, a row changed since the transaction's snapshot, which rolls the transaction back |
+| SQL Server | Deadlock |
+| SQLite | A busy database |
+
+A version conflict from [`SaveChanges`](/tracking/save-changes#changed-or-removed-since-it-was-loaded) is not in the list. `ErrConcurrency` means the data changed under you, and running the same function again with the same loaded values would fail the same way.
+
+## Retry every transaction
 
 `ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context, for an application that wants this handled in one place. `ant.Attempts` overrides it for one call.
 
@@ -37,9 +127,11 @@ err := db.Tx(
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithRetry(ant.Retry{Attempts: 5}))
 ```
 
-## Checking by hand
+A `SaveChanges` outside a transaction retries its own transaction. Inside a `Tx`, the transaction decides, and `SaveChanges` runs once per attempt.
 
-`ant.IsRetryable` reports whether an error is one of these.
+## Check by hand
+
+`ant.IsRetryable` is also what you use to write your own loop, for work that doesn't fit in a `Tx` closure.
 
 ```go
 err := db.SaveChanges(ctx)

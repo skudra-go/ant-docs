@@ -22,12 +22,14 @@ type AppDB struct {
 ```
 */}
 
-## Row locks
+## Lock a row for update
+
+Read the row with `ForUpdate`, change it, and save in the same transaction. Others who try to lock or write the row wait until you finish.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
-	// spot-next-line
 	user, err := tx.Users.Where(ant.Eq(&U.ID, id)).ForUpdate().Single(ctx)
+	// SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2 FOR UPDATE
 	if err != nil {
 		return err
 	}
@@ -38,23 +40,23 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 })
 ```
 
-| Method | Means |
-| --- | --- |
-| `ForUpdate()` | Lock for writing. Others wait |
-| `ForShare()` | Lock against writers. Other readers are fine |
-| `NoWait()` | Fail at once on a locked row |
-| `SkipLocked()` | Leave locked rows out |
+| Method | Means | SQL |
+| --- | --- | --- |
+| `ForUpdate()` | Lock for writing. Others wait | `FOR UPDATE` |
+| `ForShare()` | Lock against writers. Other readers are fine | `FOR SHARE` |
+| `NoWait()` | Fail at once on a locked row | `NOWAIT` |
+| `SkipLocked()` | Leave locked rows out | `SKIP LOCKED` |
 
-`ForUpdate` is always sent to the primary, even with [replicas](/transactions/connections#read-replicas).
+`NoWait` and `SkipLocked` follow `ForUpdate` or `ForShare`. `ForUpdate` is always sent to the primary, even with [replicas](/transactions/connections#read-replicas).
 
-## A job queue
+## Claim jobs from a queue
 
 `SkipLocked` lets each worker claim a row nobody else holds, so no job runs twice.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
-	// spot-next-line
 	job, err := tx.Jobs.OrderBy(&J.ID).ForUpdate().SkipLocked().First(ctx)
+	// SELECT ... FROM "jobs" ORDER BY "jobs"."id" LIMIT $1 FOR UPDATE SKIP LOCKED
 	if err != nil {
 		return err
 	}
@@ -65,24 +67,30 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 })
 ```
 
-Row locks depend on the database: see [databases](/reference/databases).
+When no row is free, `First` returns `ant.ErrNotFound`, which a worker can treat as "queue empty".
 
-## Optimizer hints
+Row locks depend on the database. PostgreSQL and MySQL have them all, MariaDB has `ForUpdate` only, and SQLite and SQL Server return `ant.ErrUnsupported`. See [databases](/reference/databases).
 
-`Hint` writes an optimizer hint at the start of a statement. PostgreSQL ignores hints unless you install the `pg_hint_plan` extension. A hint tends to outlive the reason for it, so prefer fixing the query.
+## Add an optimizer hint
+
+`Hint` writes an optimizer hint before the statement. PostgreSQL ignores hints unless you install the `pg_hint_plan` extension. A hint tends to outlive the reason for it, so prefer fixing the query.
 
 ```go
-// spot-next-line
 users, err := db.Users.Query().Hint("SeqScan(users)").All(ctx)
+// /*+ SeqScan(users) */ SELECT ... FROM "users"
 ```
 
-## Query comments
+MySQL and MariaDB read the hint right after `SELECT`, so ant writes it there: `SELECT /*+ ... */ ...`. SQLite and SQL Server see the hint as a comment.
 
-`Tag` adds a comment to the SQL, so a slow query is easy to spot in database logs. Neither `Tag` nor `Hint` can break out of its comment.
+## Tag a query
+
+`Tag` adds a comment to the SQL, so a slow query is easy to spot in database logs.
 
 ```go
-// spot-next-line
 users, err := db.Users.Where(ant.Gt(&U.Age, 18)).Tag("dashboard: adults").All(ctx)
+// /* dashboard: adults */ SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
+
+Neither `Tag` nor `Hint` can break out of its comment. When `*/` or `/*` appears in the text, ant puts a space between its two characters, so `*/ DROP TABLE users; /*` is written as `* / DROP TABLE users; / *` inside the comment. Text from a request is safe to tag with, though it shows up in the log with those spaces.
 
 <Tests path="querying/locks_test.go" />

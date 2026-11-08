@@ -3,7 +3,7 @@ title: Field roles
 description: Tags that decide how a field is read and written.
 ---
 
-A tag gives a field a role in how it's read and written. Tags combine with commas, as in `ant:"default,immutable"`.
+A tag gives a field a role in how ant reads and writes it. Tags combine with commas, as in `ant:"default='new',immutable"`.
 
 ## All the tags
 
@@ -12,18 +12,18 @@ A tag gives a field a role in how it's read and written. Tags combine with comma
 | `ant:"-"` | Not a column |
 | `ant:"column=name"` | Use this column name |
 | `ant:"unique"` | A unique constraint, used by migrations |
-| `ant:"default"`, `ant:"default=0"` | Leave zero to the column's default |
+| `ant:"default=expr"` | Leave a zero value to the column's default. [Details](/models/nullable-and-defaults#database-defaults) |
 | `ant:"readonly"` | Filled by the database, never written |
 | `ant:"writeonly"` | Written, never read |
-| `ant:"immutable"` | Written on insert, never updated |
+| `ant:"immutable"` | Written on insert, never changed by `SaveChanges` |
 | `ant:"computed"` | Filled by `Query.With`, no column |
 | `ant:"version"` | [Optimistic concurrency](/lifecycle/optimistic-concurrency) counter |
 | `ant:"token"` | Optimistic concurrency, with a value you manage |
 | `ant:"embedded"`, `ant:"embedded,prefix=x_"` | [Flatten a struct](/models/embedded-and-mixins) into columns |
 
-## Read only
+## Read a value the database generates
 
-For generated columns. The database fills it in, and the value is copied back on insert.
+`readonly` is for generated columns and values a trigger sets. ant leaves the column out of every write and copies the value back after an insert.
 
 ```go
 type Account struct {
@@ -36,13 +36,16 @@ type Account struct {
 account := &Account{Email: "A@X"}
 
 err := db.Accounts.Insert(ctx, account)
+// INSERT INTO "accounts" ("email") VALUES ($1) RETURNING "id", "slug"
 
 fmt.Println(account.Slug) // "a@x"
 ```
 
-## Write only
+A column declared with `b.Column(&...).Generated(expr)` is read-only without the tag.
 
-For things that should never come back out, like a password hash. An explicit `Update` can still set it.
+## Keep a value out of query results
+
+`writeonly` is for values that should never come back out, such as a password hash. The column is written, and left out of every select.
 
 ```go
 type Account struct {
@@ -53,14 +56,17 @@ type Account struct {
 
 // spot-start
 found, err := db.Accounts.Find(ctx, id)
+// SELECT "accounts"."id" FROM "accounts" WHERE "accounts"."id" = $1 LIMIT $2
 
 fmt.Println(found.Password) // empty: never read
 // spot-end
 ```
 
-## Immutable
+`SaveChanges` writes a changed value, and an explicit `Update` can set it.
 
-Written once, on insert. Changing it later writes nothing, and doesn't even count as a change.
+## Write a value once
+
+`immutable` writes the field on insert. Changing it afterwards isn't a change as far as `SaveChanges` is concerned: nothing is written, and the entity is not marked modified. Use it for `CreatedBy`, or an owner that must not move.
 
 ```go
 type Account struct {
@@ -72,12 +78,16 @@ type Account struct {
 account.CreatedBy = "someone else"
 
 // spot-next-line
-db.HasChanges() // false
+changed, err := db.HasChanges(ctx) // false
 ```
+
+In v0.2.0 the tag guards `SaveChanges` only, and an explicit `db.Accounts.Where(...).Update(ctx, ant.Set(&A.CreatedBy, "x"))` still writes the column. From the next release, a bulk `Update`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it ([#62](https://github.com/skudra-go/ant/issues/62)).
 
 {/*
 ```go
 var account *Account
+
+var A = ant.Fields[Account]()
 
 type RolesDB struct {
 	ant.Context
@@ -89,7 +99,7 @@ type RolesDB struct {
 
 ## Computed
 
-No column at all. `Query.With` fills it from an expression, and otherwise it stays empty.
+`computed` has no column. `Query.With` fills it from an expression, and without `With` it stays empty. Use it for counts and sums that belong on the loaded row.
 
 ```go
 type Writer struct {
@@ -111,6 +121,9 @@ writers, err := db.Writers.
 	// spot-next-line
 	With(&W.ArticleCount, ant.CountRelated(&W.Articles)).
 	All(ctx)
+// SELECT "writers"."id", "writers"."name",
+//   (SELECT COUNT(*) FROM "articles" AS "ant_related" WHERE "ant_related"."writer_id" = "writers"."id") AS "article_count"
+// FROM "writers"
 ```
 
 More in [relation aggregates](/relations/loading#counts-and-sums).

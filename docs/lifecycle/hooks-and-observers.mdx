@@ -1,13 +1,13 @@
 ---
 title: Hooks and observers
-description: Run code around writes, by having methods with the right names.
+description: Run code around writes with model methods, and after the commit with observers.
 ---
 
-A hook is a method on your model that runs inside the write. If it returns an error, the write is cancelled. An observer sits at the other end: it hears about the write after the commit.
+A hook is a method on your model that runs inside the write. If it returns an error, the write is cancelled. An observer runs after the commit and cannot change the write.
 
-## Hooks
+## Add a hook
 
-A model gets a hook just by having a method with the right name. Use a pointer receiver, so whatever the hook changes on the entity gets saved.
+A model gets a hook by having a method with the right name. Use a pointer receiver, so what the hook changes on the entity is saved. This one lowercases every email on insert:
 
 ```go
 type Member struct {
@@ -34,7 +34,7 @@ func (m *Member) BeforeInsert(ctx context.Context) error {
 | `AfterLoad` | After a row is read |
 | `AfterInclude` | After its relations are loaded |
 
-## Refusing a write
+## Refuse a write
 
 An error from a before hook stops the write. An error from an after hook undoes it, because hooks run inside the transaction.
 
@@ -50,11 +50,45 @@ func (m *Member) BeforeDelete(ctx context.Context) error {
 }
 ```
 
+For field rules, see [validation](/lifecycle/validation). To inspect or refuse a whole save, including a single `Insert`, before anything is written, use a [`SaveInterceptor`](/tooling/interceptors#watching-saves).
+
+## Query from a hook
+
+A hook runs inside the operation that called it. When the context has [change tracking](/tracking/sessions), a hook shares that operation's claim on the tracker through the `context.Context` it receives. Run any query a hook makes with that context:
+
+```go
+func (m *Member) BeforeInsert(ctx context.Context) error {
+	taken, err := db.Members.Where(ant.Eq(&Mb.Email, m.Email)).Exists(ctx)
+	if err != nil {
+		return err
+	}
+
+	if taken {
+		return errors.New("email is taken")
+	}
+
+	return nil
+}
+```
+
+{/*
+```go
+type MembersDB struct {
+	ant.Context
+	Members ant.Table[Member]
+}
+
+var Mb = ant.Fields[Member]()
+```
+*/}
+
+A query made with another context, such as `context.Background()`, looks like a second operation on the same tracker, and ant returns `ant.ErrConcurrentUse` instead of running it. Goroutines the hook starts with its context share the claim, so they must not use the tracker at the same time.
+
 ## What runs no hooks
 
-Bulk `Update` and `Delete`, `InsertMany`, and `Raw` don't run hooks, because they never load an entity to call them on. A save with nothing to save doesn't run any either.
+Bulk `Update` and `Delete`, `InsertMany` and `Raw` run no hooks, because they never load an entity to call one on. A save with nothing to save runs none either.
 
-`ant.WithoutHooks` skips them for a single call, which is handy for seeding.
+`ant.WithoutHooks` skips them for one call, which suits seeding and imports:
 
 ```go
 // spot-next-line
@@ -64,11 +98,6 @@ err := db.Members.Insert(ant.WithoutHooks(ctx), member)
 {/*
 ```go
 var member *Member
-
-type MembersDB struct {
-	ant.Context
-	Members ant.Table[Member]
-}
 ```
 */}
 
@@ -78,9 +107,9 @@ A hook only gets a `context.Context`. Use one to check or refuse a write, not to
 
 :::
 
-## Observers
+## Observe committed writes {#observers}
 
-An observer hears about a write once it's committed, so it never sees one that rolled back. It waits for the outermost transaction to finish, and sessions share it. It can't change the write, which makes it a good fit for notifications and cache invalidation.
+`ant.Observe` registers functions for one model. They run once the outermost transaction has committed, so an observer never sees a write that rolled back. Sessions made from the context share the observer.
 
 ```go
 // spot-start
@@ -100,6 +129,26 @@ func refresh(m *Member) {}
 ```
 */}
 
-An observer runs in your process, so if the process crashes, it's gone. For anything that mustn't be lost, write an outbox row in the same transaction instead.
+Any of the three can be left nil.
+
+### Write an audit log
+
+An observer is a good place for a log line, since it only fires for changes that were kept:
+
+```go
+err := ant.Observe(db, ant.Observer[Member]{
+	Inserted: func(ctx context.Context, m *Member) {
+		slog.InfoContext(ctx, "audit", "action", "insert", "model", "Member", "id", m.ID)
+	},
+	Deleted: func(ctx context.Context, m *Member) {
+		slog.InfoContext(ctx, "audit", "action", "delete", "model", "Member", "id", m.ID)
+	},
+})
+```
+
+### Limits
+
+- An observer runs in your process. If the process crashes between the commit and the call, it never runs. For anything that must not be lost, write an outbox row in the same transaction.
+- A transaction from `UseTx` ends where ant cannot see it, so ant does not queue observers for it and they never run there. Writes in it are kept at once.
 
 <Tests path="lifecycle/hooks_test.go" />

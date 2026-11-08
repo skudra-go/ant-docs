@@ -1,11 +1,11 @@
 ---
 title: Configure
-description: Override conventions in typed Go, on a method of the model.
+description: Override conventions in typed Go with the Configure method of a model.
 ---
 
-Conventions and a few tags cover most models. When they don't, `Configure` is an optional method where you override them in typed Go. It runs once, when a context containing the model opens.
+Conventions and a few tags cover most models. `Configure` is an optional method for the rest: you write the override in Go, with probes for column names, so the compiler checks them. It runs once, when a context that contains the model opens.
 
-## The method
+## Add a Configure method
 
 ```go
 type Plan struct {
@@ -23,15 +23,15 @@ func (Plan) Configure(b *ant.ModelBuilder[Plan]) {
 var Pl = ant.Fields[Plan]()
 ```
 
-:::tip[Mistakes stop `Open`]
+:::tip[Mistakes stop Open]
 
-An empty table name, a relation used as a key, or a probe from another model all fail as soon as the database opens, so you find out at startup, not in the middle of production traffic.
+An empty table name, a relation used as a key, or a probe from another model fails as soon as the database opens. You find out at startup, not under production traffic.
 
 :::
 
 ## Columns
 
-`b.Column` describes what the database column looks like. It matters to migrations, not to queries.
+`b.Column` says what the database column looks like. Migrations and `EnsureCreated` use it to build the table. Two calls also change behaviour at run time: `Generated` makes the field read-only, and `Sensitive` keeps its values out of logs.
 
 {/*
 ```go
@@ -47,7 +47,6 @@ type Article struct {
 	Search    string
 	Note      *string
 	Code      string
-	Number    int64
 	Secret    string
 	Tags      postgres.Array[string]
 	CreatedAt time.Time
@@ -64,17 +63,21 @@ func (Article) Configure(b *ant.ModelBuilder[Article]) {
 	b.Column(&A.Title).Length(200)          // varchar(200)
 	b.Column(&A.Price).Precision(10, 2)     // numeric(10,2)
 	b.Column(&A.Code).Fixed(4)              // char(4)
-	b.Column(&A.Status).Type("post_status") // any SQL type
-	b.Column(&A.Views).Default("0")         // a SQL expression
+	b.Column(&A.Status).Type("varchar(20)") // any SQL type
+	b.Column(&A.Views).Default("0")         // DEFAULT 0, any SQL expression
 	b.Column(&A.Note).Nullable()            // or NotNull()
 	b.Column(&A.Slug).Collation("C").Unique()
-	b.Column(&A.Search).Generated("to_tsvector('english', title)")
+	b.Column(&A.Search).Type("tsvector").Generated("to_tsvector('english', title)")
 	b.Column(&A.Secret).Comment("Never shown").Sensitive()
 	// spot-end
 }
 ```
 
-A native enum and a table comment:
+`Nullable` and `NotNull` are for a Go type that can't say it, such as a plain `string` that should allow `NULL` in the table. For a field that really holds `NULL`, use a [pointer or `sql.Null`](/models/nullable-and-defaults).
+
+### Native enums and table comments
+
+`Enum` maps a column to a PostgreSQL enum type that migrations create. `Comment` on the builder describes the table.
 
 ```go
 func (Article) Configure(b *ant.ModelBuilder[Article]) {
@@ -85,39 +88,85 @@ func (Article) Configure(b *ant.ModelBuilder[Article]) {
 }
 ```
 
-## Indexes
+## Add an index
+
+`b.Index` starts an index on one column. `And` adds columns, and the other calls change the index just declared.
 
 ```go
 func (Article) Configure(b *ant.ModelBuilder[Article]) {
-	// spot-start
-	b.Index(&A.AuthorID).And(&A.CreatedAt).Desc() // composite, descending
-	b.Index(&A.Slug).Unique()
-	b.Index(&A.Published).Where("deleted_at IS NULL").Name("posts_live_idx")
-	b.Index(&A.Tags).Using("gin")
-	b.IndexExpr("lower(title)").Name("posts_title_lower_idx")
-	b.Index(&A.Body).Include(&A.Title).Concurrently()
-	// spot-end
+	b.Index(&A.AuthorID).And(&A.CreatedAt).Desc()
+	// CREATE INDEX articles_author_id_created_at_idx ON articles USING btree (author_id, created_at DESC)
 }
 ```
 
-`.Concurrently()` makes the migration run outside a transaction, so the index builds without blocking writes.
+`Desc` applies to the column added last, so only `created_at` goes down here. The index name is `table_columns_idx` unless you call `Name`.
 
-## Check constraints
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	b.Index(&A.Slug).Unique()
+	// CREATE UNIQUE INDEX articles_slug_idx ON articles USING btree (slug)
+}
+```
+
+### Partial indexes and index methods
+
+`Where` indexes only the rows that match a SQL condition, and `Using` picks the index method.
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	b.Index(&A.Published).Where("published IS NOT NULL").Name("articles_live_idx")
+	// CREATE INDEX articles_live_idx ON articles USING btree (published) WHERE (published IS NOT NULL)
+
+	b.Index(&A.Tags).Using("gin")
+	// CREATE INDEX articles_tags_idx ON articles USING gin (tags)
+}
+```
+
+### Where NULLs sort
+
+PostgreSQL puts NULLs last in an ascending index and first in a descending one. `NullsFirst` and `NullsLast` change that for the column added last, so an `ORDER BY ... NULLS FIRST` query can use the index. ant writes the clause only when it differs from the default for that direction.
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	b.Index(&A.Published).NullsFirst().Name("articles_published_idx")
+	// CREATE INDEX articles_published_idx ON articles USING btree (published NULLS FIRST)
+
+	b.Index(&A.Views).Desc().NullsLast().Name("articles_views_idx")
+	// CREATE INDEX articles_views_idx ON articles USING btree (views DESC NULLS LAST)
+}
+```
+
+### Expressions and covering columns
+
+`IndexExpr` indexes a SQL expression, for searches such as `lower(title) = $1`. `Include` stores extra columns in the index so a query can read them without visiting the table.
+
+```go
+func (Article) Configure(b *ant.ModelBuilder[Article]) {
+	b.IndexExpr("lower(title)").Name("articles_title_lower_idx")
+	// CREATE INDEX articles_title_lower_idx ON articles USING btree (lower((title)::text))
+
+	b.Index(&A.Body).Include(&A.Title)
+	// CREATE INDEX articles_body_idx ON articles USING btree (body) INCLUDE (title)
+}
+```
+
+`.Concurrently()` makes the migration that adds the index run outside a transaction, so building it doesn't block writes on a table that already has rows.
+
+## Add a check constraint
 
 ```go
 func (Article) Configure(b *ant.ModelBuilder[Article]) {
 	// spot-next-line
 	b.Check("articles_views_positive", "views >= 0")
+	// CONSTRAINT articles_views_positive CHECK (views >= 0)
 }
 ```
 
-## Relations
+## Declare relations
 
 `Configure` is also where you declare relations that names can't find. See [declaring relations](/relations/declaring).
 
-## Everything else
-
-`Configure` is home to everything else a model can say about itself:
+## Other settings
 
 | Call | Page |
 | --- | --- |

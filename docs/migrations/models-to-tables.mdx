@@ -39,6 +39,34 @@ func (Money) ColumnType(dialect string) string {
 // spot-end
 ```
 
+## Indexes
+
+`b.Index` takes the columns, and chained calls set the rest. `NullsFirst()` and `NullsLast()` say where NULLs sort when that isn't the direction's default.
+
+```go
+type Ticket struct {
+	ID        int64
+	AuthorID  int64
+	CreatedAt time.Time
+	Views     *int64
+}
+
+var T = ant.Fields[Ticket]()
+
+func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
+	// spot-start
+	b.Index(&T.Views).Desc().NullsLast()
+	b.Index(&T.AuthorID).And(&T.CreatedAt).Desc()
+	// spot-end
+}
+```
+
+```sql
+CREATE INDEX "tickets_views_idx" ON "tickets" ("views" DESC NULLS LAST);
+```
+
+See [models configuration](/models/configure#add-an-index) for the rest of the index options.
+
 ## Relations
 
 Relations become foreign keys. The two sides of `User.Posts` and `Post.User` are one key, and either side can configure it.
@@ -51,9 +79,38 @@ Relations become foreign keys. The two sides of `User.Posts` and `Post.User` are
 
 ## Enums and sequences
 
-Migrations create these before the tables that use them. Adding an enum value is a single `ALTER TYPE`. Removing one needs a person, because rows may still hold it, so `diff` warns you and leaves it alone.
+Migrations create enums and sequences before the tables that use them. `drift` compares only the enums and sequences the models declare, so a type created by hand doesn't count against you.
 
-`drift` compares only the enums and sequences models declare, so a type created by hand doesn't count against you.
+```go
+type Ticket struct {
+	ID     int64
+	Status string
+	Number int64
+}
+
+var T = ant.Fields[Ticket]()
+
+func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
+	// spot-start
+	b.Column(&T.Status).Enum("ticket_status", "open", "closed")
+	b.Column(&T.Number).Sequence("org_numbers", ant.StartAt(1000))
+	// spot-end
+}
+```
+
+```sql
+CREATE TYPE "ticket_status" AS ENUM ('open', 'closed');
+
+CREATE SEQUENCE "org_numbers" START WITH 1000;
+```
+
+What happens when they change:
+
+- A new enum value is one `ALTER TYPE ... ADD VALUE`, placed `BEFORE` the value after it in the models. A file that adds a value and also uses it runs without a transaction.
+- Removing a value, or reordering the existing ones, needs a person. `diff` writes a warning and no statement.
+- A sequence whose increment or start changes is altered in place and keeps its current value.
+
+[Generated SQL](/migrations/generated-sql#add-an-enum-value) shows each case.
 
 ## A key on several columns
 
@@ -94,5 +151,9 @@ var (
 | `b.Schema("sales")` | Create that schema, and qualify everything |
 
 Models on one table merge into one table definition, which is how `b.Discriminator` works, and a column only some of them declare allows `NULL`.
+
+## Long names
+
+PostgreSQL keeps 63 bytes of a name and cuts the rest, so two long names can become one. `diff` refuses a name over that limit and says which one. The names ant makes up itself, such as index and constraint names, are shortened with a hash.
 
 <Tests path="migrations/models_test.go" />
