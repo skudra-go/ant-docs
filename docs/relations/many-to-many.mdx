@@ -1,11 +1,11 @@
 ---
 title: Many-to-many
-description: Relations through a join table, and changing what is linked.
+description: Relations through a join table, and how to read and change the links.
 ---
 
-A many-to-many relation goes through a join table. Declare it on either side, or both, and migrations create the table once.
+A many-to-many relation goes through a join table. Declare it on either side or both, and [migrations](/migrations/models-to-tables) create the table once.
 
-## Declaring
+## Declare a many-to-many relation
 
 ```go
 type Student struct {
@@ -30,7 +30,11 @@ var (
 )
 ```
 
-The join table's columns default to `student_id` and `course_id` here. `PivotColumns` names them, which a self-referencing relation needs.
+The join table's columns default to `student_id` and `course_id` here.
+
+### Name the join columns
+
+`PivotColumns` names them. A self-referencing relation needs it, since both columns would otherwise get the same name.
 
 ```go
 type Person struct {
@@ -46,30 +50,52 @@ func (Person) Configure(b *ant.ModelBuilder[Person]) {
 var Pn = ant.Fields[Person]()
 ```
 
-## Reading
+## Read through the join table
 
-`Include`, `Has`, `JoinMany`, and `CountRelated` all go through the join table for you.
+`Include`, `Has`, `JoinMany`, and `CountRelated` all go through the join table for you. `Include` reads the join table, then the targets, so it is one query more than a one-to-many `Include`:
 
 ```go
-// spot-start
+// spot-next-line
 students, err := db.Students.Include(&St.Courses).All(ctx)
-
-artists, err := db.Students.Where(ant.Has(&St.Courses, ant.Eq(&Cs.Title, "Art"))).All(ctx)
-// spot-end
+// SELECT "students"."id", "students"."name" FROM "students"
+// SELECT "student_id", "course_id" FROM "enrollments" WHERE "student_id" IN ($1)
+// SELECT "courses"."id", "courses"."title" FROM "courses" WHERE "courses"."id" IN ($1)
 ```
 
-## Changing the links
+`Has` filters on the targets without loading them:
 
-These change the join table only, never the rows on either side. Repeating a `Link` is harmless.
+```go
+// spot-next-line
+artists, err := db.Students.Where(ant.Has(&St.Courses, ant.Eq(&Cs.Title, "Art"))).All(ctx)
+// SELECT ... FROM "students" WHERE EXISTS (
+//   SELECT 1 FROM "courses" AS "ant_related"
+//   JOIN "enrollments" AS "ant_related_pivot" ON "ant_related_pivot"."course_id" = "ant_related"."id"
+//   WHERE "ant_related_pivot"."student_id" = "students"."id" AND ("ant_related"."title" = $1))
+```
+
+## Change the links
+
+These functions change the join table only, never the rows on either side. Both entities must already have their keys.
 
 ```go
 // spot-start
-err := ant.Link(ctx, db, ann, &St.Courses, math, art)      // add
-err = ant.Unlink(ctx, db, ann, &St.Courses, art)           // remove
+err := ant.Link(ctx, db, ann, &St.Courses, math, art) // add
+// INSERT INTO "enrollments" ("student_id", "course_id") VALUES ($1, $2), ($3, $4) ON CONFLICT DO NOTHING
+
+err = ant.Unlink(ctx, db, ann, &St.Courses, art) // remove
+// DELETE FROM "enrollments" WHERE "student_id" = $1 AND "course_id" IN ($2)
+
 err = ant.SyncLinks(ctx, db, ann, &St.Courses, art, music) // make the list exact
-err = ant.Toggle(ctx, db, ann, &St.Courses, math)          // flip each one
+// DELETE FROM "enrollments" WHERE "student_id" = $1 AND NOT ("course_id" IN ($2, $3))
+// INSERT INTO "enrollments" ("student_id", "course_id") VALUES ($1, $2), ($3, $4) ON CONFLICT DO NOTHING
+
+err = ant.Toggle(ctx, db, ann, &St.Courses, math) // flip each one
+// DELETE FROM "enrollments" WHERE "student_id" = $1 AND "course_id" IN ($2) RETURNING "course_id"
+// INSERT INTO "enrollments" ("student_id", "course_id") VALUES ($1, $2) ON CONFLICT DO NOTHING
 // spot-end
 ```
+
+Repeating a `Link` is harmless, because the insert ignores links that exist. `SyncLinks` is how a "choose your courses" form saves: pass the ticked boxes and the table ends up matching them. `Toggle` suits a like or follow button: it removes the links that exist and adds the ones that don't.
 
 {/*
 ```go
@@ -88,7 +114,7 @@ type SchoolDB struct {
 ```
 */}
 
-## Through a tracked slice
+## Change the links through a tracked slice
 
 A loaded relation can be edited like any slice, and `SaveChanges` updates the links. A new target is inserted and linked. Removing one removes the link, never the course.
 
@@ -105,9 +131,24 @@ err = session.SaveChanges(ctx)
 // spot-end
 ```
 
-## A join table with data
+Setting an element to another course unlinks the old one and links the new one. Pending changes to the slice are lost if you load the relation again before saving: [save first](/relations/loading#include-and-tracked-entities).
 
-When the join table holds data of its own, like a grade or a date, it's really a model. Make it one, with two has-many relations, and you get queries, timestamps, and everything else for free. ant has no separate pivot API, on purpose.
+A new owner inserted with existing targets links them in the same call. On a session, it is tracked as if you had loaded it with them:
+
+```go
+session := ant.Session(db)
+
+cal := &Student{Name: "Cal", Courses: []Course{*math}}
+
+// spot-next-line
+err := session.Students.Insert(ctx, cal)
+// INSERT INTO "students" ("name") VALUES ($1) RETURNING "id"
+// INSERT INTO "enrollments" ("student_id", "course_id") VALUES ($1, $2) ON CONFLICT DO NOTHING
+```
+
+## Keep data on the join table
+
+When the join table holds data of its own, like a grade or a date, it's a model. Make it one, with two has-many relations, and you get queries, timestamps, and hooks like any other model. ant has no separate pivot API, on purpose.
 
 ```go
 // spot-start

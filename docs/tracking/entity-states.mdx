@@ -1,9 +1,11 @@
 ---
 title: Entity states
-description: Add, Attach, Remove, and inspect what the tracker knows.
+description: Mark entities as new, saved, changed or removed, and inspect what the tracker knows.
 ---
 
-Every entity a context knows about has a state. Usually ant manages that for you, and these calls are for the times you need to say it yourself.
+Every entity a context tracks has a state, and `SaveChanges` writes according to it. ant sets the state for you when you load, insert or edit. The calls on this page are for the times you need to set it yourself, such as a struct that didn't come from a query.
+
+Each of them takes a `ctx` and returns an error. They claim the tracker like any other operation, so call them on a [session](/tracking/sessions) that no other goroutine is using.
 
 ## The states
 
@@ -15,38 +17,86 @@ Every entity a context knows about has a state. Usually ant manages that for you
 | `ant.Modified` | Differs from what was loaded | `UPDATE` |
 | `ant.Deleted` | Marked for removal | `DELETE` |
 
-## Changing state
+## Insert on the next save
+
+`ant.Add` marks a new entity. Adding several and saving once batches them into one `INSERT` per table.
+
+```go
+newUser := &User{Name: "Dana", Email: "dana@example.com"}
+
+err := ant.Add(ctx, db, newUser)
+err = db.SaveChanges(ctx)
+// INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
+// VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id"
+```
+
+## Delete on the next save
+
+```go
+err := ant.Remove(ctx, db, user)
+err = db.SaveChanges(ctx)
+// DELETE FROM "users" WHERE "users"."id" = $1
+```
+
+`Remove` on an entity that was added and never saved cancels the insert. It has no row to delete, so the tracker lets it go and `SaveChanges` writes nothing for it.
+
+## Track a row you already know
+
+`ant.Attach` tracks an entity as it is and assumes it matches the database. Edits after that are saved as changes, in only the changed columns. Use it for a value from your own cache or from a previous request.
+
+```go
+err := ant.Attach(ctx, db, existing)
+
+existing.Age = 32
+
+err = db.SaveChanges(ctx)
+// UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+## Write every column
+
+`ant.MarkModified` is for a struct whose earlier values are unknown, such as a request body for a full update. There is nothing to compare with, so the next save writes every column the struct holds, `updated_at` included.
+
+:::warning[UpdatedAt is written as the struct holds it]
+
+In v0.2.0, a save after `MarkModified`, or after `TrackGraph` decides `Modified`, writes the struct's own `UpdatedAt` instead of the current time, so a struct decoded from a request body stores the zero time. Set `UpdatedAt` before saving. The next release stamps it as any update does ([#60](https://github.com/skudra-go/ant/issues/60)).
+
+:::
+
+```go
+err := ant.MarkModified(ctx, db, disconnect)
+err = db.SaveChanges(ctx)
+// UPDATE "users" SET "updated_at" = $1, "name" = $2, "email" = $3, "age" = $4, "bio" = $5
+// WHERE "users"."id" = $6
+```
+
+A field the body left out is written as its zero value, so use this only when the struct is meant to be the whole row.
+
+## Stop tracking
 
 ```go
 // spot-start
-err := ant.Add(db, newUser)            // insert on the next save
-err = ant.Remove(db, user)             // delete on the next save
-err = ant.Attach(db, existing)         // track as it is, assumed saved
-err = ant.MarkModified(db, disconnect) // write every field on the next save
-ant.Detach(db, user)                   // stop tracking, forget changes
-db.ClearTracked()                      // forget everything
+err := ant.Detach(ctx, db, user) // forget this entity and its unsaved changes
+err = db.ClearTracked(ctx)       // forget everything
 // spot-end
 ```
 
 {/*
 ```go
 var (
-	newUser    *User
 	existing   *User
 	disconnect *User
 )
 ```
 */}
 
-`MarkModified` suits a struct from outside, such as a request body, whose earlier values are unknown.
+## Look at what the tracker knows
 
-## Looking inside
-
-`ant.Entry` tells you what the tracker knows.
+`ant.Entry` returns a snapshot of one entity's state. It is taken under the claim, so what you read from it doesn't change if the entity does later.
 
 ```go
 // spot-next-line
-entry := ant.Entry(db, user)
+entry, err := ant.Entry(ctx, db, user)
 
 fmt.Println(entry.State())   // Modified
 fmt.Println(entry.Changed()) // [Age]
@@ -57,15 +107,22 @@ before, err := ant.Original(entry, &U.Age)
 // spot-end
 ```
 
-`ant.Tracked[User](db)` lists tracked entities, oldest first, and `db.DebugTracked()` prints the tracker as text.
+An untracked entity is `Detached`, and `Original` on it returns `ant.ErrNotTracked`.
 
-## Saving a graph from outside
+`ant.Tracked[User](ctx, db)` lists the tracked entities of one type, oldest first. `db.DebugTracked(ctx)` returns the tracker as text, for a log line:
 
-`ant.TrackGraph` saves a tree that came from outside, like a request body. Nothing says what it held before, so your function decides each entity's state.
+```go
+text, err := db.DebugTracked(ctx)
+// User {1} Modified Age
+```
+
+## Save a tree from outside
+
+`ant.TrackGraph` tracks a tree that came from outside, like a request body. Nothing says what it held before, so your function decides each entity's state. `HasKey` is true when the entity already has a key.
 
 ```go
 // spot-start
-err := ant.TrackGraph(db, incoming, func(n ant.GraphNode) ant.State {
+err := ant.TrackGraph(ctx, db, incoming, func(n ant.GraphNode) ant.State {
 	if n.HasKey {
 		return ant.Modified
 	}
@@ -75,6 +132,9 @@ err := ant.TrackGraph(db, incoming, func(n ant.GraphNode) ant.State {
 // spot-end
 
 err = db.SaveChanges(ctx)
+// UPDATE "users" SET ... WHERE "users"."id" = $6
+// UPDATE "posts" SET ... WHERE "posts"."id" = $5
+// INSERT INTO "posts" (...) VALUES (...) RETURNING "id"
 ```
 
 {/*
@@ -83,6 +143,6 @@ var incoming *User
 ```
 */}
 
-Foreign keys are filled in as it walks. Returning `ant.Detached` skips an entity and everything below it.
+Foreign keys are filled in as it walks, so the new post above gets its user's key. Returning `ant.Detached` skips an entity and everything below it. A `Modified` entity writes every column, as `MarkModified` does.
 
 <Tests path="change_tracking/states_test.go" />

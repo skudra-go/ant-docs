@@ -1,13 +1,13 @@
 ---
 title: Validation
-description: Check entities before they are written.
+description: Check entities before they are inserted or updated.
 ---
 
 Validation runs before every insert and update, and a failure stops the write. It runs at the same point as [hooks](/lifecycle/hooks-and-observers), so bulk writes skip it, and so does `ant.WithoutHooks`.
 
-## A Validate method
+## Add a rule to a field
 
-For rules that span fields, give the model a `Validate` method.
+`b.Validate` attaches a rule to one field. The rule is typed to the field, and the `validate` package has the common ones.
 
 ```go
 type Signup struct {
@@ -17,22 +17,6 @@ type Signup struct {
 	Age   int
 }
 
-// spot-start
-func (s *Signup) Validate(ctx context.Context) error {
-	if s.Name == "" {
-		return errors.New("name is required")
-	}
-
-	return nil
-}
-// spot-end
-```
-
-## Field rules
-
-`b.Validate` attaches a rule to a single field, typed to that field. The `validate` package has the common ones ready to go.
-
-```go
 func (Signup) Configure(b *ant.ModelBuilder[Signup]) {
 	// spot-start
 	b.Validate(&S.Name, validate.All(validate.Required[string](), validate.MaxLength(50)))
@@ -49,16 +33,42 @@ var S = ant.Fields[Signup]()
 | `validate.Required[V]()` | Not the zero value |
 | `validate.Email` | A valid address |
 | `validate.MinLength(n)`, `validate.MaxLength(n)` | String length |
-| `validate.Range(low, high)` | Between two values |
+| `validate.Range(low, high)` | Between two values, both included |
 | `validate.OneOf(a, b, c)` | One of these |
 | `validate.Matches(pattern)` | Matches a `*regexp.Regexp` |
 | `validate.All(rules...)` | All of them |
 
-A rule is just a `func(V) error`, so writing your own is easy.
+A rule is a `func(V) error`, so a rule of your own is a plain function:
 
-## Reading the error
+```go
+func noSpaces(s string) error {
+	if strings.Contains(s, " ") {
+		return errors.New("must not contain spaces")
+	}
 
-A failed rule comes back as an `ant.ValidationError`, which tells you the field.
+	return nil
+}
+```
+
+## Check rules that span fields
+
+For a rule that reads several fields, give the model a `Validate` method. It runs on insert and on update.
+
+```go
+// spot-start
+func (s *Signup) Validate(ctx context.Context) error {
+	if s.Age < 18 && s.Email == "" {
+		return errors.New("minors need a parent's email")
+	}
+
+	return nil
+}
+// spot-end
+```
+
+## Read the error
+
+A failed field rule comes back as an `*ant.ValidationError` that names the model and field. The rule's own error is inside it, so `errors.Is` works with `validate.ErrRequired` and your own errors.
 
 ```go
 err := db.Signups.Insert(ctx, &Signup{Email: "a@example.com"})
@@ -67,7 +77,7 @@ err := db.Signups.Insert(ctx, &Signup{Email: "a@example.com"})
 var invalid *ant.ValidationError
 
 if errors.As(err, &invalid) {
-	fmt.Println(invalid.Field, invalid.Err) // Name, and why
+	fmt.Println(invalid.Model, invalid.Field, invalid.Err) // Signup Name is required
 }
 // spot-end
 ```
@@ -80,5 +90,32 @@ type SignupDB struct {
 }
 ```
 */}
+
+An error from a `Validate` method is returned as it is, not wrapped.
+
+## Return validation errors to an API client
+
+Turn a `ValidationError` into a 422 that names the field, and let any other error through as a server error:
+
+```go
+func create(w http.ResponseWriter, r *http.Request) {
+	signup := &Signup{Name: r.FormValue("name"), Email: r.FormValue("email")}
+
+	err := db.Signups.Insert(r.Context(), signup)
+
+	var invalid *ant.ValidationError
+
+	switch {
+	case errors.As(err, &invalid):
+		http.Error(w, invalid.Field+": "+invalid.Err.Error(), http.StatusUnprocessableEntity)
+	case ant.IsUniqueViolation(err):
+		http.Error(w, "that email is already registered", http.StatusConflict)
+	case err != nil:
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+```
+
+Rules run inside the write, so they cannot replace a database constraint. A rule can pass while another request inserts the same value, and the unique constraint is what catches it.
 
 <Tests path="lifecycle/validate_test.go" />

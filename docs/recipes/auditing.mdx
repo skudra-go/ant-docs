@@ -1,9 +1,9 @@
 ---
 title: Auditing
-description: Four places to record what happened, and which one fits.
+description: Four ways to record what happened, and which one fits.
 ---
 
-ant gives you four places to record what happened. Which one fits depends on what you need to know.
+ant has four places to record a change. Which one fits depends on what you need to know afterwards.
 
 {/*
 ```go
@@ -25,20 +25,22 @@ type AppDB struct {
 }
 
 var order *Order
+
+var logger *slog.Logger
 ```
 */}
 
 | You need | Use |
 | --- | --- |
-| Field-level history of `SaveChanges` | `SaveInterceptor` |
+| Field-level history of saves | `SaveInterceptor` |
 | A record that can't disagree with the data | A row in the same `Tx` |
 | A reaction after the commit | `Observer` |
 | Delivery that survives a crash | An outbox row and a worker |
 | Bulk writes and raw SQL too | `Interceptor`, or a database trigger |
 
-## What changed, field by field
+## Log what changed, field by field
 
-A [`SaveInterceptor`](/tooling/interceptors#watching-saves) sees every `SaveChanges` before it writes. An error cancels the save.
+A [`SaveInterceptor`](/tooling/interceptors#watching-saves) sees every save before it writes, as whole entities with the names of the fields that changed. It runs for `SaveChanges` and for single-entity writes such as `Insert`. An error cancels the save.
 
 ```go
 type AuditTrail struct {
@@ -62,11 +64,45 @@ func (a *AuditTrail) SavingChanges(ctx context.Context, changes []ant.Change) er
 // spot-end
 ```
 
-To record old values too, read them with `ant.Original(ant.Entry(db, user), &U.Age)`.
+Register it when you open the context:
 
-## A row in the same transaction
+```go
+db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(&AuditTrail{logger}))
+```
 
-For a record that can never disagree with the data, write it in the same transaction as the change. Either both commit, or neither does.
+Changing a user's age from 30 to 31 and calling `SaveChanges` logs `model=User state=Modified fields=[Age]` and then writes:
+
+```sql
+UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+### Record the old values
+
+The interceptor sees which fields changed, not what they were. Take the entity's entry and read the value as it was loaded:
+
+```go
+func logAge(ctx context.Context, db *AppDB, user *User) error {
+	entry, err := ant.Entry(ctx, db, user)
+	if err != nil {
+		return err
+	}
+
+	was, err := ant.Original(entry, &U.Age)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("age changed", "from", was, "to", user.Age)
+
+	return nil
+}
+```
+
+`Entry` takes a context and returns an error. Pass the context you were given: inside a hook or interceptor it shares that operation's claim on the tracker, and a context from elsewhere is refused with `ErrConcurrentUse` while another operation holds it. `Original` returns `ErrNotTracked` for an entity with no loaded values.
+
+## Write an audit row in the same transaction
+
+For a record that can never disagree with the data, write it in the same transaction as the change. Either both commit or neither does.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
@@ -77,18 +113,23 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 	// spot-next-line
 	return tx.AuditLog.Insert(ctx, &AuditEntry{Action: "order.created", Subject: order.ID})
 })
+// INSERT INTO "orders" DEFAULT VALUES RETURNING "id"
+// INSERT INTO "audit_entries" ("action", "subject") VALUES ($1, $2) RETURNING "id"
+// -- $1 = 'order.created', $2 = the new order's id
 ```
 
 A hook runs inside the write too, but it only gets a `context.Context`, with no way to reach the transaction. Use hooks to check or refuse, not to write rows.
 
-## After it happened
+## React after the commit
 
-An [observer](/lifecycle/hooks-and-observers#observers) runs after the commit, and never hears about a rollback. It runs in the process, and is gone if it crashes. For anything that must not be lost, write an outbox row in the transaction, as the [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) does, and let a worker send it.
+An [observer](/lifecycle/hooks-and-observers#observers) runs after the commit and never hears about a rollback or a failed commit. It runs in your process and is gone if the process crashes.
 
-## Every statement
+For anything that must not be lost, write an outbox row in the transaction, as the [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) does, and let a worker send it.
 
-An [`Interceptor`](/tooling/interceptors) sees every statement, including bulk writes and raw SQL, in SQL rather than entities.
+## Record every statement
 
-Bulk `Update` and `Delete`, `InsertMany`, and `Raw` don't run hooks or a `SaveInterceptor`, because they never load an entity. Only a database trigger sees everything, including someone typing into `psql`.
+An [`Interceptor`](/tooling/interceptors) sees every statement, including bulk writes and raw SQL, as SQL rather than entities.
+
+Bulk `Update` and `Delete`, `InsertMany` and `Raw` don't run hooks or a `SaveInterceptor`, because they never load an entity. Only a database trigger sees everything, including someone typing into `psql`.
 
 For a whole audit service, see the [audit example](https://github.com/skudra-go/ant-examples/tree/main/examples/audit).

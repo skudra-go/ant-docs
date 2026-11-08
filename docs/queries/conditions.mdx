@@ -1,138 +1,200 @@
 ---
 title: Conditions
-description: Every way to filter rows, checked by the compiler.
+description: Filtering rows with Where, from simple comparisons to combined and multi-column conditions.
 ---
 
-A condition is a value of type `ant.Cond`. You build one from a field probe and pass it to `Where`, and the compiler checks that the value fits the column.
+`Where` takes conditions of type `ant.Cond`. You build them from a [field probe](/models/field-probes) and a value, and the compiler checks that the value has the column's type.
 
-## Comparing values
+## Compare a column with a value
 
 ```go
-users, err := db.Users.
-	// spot-next-line
-	Where(ant.Gte(&U.Age, 18)).
-	All(ctx)
+users, err := db.Users.Where(ant.Gte(&U.Age, 18)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."age" >= $1
 ```
 
-Several conditions in one `Where` all have to match, and calling `Where` again adds more.
+Conditions passed to one `Where` are joined with `AND`, and calling `Where` again adds more:
 
 ```go
 users, err := db.Users.
-	// spot-start
 	Where(ant.Gte(&U.Age, 18), ant.Lt(&U.Age, 65)).
 	Where(ant.Ne(&U.Name, "Bob")).
-	// spot-end
 	All(ctx)
+// SELECT ... FROM "users"
+// WHERE "users"."age" >= $1 AND "users"."age" < $2 AND "users"."name" <> $3
 ```
 
-| Condition | Means |
+| Condition | SQL |
 | --- | --- |
-| `ant.Eq(&U.Age, 18)` | equal |
-| `ant.Ne(&U.Age, 18)` | not equal |
-| `ant.Gt`, `ant.Gte` | greater than, or equal too |
-| `ant.Lt`, `ant.Lte` | less than, or equal too |
-| `ant.Between(&U.Age, 18, 65)` | in a range, ends included |
-| `ant.In(&U.Age, 18, 21)` | one of these |
-| `ant.NotIn(&U.Age, 18, 21)` | none of these |
-| `ant.Like(&U.Name, "A%")` | matches a pattern |
-| `ant.ILike(&U.Name, "a%")` | the same, ignoring case |
-| `ant.IsNull(&U.Bio)`, `ant.IsNotNull` | [empty or not](/models/nullable-and-defaults#querying-for-null) |
+| `ant.Eq(&U.Age, 18)` | `age = $1` |
+| `ant.Ne(&U.Age, 18)` | `age <> $1` |
+| `ant.Gt`, `ant.Gte`, `ant.Lt`, `ant.Lte` | `>`, `>=`, `<`, `<=` |
+| `ant.Between(&U.Age, 18, 65)` | `age BETWEEN $1 AND $2` (both ends included) |
+| `ant.In(&U.Age, 18, 21)` | `age IN ($1, $2)` |
+| `ant.NotIn(&U.Age, 18, 21)` | `age NOT IN ($1, $2)` |
+| `ant.Like(&U.Name, "A%")` | `name LIKE $1` |
+| `ant.ILike(&U.Name, "a%")` | `name ILIKE $1` (case-insensitive) |
+| `ant.IsNull(&U.Bio)`, `ant.IsNotNull(&U.Bio)` | `bio IS NULL`, `bio IS NOT NULL` |
 
-`Gt` and the other orderings work on numbers, strings, and `time.Time`. A zero value is a real value here too: `ant.Eq(&U.Age, 0)` matches age zero.
+The orderings (`Gt`, `Between` and the rest) take numbers, strings and `time.Time`. `ILike` is native on PostgreSQL; on the other databases ant writes it as `LIKE` between lowered values.
 
-## Lists
+A zero value is a real value. `ant.Eq(&U.Age, 0)` matches rows where the age is 0, and is never dropped from the query.
 
-`In` is variadic, so a slice spreads into it.
+## Match one of several values
+
+`In` is variadic, so a slice spreads into it:
 
 ```go
 names := []string{"Alice", "Bob"}
 
-// spot-next-line
 users, err := db.Users.Where(ant.In(&U.Name, names...)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."name" IN ($1, $2)
 ```
 
-:::warning[An empty list]
+An empty list is valid. `In` with no values matches no rows, and `NotIn` with no values matches every row:
 
-`ant.In` with no values matches nothing, and `ant.NotIn` with no values matches everything. Both are correct, and the second is exactly why a [bulk write](/writing/update-and-delete#the-no-condition-guard) refuses a condition that can't exclude a row.
+```go
+users, err := db.Users.Where(ant.In(&U.Name)).All(ctx)
+// SELECT ... FROM "users" WHERE 1 = 0
+```
+
+:::warning[Empty lists in bulk writes]
+
+`NotIn` with an empty slice matches every row. A [bulk update or delete](/writing/update-and-delete#the-no-condition-guard) refuses a condition that can't exclude a row, so a `NotIn` built from an empty slice fails there instead of changing the whole table.
 
 :::
+
+On PostgreSQL, a list longer than the parameters one statement can take (65,535) is sent as one array, `= ANY($1)`, when its values are plain and of one type. The other databases have lower limits and no arrays, so for very long lists use [`InSub`](/queries/subqueries-and-sets) or split the list.
+
+## NULL
+
+`IsNull` and `IsNotNull` check for NULL. `Eq` with a nil pointer means the same thing:
+
+```go
+var noBio *string
+
+users, err := db.Users.Where(ant.Eq(&U.Bio, noBio)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" IS NULL
+```
+
+`In` and `NotIn` follow `Eq`, which plain SQL doesn't: a nil among the values matches NULL rows.
+
+```go
+bio := "Go developer"
+
+users, err := db.Users.Where(ant.In(&U.Bio, noBio, &bio)).All(ctx)
+// SELECT ... FROM "users" WHERE ("users"."bio" IN ($1) OR "users"."bio" IS NULL)
+
+users, err = db.Users.Where(ant.NotIn(&U.Bio, noBio, &bio)).All(ctx)
+// SELECT ... FROM "users" WHERE ("users"."bio" NOT IN ($1) AND "users"."bio" IS NOT NULL)
+```
+
+See [nullable fields](/models/nullable-and-defaults#querying-for-null) for how pointer and `sql.Null` fields map to columns.
 
 ## And, Or, Not
 
 ```go
-// spot-start
-cond := ant.Or(
-	ant.Lt(&U.Age, 18),
-	ant.And(ant.Gt(&U.Age, 65), ant.Like(&U.Name, "A%")),
-)
-// spot-end
-
-users, err := db.Users.Where(cond, ant.Not(ant.Eq(&U.Name, "Bob"))).All(ctx)
+users, err := db.Users.
+	Where(
+		ant.Or(
+			ant.Lt(&U.Age, 18),
+			ant.And(ant.Gt(&U.Age, 65), ant.Like(&U.Name, "A%")),
+		),
+		ant.Not(ant.Eq(&U.Name, "Bob")),
+	).
+	All(ctx)
+// SELECT ... FROM "users"
+// WHERE ("users"."age" < $1 OR ("users"."age" > $2 AND "users"."name" LIKE $3))
+//   AND NOT ("users"."name" = $4)
 ```
 
-Grouping follows the nesting. An empty `ant.And()` matches everything, and an empty `ant.Or()` matches nothing.
-
-## Comparing two columns
-
-`EqCol` compares columns, which is also how subqueries refer to the outer row. Both must have the same Go type.
+Parentheses follow the nesting, so you never have to think about operator precedence. An empty `ant.And()` matches every row and an empty `ant.Or()` matches none, which makes it safe to build either from a loop:
 
 ```go
-// spot-next-line
-sameDay, err := db.Users.Where(ant.EqCol(&U.CreatedAt, &U.UpdatedAt)).All(ctx)
+var filters []ant.Cond
+
+for _, name := range []string{"Alice", "Bob"} {
+	filters = append(filters, ant.Eq(&U.Name, name))
+}
+
+users, err := db.Users.Where(ant.Or(filters...)).All(ctx)
+// SELECT ... FROM "users" WHERE ("users"."name" = $1 OR "users"."name" = $2)
 ```
 
-## One value, several columns
+## Compare two columns
+
+`EqCol` compares one column with another. Both fields must have the same Go type.
 
 ```go
-// spot-start
-either := ant.AnyOf("Bob", &U.Name, &U.Email)   // Bob in any of them
-both := ant.AllOf("Bob", &U.Name, &U.Email)     // Bob in all of them
-neither := ant.NoneOf("Bob", &U.Name, &U.Email) // Bob in none of them
-// spot-end
-
-users, err := db.Users.Where(either).All(ctx)
+untouched, err := db.Users.Where(ant.EqCol(&U.CreatedAt, &U.UpdatedAt)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."created_at" = "users"."updated_at"
 ```
 
-## Several columns as one
+It's also how a [subquery](/queries/subqueries-and-sets) refers to a column of the outer query.
 
-`InTuples` matches pairs of values together, where `In` on each column separately would mix them up.
+## Search several columns for one value
+
+`AnyOf`, `AllOf` and `NoneOf` compare one value with several columns. `AnyOf` is the usual way to back a single search box:
 
 ```go
-// spot-start
+users, err := db.Users.Where(ant.AnyOf("bob", &U.Name, &U.Email)).All(ctx)
+// SELECT ... FROM "users" WHERE ("users"."name" = $1 OR "users"."email" = $2)
+```
+
+| Condition | SQL |
+| --- | --- |
+| `ant.AnyOf(v, &U.Name, &U.Email)` | `(name = $1 OR email = $2)` |
+| `ant.AllOf(v, &U.Name, &U.Email)` | `(name = $1 AND email = $2)` |
+| `ant.NoneOf(v, &U.Name, &U.Email)` | `NOT ((name = $1 OR email = $2))` |
+
+For partial matches, combine `Like` conditions with `Or` instead.
+
+## Match pairs of values
+
+`InTuples` matches several columns together. Use it when values belong together, such as composite keys or rows from an import file. Separate `In` conditions on each column would also match mixed pairs, like Alice at 17.
+
+```go
 columns := []ant.FieldRef{ant.F(&U.Name), ant.F(&U.Age)}
 
 users, err := db.Users.
 	Where(ant.InTuples(columns, []any{"Alice", 30}, []any{"Bob", 17})).
 	All(ctx)
-// spot-end
+// SELECT ... FROM "users" WHERE ("users"."name", "users"."age") IN (($1, $2), ($3, $4))
 ```
 
 ## Dates
 
-These compare against the database's clock, so the results don't depend on your server's.
+`Past`, `Future` and `Today` compare with the database's clock, so the result doesn't depend on the clock of the server your app runs on.
 
 ```go
-// spot-start
-past := ant.Past(&U.CreatedAt)
-future := ant.Future(&U.CreatedAt)
-today := ant.Today(&U.CreatedAt)
-// spot-end
+users, err := db.Users.Where(ant.Past(&U.CreatedAt)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."created_at" < CURRENT_TIMESTAMP
 
-users, err := db.Users.Where(today).All(ctx)
+users, err = db.Users.Where(ant.Today(&U.CreatedAt)).All(ctx)
+// SELECT ... FROM "users" WHERE (CAST("users"."created_at" AS date) = CURRENT_DATE)
 ```
 
-`ant.DatePart(&U.CreatedAt, "year")` reads part of a date as an [expression](/queries/expressions), on PostgreSQL.
+`ant.Future` is the opposite of `Past`. To compare with a time of your own, use the orderings: `ant.Gt(&U.CreatedAt, time.Now().Add(-24*time.Hour))`. `ant.DatePart(&U.CreatedAt, "year")` reads part of a date as an [expression](/queries/expressions), on PostgreSQL.
 
-## Conditions as values
+:::note[Run the database in UTC]
 
-A condition is an ordinary value, so you can give it a name and reuse it.
+`Past` and `Future` use the database's current time. On SQLite and SQL Server, where columns keep no time zone, ant stores times in UTC, so those servers should run in UTC too. See [databases](/reference/databases).
+
+:::
+
+## Reuse conditions
+
+A condition is an ordinary value. Name it once and use it in as many queries as you like:
 
 ```go
-// spot-next-line
 adults := ant.Gte(&U.Age, 18)
 
 count, err := db.Users.Where(adults).Count(ctx)
+// SELECT COUNT(*) FROM "users" WHERE "users"."age" >= $1
+
 users, err := db.Users.Where(adults).OrderBy(&U.Name).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."age" >= $1 ORDER BY "users"."name"
 ```
+
+Functions that return conditions are a simple way to share filters across a codebase. For filters every query of a model should get, see [global filters](/lifecycle/global-filters) and [scopes](/queries/composing).
 
 <Tests path="querying" />

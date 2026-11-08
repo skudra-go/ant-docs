@@ -3,11 +3,11 @@ title: Connections
 description: Open, wrap a pool, share transactions, and use read replicas.
 ---
 
-ant sits on `database/sql`, so the connections are the standard library's, and you can reach them whenever you need to.
+ant sits on `database/sql`. The pool and the connections are the standard library's, and `db.DB()` gives you the `*sql.DB` whenever you need it.
 
 ## Opening
 
-`ant.Open` connects and fills in your context. You import the driver yourself: ant doesn't pick one for you.
+`ant.Open` connects and fills in your context. Import the driver yourself; ant doesn't pick one.
 
 ```go
 import _ "github.com/jackc/pgx/v5/stdlib"
@@ -47,9 +47,9 @@ db, err := ant.Wrap[AppDB](postgres.Dialect, pool)
 
 `Close` closes that pool too, as with `Open`.
 
-## Joining a transaction
+## Join a transaction started elsewhere
 
-`ant.UseTx` binds a context to a transaction started elsewhere, such as by another library. You commit or roll it back. Observers don't run, since they wait for a commit ant can't see.
+`ant.UseTx` binds a context to a `*sql.Tx` that another library began, such as a job queue or a middleware. Your code commits or rolls it back.
 
 ```go
 tx, err := db.DB().BeginTx(ctx, nil)
@@ -66,9 +66,23 @@ if err != nil {
 }
 
 err = bound.Users.Insert(ctx, alice)
+if err != nil {
+	return err
+}
+
+return tx.Commit()
 ```
 
-Two context types can share one transaction, through `ant.CurrentTx`, so two parts of a program commit together.
+ant can't see how that transaction ends, so:
+
+- What ant saves in it is treated as saved at once, as outside a transaction. If you roll the `*sql.Tx` back, the tracker still thinks the rows are stored. Reload or clear what it saved.
+- [Observers](/lifecycle/hooks-and-observers#observers) don't run, since they wait for a commit ant can't see.
+- A savepoint ant opens in it, through `bound.Tx`, is ant's own, and its rollback is taken back in the tracker as usual.
+- On SQL Server, end the transaction before its context ends. go-mssqldb rolls back with the context the transaction began with, and an ended context leaves a goroutine reading the connection after it returns to the pool. ant avoids this in the transactions it begins itself, but a transaction from `UseTx` keeps the driver's behavior.
+
+## Share a transaction between context types
+
+Two context types can share one transaction through `ant.CurrentTx`, so two parts of a program commit or roll back together.
 
 ```go keep-db
 type OtherDB struct {
@@ -93,9 +107,9 @@ var other *OtherDB
 ```
 */}
 
-## One connection
+## Keep work on one connection
 
-`ant.UseConn` keeps everything on one connection, for a session setting or an advisory lock. Transactions stay on it too. You close it.
+`ant.UseConn` keeps everything on one connection from the pool, for a session setting or an advisory lock. Transactions stay on that connection too. You close the connection.
 
 ```go
 conn, err := db.DB().Conn(ctx)
@@ -113,6 +127,35 @@ if err != nil {
 
 _, err = ant.Raw[any](bound, "SET application_name = 'worker'").Exec(ctx)
 ```
+
+An advisory lock is held by a connection, so a job that must run on one instance at a time takes the lock and does its work through the same `bound` context:
+
+```go
+conn, err := db.DB().Conn(ctx)
+if err != nil {
+	return err
+}
+
+defer conn.Close()
+
+bound, err := ant.UseConn(db, conn)
+if err != nil {
+	return err
+}
+
+_, err = ant.Raw[any](bound, "SELECT pg_advisory_lock(42)").Exec(ctx)
+if err != nil {
+	return err
+}
+
+defer ant.Raw[any](bound, "SELECT pg_advisory_unlock(42)").Exec(ctx)
+
+err = bound.Tx(ctx, func(tx *AppDB) error {
+	return tx.Posts.Insert(ctx, post)
+})
+```
+
+A connection runs one statement at a time. Use `bound` from one goroutine at a time, as you would a `*sql.Conn`. Goroutines may pass it on, but two running together fail in the driver, and two savepoint stacks on one connection would undo each other's work. For parallel work, take a connection for each goroutine.
 
 ## Read replicas
 

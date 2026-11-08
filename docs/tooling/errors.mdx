@@ -1,13 +1,30 @@
 ---
 title: Errors
-description: Sentinels, database error classification, and finding the failing SQL.
+description: Every error ant returns, how to match them, and how to read the failing SQL.
 ---
 
-Errors are values you can check. Builders collect them along the way, and the call that runs the query returns them, joined together if there's more than one.
+Match errors with `errors.Is` and `errors.As`, never by their text. Builders collect errors as you chain calls, and the call that runs the query returns them, joined if there is more than one.
 
-## Common errors
+{/*
+```go
+type Page struct {
+	ID      int64
+	Slug    string `ant:"unique"`
+	Version int64  `ant:"version"`
+}
 
-Match them with `errors.Is`, not by their text, which can change.
+var G = ant.Fields[Page]()
+
+var stale *Page
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+	Pages ant.Table[Page]
+}
+```
+*/}
 
 ```go
 user, err := db.Users.Find(ctx, id)
@@ -18,19 +35,125 @@ if errors.Is(err, ant.ErrNotFound) {
 }
 ```
 
+## Reading rows
+
 | Error | Means |
 | --- | --- |
-| `ant.ErrNotFound` | `First`, `Single`, `Find`, or `Reload` found no row |
+| `ant.ErrNotFound` | `First`, `Single`, `Find` or `Reload` found no row |
 | `ant.ErrMultipleRows` | `Single` found more than one |
-| `ant.ErrNoCondition` | A [bulk write](/writing/update-and-delete#the-no-condition-guard) with no condition |
-| `ant.ErrConcurrency` | A version check failed |
-| `ant.ErrUnsupported` | This database lacks the feature |
-| `ant.ErrNotProbe` | A pointer that isn't a probe |
-| `ant.ErrWrongModel` | A probe of a model outside this query |
-| `ant.ErrKeyType` | A key of the wrong type |
-| `ant.ErrNoKey` | The model has no usable key for this |
-| `ant.ErrReadOnly` | A write to a view |
+| `ant.ErrUnknownColumn` | A result column has no field, under [`WithStrict`](#strict-scanning) |
+| `ant.ErrCursor` | A page cursor this query cannot use |
+| `ant.ErrIncludeInEach` | `Each` with `Include`, which would need a second query while rows stream. Use `All`, or `Chunk` |
+| `ant.ErrIncludeInSubquery` | A subquery with `Include` |
+| `ant.ErrNoColumns` | A query whose selection leaves no columns |
+
+## Writing rows
+
+| Error | Means |
+| --- | --- |
+| `ant.ErrNoCondition` | A [bulk write](/writing/update-and-delete#the-no-condition-guard) with no condition that can exclude a row. `Unfiltered` allows it on purpose |
+| `ant.ErrNoAssignment` | An `Update` with nothing to set |
+| `ant.ErrNoRows` | A write given no rows |
+| `ant.ErrNilEntity` | A nil pointer passed to a write |
+| `ant.ErrReadOnly` | A write to a read-only model, such as a view |
+| `ant.ErrNotSoftDeleted` | `Restore` on a model with no [`DeletedAt`](/lifecycle/soft-deletes) |
+| `ant.ErrNotManyToMany` | `Link` or `Unlink` on another kind of relation |
+| `ant.ErrCycle` | New entities that depend on each other, so neither can be inserted first. Save them in two steps |
+
+## Using the wrong field or key
+
+| Error | Means |
+| --- | --- |
+| `ant.ErrNotProbe` | A pointer that is not a field of a [probe](/models/field-probes) from `ant.Fields` |
+| `ant.ErrWrongModel` | A probe of a model the query does not use |
+| `ant.ErrNotColumn` | A relation used as a column |
+| `ant.ErrNotRelation` | A field that is not a relation, used as one |
+| `ant.ErrNoKey` | A key operation on a model with no primary key |
+| `ant.ErrKeyType` | A key whose type does not match the primary key |
+
+[`antvet`](/tooling/antvet) finds most of these at build time.
+
+## Setup
+
+| Error | Means |
+| --- | --- |
+| `ant.ErrNoContext` | The type passed to `Open` does not embed `ant.Context` |
+| `ant.ErrNotOpen` | A table or context that did not come from `Open` |
+| `ant.ErrNoForeignKey` | A relation whose foreign key cannot be found by convention. Name it in `Configure` |
+| `ant.ErrNoColumnType` | A field whose database type cannot be worked out. Set it with `Column(...).Type(...)` |
+| `ant.ErrBadSchema` | Models that cannot become a valid schema |
+| `ant.ErrNotImplemented` | A feature with no implementation yet |
+
+## Change tracking and transactions
+
+| Error | Means |
+| --- | --- |
+| `ant.ErrConcurrency` | A version or token check failed. See [below](#stale-writes) |
+| `ant.ErrConcurrentUse` | A context with change tracking was used by two operations at once. See [below](#a-tracking-context-used-twice) |
+| `ant.ErrKeyChanged` | The primary key of a tracked entity was changed. A key identifies the row, so insert a new entity instead |
+| `ant.ErrNotTracked` | An operation on an entity the context does not track |
+| `ant.ErrNotInTx` | `Commit`, `Rollback` or a savepoint outside a transaction |
 | `ant.ErrTxDone` | The transaction already ended |
+| `ant.ErrTxType` | A `Tx` closure whose parameter is not this context's type |
+
+## Stale writes
+
+`ant.ErrConcurrency` comes back from `SaveChanges`, and from an `Upsert` of a copy that carries a [version](/lifecycle/optimistic-concurrency), on every database including MySQL and MariaDB. The error is an `*ant.ConcurrencyError` that names the row:
+
+```go
+_, err := db.Pages.Upsert(ctx, stale, ant.OnConflict(&G.Slug))
+
+var conflict *ant.ConcurrencyError
+
+if errors.As(err, &conflict) {
+	fmt.Println(conflict.Model, conflict.Key)
+}
+```
+
+## A tracking context used twice
+
+A context with change tracking is one unit of work. If a second operation starts on it while the first runs, the second gets `ant.ErrConcurrentUse` at once and does not wait. Give each request its own `ant.Session`, or share a context opened with `WithTracking(false)`. A query that a hook makes must use the `context.Context` the hook received. See [sessions](/tracking/sessions) and [hooks](/lifecycle/hooks-and-observers#query-from-a-hook).
+
+## Unsupported on this database
+
+`ant.ErrUnsupported` means the connected database cannot do what you asked, and ant refuses before sending SQL. The message names the feature and the dialect.
+
+```go
+_, err := ant.Merge(&db.Users, db.Posts.Query(), ant.EqCol(&U.ID, &P.UserID)).
+	WhenMatched(ant.Set(&U.Age, 1)).
+	Exec(ctx)
+// ant: not supported by this database: MERGE on mysql
+```
+
+Cases beyond the feature table in [databases](/reference/databases):
+
+- A write after `FromCTE` or `Recursive` on SQL Server, which takes no `WITH` inside a subquery.
+- On MySQL, a write whose subquery reads the table being written and uses `SELECT *` beside other columns, or over a join or a set.
+- On MySQL, `InsertMany` with a `Set` that reads its own table and a column left to its default.
+- An upsert with no conflict columns on a database that needs them.
+
+Ask the dialect first to avoid the error:
+
+```go
+if dialect.Supports(db.Dialect(), dialect.Merge) {
+	// ...
+}
+```
+
+## Naming a column twice
+
+PostgreSQL and SQL Server refuse a write that gives a column two values, and MySQL keeps the last. ant refuses it before any SQL runs, on every database, with a plain error that names the field. It covers `DoUpdate` and `Set` of an upsert, a bulk `Update`, `UpdateMany`, a merge's `WhenMatched` and `WhenNotMatched`, and the mappings of `InsertFrom`.
+
+```go
+_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Name, "x"), ant.Set(&U.Name, "y"))
+// ant: User.Name has two assignments; give it one
+```
+
+Naming a version field in any of those is refused too, since ant moves it on by itself. `UpdatedAt` is the exception: the value you give wins over ant's.
+
+## Validation errors
+
+A failed [field rule](/lifecycle/validation) is an `*ant.ValidationError` with `Model`, `Field` and `Err`. It unwraps to the rule's error.
 
 ## Database errors
 
@@ -53,11 +176,42 @@ case ant.IsRetryable(err):
 // spot-end
 ```
 
-`ant.SQLState(err)` returns the code itself, such as `23505`, translated so one value means one thing everywhere.
+`ant.SQLState(err)` returns the code itself, such as `23505`. Each dialect translates its own codes, so one value means one thing everywhere.
 
-## Finding the statement
+| Function | SQLSTATE |
+| --- | --- |
+| `ant.IsUniqueViolation` | `23505` |
+| `ant.IsForeignKeyViolation` | `23503` |
+| `ant.IsNotNullViolation` | `23502` |
+| `ant.IsCheckViolation` | `23514` |
+| `ant.IsRetryable` | `40001` (serialization failure) and `40P01` (deadlock) |
 
-`ant.FailedSQL` reads the statement behind a query error, with placeholders and no values, so it's safe for an internal log.
+`IsRetryable` is true for MySQL and MariaDB deadlocks, and for MariaDB error 1020, which MariaDB 11.6 and later raise when a row changed since the transaction's snapshot. MariaDB rolls the transaction back, so run it again from the start.
+
+### Retry a transaction
+
+```go
+func transfer(ctx context.Context, db *AppDB) error {
+	var err error
+
+	for range 3 {
+		err = db.Tx(ctx, func(tx *AppDB) error {
+			// ... reads and writes
+			return nil
+		})
+
+		if !ant.IsRetryable(err) {
+			return err
+		}
+	}
+
+	return err
+}
+```
+
+## Find the failing statement
+
+`ant.FailedSQL` returns the statement behind a query error, with placeholders and no values, so it is safe for an internal log.
 
 ```go
 err := db.Users.Insert(ctx, user)
@@ -66,17 +220,17 @@ err := db.Users.Insert(ctx, user)
 slog.Error("insert failed", "sql", ant.FailedSQL(err))
 ```
 
-`ant.WithDetailedErrors()` adds it to every error's message, which helps in development. Leave it off where errors reach users.
+`ant.WithDetailedErrors()` adds the statement to every error's message, which helps in development. Leave it off where errors reach users. A database error's message can also quote a value, so do not return `err.Error()` to a client.
 
 ## Strict scanning
 
-By default a result column with no field is ignored. `ant.WithStrict()` refuses it, which catches a model that has fallen behind its table.
+By default a result column with no field is ignored. `ant.WithStrict()` returns `ant.ErrUnknownColumn` instead, which catches a model that has fallen behind its table.
 
 ```go
 // spot-next-line
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithStrict())
 ```
 
-`ant.WithLooseScan()` says the default out loud, where `WithStrict` is on for other contexts.
+`ant.WithLooseScan()` says the default out loud, for code that builds options in layers and needs to switch `WithStrict` off.
 
 <Tests path="developer_tooling/errors_test.go" />

@@ -3,7 +3,7 @@ title: Deploying
 description: Embed migrations in a binary, and choose when they run.
 ---
 
-Embed the migration files in your binary, so it doesn't need anything sitting next to it.
+Embed the migration files in your binary, so it doesn't need anything sitting next to it, and decide whether migrations run as their own step or at startup.
 
 ## Embedding
 
@@ -39,9 +39,13 @@ func main() {
 
 ## When to apply
 
-**As a separate step**, such as a Kubernetes job or a compose service that runs before the server. This is the safer option: a schema change doesn't depend on a code rollout, and if it fails, the deployment stops before anything changes. The [blog example](https://github.com/skudra-go/ant-examples/tree/main/examples/blog) works this way.
+### As a separate step
 
-**At startup**, which is fine for small deployments.
+Run `up` in a Kubernetes job or a compose service that finishes before the server starts. A schema change then doesn't depend on a code rollout, and if it fails, the deployment stops before anything changes. The [blog example](https://github.com/skudra-go/ant-examples/tree/main/examples/blog) works this way.
+
+### At startup
+
+Call `migrate.Up` before the server listens. This is fine for small deployments.
 
 ```go
 // spot-next-line
@@ -62,12 +66,48 @@ Session locks don't survive a pooler in transaction mode, such as PgBouncer. Run
 
 :::
 
-## A database ant cannot reach
+## Hand the SQL to someone else
 
-`script` writes a single SQL file for someone else to run. Each block checks the history table first, so it's safe to run more than once, and `up` agrees with the result afterwards.
+When a DBA applies changes, or ant can't reach the database, `script` writes a single SQL file. Each block checks the history table first, so it is safe to run more than once, and `up` agrees with the result afterwards.
 
 ```bash
 go run ./cmd/migrate script > deploy.sql
+```
+
+The file starts like this:
+
+```sql
+-- Written by ant. Safe to run more than once: each block checks the history table first.
+
+CREATE TABLE IF NOT EXISTS "ant_migrations" (
+    "kind" text NOT NULL,
+    "version" text NOT NULL,
+    "name" text NOT NULL,
+    "checksum" text NOT NULL,
+    "applied_at" timestamptz NOT NULL,
+    "duration_ms" bigint NOT NULL,
+    "success" boolean NOT NULL,
+    "error" text,
+    CONSTRAINT "ant_migrations_pkey" PRIMARY KEY ("kind", "version")
+);
+
+-- 0001_baseline
+DO $ant$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "ant_migrations" WHERE kind = 'versioned' AND version = '0001' AND success) THEN
+    EXECUTE $ant_sql$
+```
+
+A migration that runs without a transaction can't be wrapped in a guard, so `script` refuses a history that has one:
+
+```text
+Error: ant: bad migration: 0010_waiting cannot run in a transaction, so it cannot be guarded. Use script --plain, or up
+```
+
+`script --plain` leaves out the guards and the history table. It joins the files in order, for a tool that keeps its own history:
+
+```bash
+go run ./cmd/migrate script --plain > all.sql
 ```
 
 ## Leaving ant's tooling

@@ -19,6 +19,7 @@ const sidebars = {
     page('index', 'home'),
     page('quick-start', 'bolt'),
     page('concepts', 'bulb'),
+    page('why-ant', 'layers'),
 
     group('Build'),
     section('Models', 'box', [

@@ -3,9 +3,9 @@ title: Testing
 description: Isolated tests against a real database, with factories and fixtures.
 ---
 
-Test against a real database. ant has no in-memory fake, on purpose: a fake accepts SQL the real server would refuse, and hides what constraints, triggers, and transactions actually do. PostgreSQL in a container starts in seconds anyway.
+Test against a real database. ant has no in-memory fake, on purpose: a fake accepts SQL the real server would refuse, and hides what constraints, triggers and transactions do. PostgreSQL in a container starts in seconds.
 
-## A database for tests
+## Set up a database for tests
 
 Build the schema from your real migrations, so a broken migration fails a test before it reaches production.
 
@@ -33,9 +33,34 @@ func TestMain(m *testing.M) {
 
 For quick experiments, `db.EnsureCreated(ctx)` builds tables straight from the structs.
 
-## Isolating tests
+A local database for the tests:
 
-`anttest.Isolate` gives a test a context bound to a transaction that rolls back when the test ends, so tests can share a database and never need cleaning up after.
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: postgres:17
+    environment: { POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app }
+    ports: ["127.0.0.1:55432:5432"]
+```
+
+### Skip when no database is set
+
+A test that needs the database skips itself when `TEST_DATABASE_URL` is empty, so `go test ./...` works anywhere:
+
+```go
+func TestNeedsDatabase(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+}
+```
+
+A skipped test is not a passing test. Check the skip count in CI.
+
+## Roll each test back
+
+`anttest.Isolate` gives a test a context bound to a transaction that rolls back when the test ends, so tests can share a database and need no cleanup.
 
 ```go
 func TestSignup(t *testing.T) {
@@ -49,11 +74,11 @@ func TestSignup(t *testing.T) {
 }
 ```
 
-A test of concurrency needs a schema of its own instead, because other connections can't see an open transaction.
+The test sees its own writes. Code that commits for real, such as through a second connection, doesn't see them, so a test of concurrency needs a database of its own. An isolated context is one connection, so don't share it between goroutines that run at once.
 
-## Factories
+## Make entities with factories
 
-A factory makes valid entities, so each test only spells out what it cares about. The number it passes in keeps values unique.
+A factory makes valid entities, so a test spells out only what it cares about. The number it passes in keeps values unique.
 
 ```go
 // spot-start
@@ -74,8 +99,17 @@ func TestFactories(t *testing.T) {
 	many := Users.CreateMany(t, &db.Users, 10)                              // several
 	young := Users.Create(t, &db.Users, func(u *models.User) { u.Age = 5 }) // one override
 	// spot-end
+}
+```
 
-	// A state is a factory, and leaves the original alone.
+### Name a state
+
+`With` returns a new factory with the changes applied and leaves the original alone.
+
+```go
+func TestAdmin(t *testing.T) {
+	db := anttest.Isolate(t, shared)
+
 	// spot-next-line
 	admin := Users.With(func(u *models.User) { u.Admin = true })
 
@@ -83,7 +117,11 @@ func TestFactories(t *testing.T) {
 }
 ```
 
-`AfterBuild` and `AfterCreate` add callbacks. `anttest.Recycle` shares one parent among many children.
+`AfterBuild` and `AfterCreate` add callbacks that run on each entity.
+
+### Share one parent
+
+`anttest.Recycle` creates one parent the first time a child needs it and hands the same one to the rest.
 
 ```go
 func TestRecycle(t *testing.T) {
@@ -100,9 +138,15 @@ func TestRecycle(t *testing.T) {
 }
 ```
 
-## Fixtures
+## Load fixtures
 
-`anttest.Load` loads rows from JSON files named after their tables, for data that doesn't change. Rows go in as written, with no hooks, so parents come first.
+`anttest.Load` loads rows from JSON files named after their tables, for data that doesn't change. Each file is an array of objects keyed by column:
+
+```json
+[{"id": 1, "name": "Ada", "created_at": "2026-01-01T00:00:00Z"}]
+```
+
+Rows go in as written, with no hooks, Go defaults or timestamps, so parents come first.
 
 ```go
 //go:embed testdata
@@ -116,13 +160,15 @@ func TestWithFixtures(t *testing.T) {
 }
 ```
 
-## Checking what code does
+## Check the SQL
 
-`q.ToSQL()` returns a query's SQL with no database, which suits a test of a query builder. For anything else, run it: what matters is what the database returns. [`ant.DryRun`](/tooling/inspecting-queries#dryrun) shows what a unit of work decides to write, and [antvet](/tooling/antvet) catches mistakes before tests run.
+`q.ToSQL()` returns a query's SQL with no database, which suits a test of a query builder. For anything else, run the query: what matters is what the database returns.
+
+[`ant.DryRun`](/tooling/inspecting-queries#dryrun) runs real code in a transaction and returns every statement, which shows what a unit of work decides to write. [antvet](/tooling/antvet) catches mistakes before tests run.
 
 :::warning[SQLite is not a stand-in]
 
-SQLite is tempting for speed, but it has no `FOR UPDATE`, no enum types, different date handling, and looser typing, so a test can pass there and fail in production. Test on the database you actually deploy.
+SQLite is tempting for speed, but it has no `FOR UPDATE`, no enum types, different date handling and looser typing, so a test can pass there and fail in production. Test on the database you deploy. Where SQLite is what you deploy, ant's dialect runs queries and writes, but migrations aren't available, so create the tables with your own SQL.
 
 :::
 

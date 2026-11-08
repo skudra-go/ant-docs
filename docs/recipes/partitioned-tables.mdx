@@ -1,11 +1,11 @@
 ---
 title: Partitioned tables
-description: Many tables behind one name, for data with a retention rule.
+description: Monthly PostgreSQL partitions for append-mostly data with a retention rule.
 ---
 
-A partitioned table is many tables behind one name. Queries that filter on the partition column skip the rest, and dropping a whole partition frees its space at once, where deleting the same rows would take hours and leave the table bloated. It's a good fit for data that's mostly appended and kept for a fixed time.
+A partitioned table is many tables behind one name. Queries that filter on the partition column skip the rest, and dropping a whole partition frees its space at once, where deleting the same rows would take hours and leave the table bloated. Use it for data that is mostly appended and kept for a fixed time, such as events or logs. It needs PostgreSQL.
 
-## Declaring one
+## Declare a partitioned model
 
 ```go
 type Event struct {
@@ -25,9 +25,9 @@ var E = ant.Fields[Event]()
 
 Migrations create the parent table. A partitioned table's primary key and unique constraints must include the partition column, because PostgreSQL only enforces uniqueness per partition, so the key is composite.
 
-## Keeping the months
+## Create and drop months
 
-Partitions come and go on a schedule, so they aren't migrations, and `drift` ignores them. `postgres.MonthlyPartitions` looks after them.
+Partitions come and go on a schedule, so they aren't migrations, and `drift` ignores them. `postgres.MonthlyPartitions` looks after them. A partition is named `events_2026_10` and runs from midnight UTC on the first of the month. Partitions with other names are left alone.
 
 ```go
 months, err := postgres.MonthlyPartitions[Event](db)
@@ -48,9 +48,9 @@ var cutoff time.Time
 ```
 */}
 
-`Ensure` is safe to repeat, and to run from several instances. Run it at startup, since a row for a month with no partition is an error, and again on a schedule.
+`Ensure` is safe to repeat, and to run from several instances. Run it at startup, since a row for a month with no partition is an error, and again on a schedule. `DropBefore` drops only months that ended at or before the cutoff, so no row newer than the cutoff is lost.
 
-## Related tables
+## Relate two partitioned tables
 
 A foreign key to a partitioned table needs the whole key, which a relation can't express. Keep the relation for loading, and declare the constraint apart.
 
@@ -93,7 +93,7 @@ type PeopleDB struct {
 ```
 */}
 
-Drop children first: `DropBefore` on `Person`, then on `Event`.
+Drop children first: `DropBefore` on `Person`, then on `Event`, or PostgreSQL refuses to drop a month the foreign key still points at.
 
 ## Limits
 

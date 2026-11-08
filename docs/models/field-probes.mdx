@@ -1,13 +1,13 @@
 ---
 title: Field probes
-description: How &U.Age names a column, and what happens when it does not.
+description: How &U.Age names a column, what the compiler checks, and what it leaves to run time.
 ---
 
-A probe is how ant points at a column without using a string. `&U.Age` is the column, and the compiler knows its type.
+A probe names a column without a string. `&U.Age` is the `age` column of `User`, and the compiler knows it is an `int`.
 
-## Declaring a probe
+## Declare a probe
 
-Declare one per model, once, right next to the model. It never holds data, and asking for it again gives you the same probe.
+Declare one per model, next to the model. A probe never holds data, and asking for it again returns the same one.
 
 ```go
 // spot-start
@@ -18,11 +18,12 @@ var (
 // spot-end
 
 adults, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
 
-## What the compiler gives you
+## Type errors become compile errors
 
-`ant.Gt` is generic: `Gt[V Ordered](field *V, v V)`. `&U.Age` is a `*int`, which makes `V` an `int`, so the value has to be an `int` too.
+`ant.Gt` is generic: `Gt[V Ordered](field *V, v V)`. `&U.Age` is a `*int`, so `V` is `int` and the value must be an `int`.
 
 ```go compile-fail
 // spot-next-line
@@ -33,7 +34,7 @@ db.Users.Where(ant.Gt(&U.Age, "18"))
 cannot use "18" (untyped string constant) as int value in argument to ant.Gt
 ```
 
-It goes further than values. A typo is a compile error, and so is using the wrong kind of column for an operation.
+A misspelled field is a compile error, and so is the wrong kind of column for an operation.
 
 ```go compile-fail
 // spot-start
@@ -49,11 +50,11 @@ in call to ant.Like, V (type int) does not satisfy ~string
 in call to db.Users.Include, type *string of &U.Name does not match *[]R (cannot infer R)
 ```
 
-And because a probe is an ordinary field reference, renaming a field in your editor renames it in every query.
+A probe is an ordinary field reference, so renaming a field in your editor renames it in every query.
 
-## Reaching inside
+## Nested and promoted fields
 
-Probes follow promoted fields and embedded structs, so nested columns just work.
+Probes follow promoted fields and [embedded structs](/models/embedded-and-mixins).
 
 {/*
 ```go
@@ -79,14 +80,16 @@ var S = ant.Fields[Shop]()
 
 ```go
 db.Users.OrderBy(&U.CreatedAt) // promoted from ant.Base
+// ... ORDER BY "users"."created_at"
 
 // spot-next-line
 db.Shops.Where(ant.Eq(&S.Shipping.City, "Oslo"))
+// ... WHERE "shops"."shipping_city" = $1
 ```
 
-## Field references
+## Pass columns of different types
 
-A few calls take any number of columns of different types. `ant.F` turns a probe into a `FieldRef` for them.
+A few calls take any number of columns of different types, such as a composite key. `ant.F` turns a probe into a `FieldRef` for them.
 
 {/*
 ```go
@@ -106,25 +109,25 @@ func (Grant) Configure(b *ant.ModelBuilder[Grant]) {
 }
 ```
 
-## How it works
+## How a probe is resolved
 
-`ant.Fields[User]()` allocates a single `User`, and `&U.Age` is an address inside it. Subtract the start of the probe and you get an offset. ant walks the struct with `reflect` once to learn which field lives at each offset.
+`ant.Fields[User]()` allocates one `User`, and `&U.Age` is an address inside it. ant subtracts the start of the probe to get an offset, and walks the struct with `reflect` once to learn which field lives at each offset.
 
-An offset alone isn't unique: `&U.Base` and `&U.ID` share an address, because `ID` is the first field of `Base`. So ant matches on address and type together.
+An offset alone is not unique: `&U.Base` and `&U.ID` share an address, because `ID` is the first field of `Base`. ant matches on address and type together.
 
-## What it cannot catch
+## Mistakes the compiler can't see
 
-These compile, because a condition doesn't carry its model's type. They fail when the query runs instead, and [antvet](/tooling/antvet) flags them even sooner.
+A condition doesn't carry its model's type, so these compile. They fail when the query runs, and [antvet](/tooling/antvet) flags them earlier.
 
 ```go
 age := 18
 
 // spot-start
 _, err := db.Users.Where(ant.Gt(&age, 18)).All(ctx)
-errors.Is(err, ant.ErrNotProbe) // true
+errors.Is(err, ant.ErrNotProbe) // true: &age is not a probe
 
 _, err = db.Posts.Where(ant.Gt(&U.Age, 18)).All(ctx)
-errors.Is(err, ant.ErrWrongModel) // true
+errors.Is(err, ant.ErrWrongModel) // true: &U.Age belongs to User
 
 _, err = db.Posts.Where(ant.IsNull(&P.User)).All(ctx)
 errors.Is(err, ant.ErrNotColumn) // true: a relation is not a column

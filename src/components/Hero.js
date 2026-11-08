@@ -35,17 +35,22 @@ export default function Hero() {
 
   return (
     <header className="hero-ant">
+      <p className="hero-ant__aside">
+        It's lavender because that's my favorite color.{' '}
+        <span role="img" aria-label="rolling eyes">
+          🙄
+        </span>
+      </p>
       <div className="hero-ant__mark">
         <AntMark watch size={96} />
       </div>
       <p className="hero-ant__status">
         <Link to={reference}>{release}</Link> · pre-1.0, so the API can still change
       </p>
-      <h1 className="hero-ant__title">Database code the compiler can read.</h1>
+      <h1 className="hero-ant__title">A typed ORM for Go.</h1>
       <p className="hero-ant__lede">
-        ant is a Go ORM built on plain structs. Queries point at your fields instead of naming
-        columns in strings, so the compiler reads them too: rename a field and every query
-        follows, get a type wrong and it won't build. And there's nothing to generate.
+        Plain structs, queries the compiler checks, and no code generation. Built on
+        database/sql, for PostgreSQL, MySQL, MariaDB, SQLite and SQL Server.
       </p>
       <Install />
       <div className="hero-ant__actions">

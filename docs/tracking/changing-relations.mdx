@@ -1,13 +1,13 @@
 ---
 title: Changing relations
-description: Edit a loaded relation like a slice, and SaveChanges does the rest.
+description: Edit a loaded relation like a slice, and SaveChanges inserts, updates, deletes, unlinks and moves the rows.
 ---
 
-Change a loaded relation, and the rows change with it. Tracking follows keys, not memory addresses, so everyday slice work is safe, including `slices.Delete` and an `append` that moves the array.
+Load a relation with `Include`, change the slice or the pointer, and call `SaveChanges`. ant remembers which rows each relation held, and compares by key, not by memory address. `append` that moves the array, `slices.Delete` and reordering are all safe.
 
-## Add
+## Add a child
 
-An appended element is inserted, and its new key and foreign key are copied back.
+An appended element is inserted. Its new key and its foreign key are copied back into the element.
 
 ```go
 session := ant.Session(db)
@@ -19,20 +19,40 @@ alice.Posts = append(alice.Posts, Post{Title: "New"})
 
 err = session.SaveChanges(ctx)
 // spot-end
+// INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title", "published")
+// VALUES ($1, $2, $3, $4, $5) RETURNING "id"
 ```
 
-## Edit
+The same holds for a relation set on a new entity. `Insert` writes the children, and the entity is tracked as if it had been loaded with them, so removing one later deletes it, and an unrelated edit doesn't write the children or a join table again:
+
+```go
+dave := &User{Name: "Dave", Email: "dave@example.com", Posts: []Post{{Title: "A"}, {Title: "B"}}}
+
+err := session.Users.Insert(ctx, dave)
+// INSERT INTO "users" (...) VALUES (...) RETURNING "id"
+// INSERT INTO "posts" (...) VALUES (...), (...) RETURNING "id"
+
+dave.Posts = dave.Posts[:1]
+
+err = session.SaveChanges(ctx)
+// DELETE FROM "posts" WHERE "posts"."id" = $1
+```
+
+`InsertOnly` ignores relations, so it records none.
+
+## Edit a child
 
 ```go
 // spot-next-line
 alice.Posts[0].Title = "Edited"
 
 err := session.SaveChanges(ctx)
+// UPDATE "posts" SET "title" = $1, "updated_at" = $2 WHERE "posts"."id" = $3
 ```
 
-## Remove
+## Remove a child
 
-What removal does depends on the foreign key. `Post.UserID` is required, so a post you remove from its user gets deleted.
+What removal does depends on the foreign key. `Post.UserID` is required, so a post you remove from its user is deleted.
 
 ```go
 // spot-start
@@ -42,25 +62,28 @@ alice.Posts = nil                              // deletes them all
 // spot-end
 
 err := session.SaveChanges(ctx)
+// DELETE FROM "posts" WHERE "posts"."id" = $1
 ```
 
 A nullable foreign key is unlinked instead: the child stays, with no parent.
 
 ```go
 type Member struct {
-	ID     int64
+	ant.Base
+	Name   string
 	// spot-next-line
 	TeamID *int64 // nullable, so removal clears it
 	Team   *Team
 }
 
 type Team struct {
-	ID      int64
+	ant.Base
+	Name    string
 	Members []Member
 }
 ```
 
-Reordering changes nothing. And a relation you never loaded can't remove anything: `nil` from a plain `Find` means "not loaded", not "empty".
+Reordering a slice changes nothing. And a relation you never loaded can't remove anything: `nil` from a plain `Find` means "not loaded", not "empty".
 
 ```go
 user, err := session.Users.Find(ctx, id)
@@ -71,47 +94,193 @@ user.Age = 31
 err = session.SaveChanges(ctx) // user.Posts is nil, and the posts are safe
 ```
 
-## Move
+## Move a child to another parent
 
-To move a post, set its foreign key and put it in the other slice.
+Take the child out of one slice and put it in the other. ant updates its foreign key and doesn't delete it.
 
 ```go
 // spot-start
 post := alice.Posts[0]
-post.UserID = bob.ID
 
 bob.Posts = append(bob.Posts, post)
 alice.Posts = alice.Posts[1:]
 // spot-end
 
 err := session.SaveChanges(ctx)
+// UPDATE "posts" SET "user_id" = $1, "updated_at" = $2 WHERE "posts"."id" = $3
 ```
+
+The new parent can be a new entity saved in the same call, or a loaded one whose relation you never loaded. The child is moved in both cases, not deleted:
+
+```go
+team, err := session.Teams.Include(&T.Members).Find(ctx, id)
+
+member := team.Members[0]
+team.Members = team.Members[1:]
+
+other := &Team{Name: "Platform", Members: []Member{member}}
+
+err = ant.Add(ctx, session, other)
+err = session.SaveChanges(ctx)
+// INSERT INTO "teams" ("created_at", "updated_at", "name") VALUES ($1, $2, $3) RETURNING "id"
+// UPDATE "members" SET "team_id" = $1, "updated_at" = $2 WHERE "members"."id" = $3
+```
+
+Setting `post.UserID` yourself also works. A relation that still holds what was loaded leaves the foreign key alone, so assigning the key with `post.User` loaded is fine.
 
 ## Change a parent
 
-Set the pointer, or set the foreign key. Setting `nil` clears a nullable key, and a new parent is inserted and linked. If you change both, the foreign key wins.
+Set the pointer, or set the foreign key. A new parent is inserted and linked, and `nil` clears a nullable key. If you change both, the foreign key wins.
 
 ```go
 member, err := session.Members.IncludeOne(&M.Team).Find(ctx, id)
 
 // spot-next-line
-member.Team = &Team{}
+member.Team = &Team{Name: "New team"}
 
 err = session.SaveChanges(ctx)
+// INSERT INTO "teams" ("created_at", "updated_at", "name") VALUES ($1, $2, $3) RETURNING "id"
+// UPDATE "members" SET "team_id" = $1, "updated_at" = $2 WHERE "members"."id" = $3
 ```
+
+A pointer is remembered once a save has written it, so clearing it later unlinks the row. Setting it and clearing it across two saves is seen both times:
+
+```go
+member, err := session.Members.IncludeOne(&M.Team).Find(ctx, id)
+
+member.Team = &Team{Name: "New team"}
+
+err = session.SaveChanges(ctx)
+
+// spot-next-line
+member.Team = nil
+
+err = session.SaveChanges(ctx)
+// UPDATE "members" SET "team_id" = $1, "updated_at" = $2 WHERE "members"."id" = $3 -- $1 = NULL
+```
+
+A pointer that was empty when loaded and is still empty leaves the foreign key to you.
+
+## Change a many-to-many link
+
+Elements of a many-to-many slice are the linked rows. Appending links, removing unlinks, and the target rows themselves stay.
+
+```go
+type Student struct {
+	ID      int64
+	Name    string
+	Courses []Course
+}
+
+func (Student) Configure(b *ant.ModelBuilder[Student]) {
+	b.ManyToMany(&St.Courses).Through("enrollments")
+}
+
+type Course struct {
+	ID    int64
+	Title string
+}
+
+var St = ant.Fields[Student]()
+```
+
+Overwriting an element in place swaps the link: the old course is unlinked and the new one linked.
+
+```go
+ann, err := session.Students.Include(&St.Courses).Find(ctx, id)
+
+// spot-next-line
+ann.Courses[0] = *rust
+
+err = session.SaveChanges(ctx)
+// DELETE FROM "enrollments" WHERE "student_id" = $1 AND "course_id" IN ($2)
+// INSERT INTO "enrollments" ("student_id", "course_id") VALUES ($1, $2) ON CONFLICT DO NOTHING
+```
+
+See [many-to-many](/relations/many-to-many) for the declaration.
+
+## Nested includes
+
+Relations loaded below a slice element are tracked on that element too. In a category tree loaded two levels deep, taking a grandchild out of a child's slice unlinks it, and appending one inserts it.
+
+```go
+type Category struct {
+	ID       int64
+	ParentID *int64
+	Name     string
+	Parent   *Category
+	Children []Category
+}
+
+var C = ant.Fields[Category]()
+
+root, err := session.Categories.
+	Include(&C.Children, func(q *ant.Query[Category]) *ant.Query[Category] {
+		return q.Include(&C.Children)
+	}).
+	Find(ctx, id)
+
+child := &root.Children[0]
+
+// spot-start
+child.Children = append(child.Children[:1], Category{Name: "New"}) // drops the second, adds one
+// spot-end
+
+err = session.SaveChanges(ctx)
+// UPDATE "categories" SET "parent_id" = $1 WHERE "categories"."id" = $2 -- $1 = NULL
+// INSERT INTO "categories" ("parent_id", "name") VALUES ($1, $2) RETURNING "id"
+```
+
+## Remove an unsaved entity
+
+An entity that was added and never saved has nothing in the database. `ant.Remove` cancels its insert, so a new post that you took back before saving writes nothing.
+
+```go
+post := &Post{UserID: alice.ID, Title: "Draft"}
+
+err := ant.Add(ctx, session, post)
+err = ant.Remove(ctx, session, post)
+
+has, err := session.HasChanges(ctx)
+// has is false
+```
+
+## See the changes before saving
+
+`HasChanges` plans the real save, so it sees a child added to, removed from or moved between loaded relations, as well as edited fields.
+
+```go
+alice.Posts = append(alice.Posts, Post{Title: "C"})
+
+has, err := session.HasChanges(ctx)
+// has is true, and nothing was written
+```
+
+## A later Include reads again
+
+`Include` on a tracked parent reads its relation afresh, as `Load` does, and the slice then shows what a save writes. Unsaved changes to that relation are replaced by what the database holds. Call `SaveChanges` first to keep them.
 
 {/*
 ```go
 type SessionDB struct {
 	ant.Context
-	Users   ant.Table[User]
-	Posts   ant.Table[Post]
-	Members ant.Table[Member]
+	Users      ant.Table[User]
+	Posts      ant.Table[Post]
+	Members    ant.Table[Member]
+	Teams      ant.Table[Team]
+	Students   ant.Table[Student]
+	Categories ant.Table[Category]
 }
 
-var M = ant.Fields[Member]()
+var (
+	M = ant.Fields[Member]()
+	T = ant.Fields[Team]()
+)
 
-var session *SessionDB
+var (
+	session *SessionDB
+	rust    *Course
+)
 ```
 */}
 

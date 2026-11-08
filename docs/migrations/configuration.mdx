@@ -1,9 +1,9 @@
 ---
 title: Configuration
-description: Everything has a default, and everything can be replaced.
+description: The migrate.Config fields, with their defaults, and how to replace storage, file names and the SQL text.
 ---
 
-Everything has a sensible default, and everything can be swapped out through `migrate.Config`, which you pass to `Main` or `Up`.
+`migrate.Config` holds the settings. Pass it to `migrate.Main` for the command line tool, or to `migrate.Up` to apply migrations from your own code. Every field has a default, so `migrate.Config{}` works.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
@@ -18,12 +18,12 @@ Everything has a sensible default, and everything can be swapped out through `mi
 | `DSN` | none | The fallback after `--dsn` and `DATABASE_URL` |
 | `Skip` | none | Versions to leave unapplied |
 | `OutOfOrder` | off | Let an older pending migration run |
-| `Ignore` | none | Names for `drift` to overlook, such as `legacy_*` or `users.handmade_idx` |
+| `Ignore` | none | Names for `drift` to overlook, such as `legacy_*` or `users.handmade_idx`: see [adopting](/migrations/adopting#leave-tables-out) |
 | `NoLock` | off | Turn off the migration lock |
 | `SeedHooks` | off | Run model hooks while seeding |
 | `Out`, `OnApply` | quiet in `Up` | Progress text, and a callback per migration |
 
-## Storage
+## Read migrations from somewhere else
 
 `Source` lists migrations from anywhere, such as a table or an object store. Implement `Store` as well for the commands that write.
 
@@ -36,13 +36,13 @@ type Source interface {
 }
 ```
 
-## File names
+## Name files your own way
 
-`Name` chooses a new file's name, and `Parse` reads a version and name back.
+`Name` chooses a new file's name, and `Parse` reads a version and name back. `migrate.Timestamped` is built in, and makes collisions between branches rare: see [working in a team](/migrations/teams).
 
-## SQL
+## Change the SQL that is written
 
-`Render` receives the plan, as data, and can wrap the default.
+`Render` receives the plan, as data, and can wrap the default. This one starts every generated file with a lock timeout:
 
 ```go
 config := migrate.Config{

@@ -1,13 +1,13 @@
 ---
 title: Embedded structs and mixins
-description: Group columns in a struct, and share configuration between models.
+description: Group columns in a struct, and share indexes, checks and filters between models.
 ---
 
-A struct can group columns without being a table of its own. A mixin is one that brings its configuration along with it.
+A struct can group columns without being a table of its own. A mixin is a struct that also carries configuration to every model that embeds it.
 
-## Anonymous embedding
+## Share fields with an embedded struct
 
-The embedded struct's fields become the model's columns, the same way `ant.Base` works.
+An anonymous embedded struct adds its fields to the model's columns. `ant.Base` works this way.
 
 ```go
 type Audit struct {
@@ -22,9 +22,11 @@ type Shop struct {
 }
 ```
 
-## Named groups, with a prefix
+`shops` gets a `created_by` column. Embed `Audit` in every model that needs it, and the column has one definition.
 
-The `embedded` tag does the same for a named field, and `prefix` keeps two of them apart.
+## Group columns under a prefix
+
+The `embedded` tag does the same for a named field. `prefix` keeps two groups of the same type apart. Use it for a value that belongs in the row, such as an address, instead of a table of its own.
 
 ```go
 type Address struct {
@@ -44,6 +46,7 @@ var S = ant.Fields[Shop]()
 
 // spot-next-line
 oslo, err := db.Shops.Where(ant.Eq(&S.Shipping.City, "Oslo")).All(ctx)
+// SELECT ... FROM "shops" WHERE "shops"."shipping_city" = $1
 ```
 
 {/*
@@ -55,11 +58,55 @@ type ShopsDB struct {
 ```
 */}
 
-That table has `billing_city`, `billing_zip`, `shipping_city`, and `shipping_zip`. Tracking works per column, so changing `Billing.Zip` writes one column. Embedding nests too.
+The table has `billing_city`, `billing_zip`, `shipping_city` and `shipping_zip`. Tracking works per column, so changing one field writes one column:
+
+```go
+shop, err := db.Shops.Find(ctx, id)
+
+shop.Billing.Zip = "9"
+
+err = db.SaveChanges(ctx)
+// UPDATE "shops" SET "billing_zip" = $1 WHERE "shops"."id" = $2
+```
+
+Embedded structs can nest.
+
+:::tip[Embed a struct, or relate a model]
+
+Embed when the data is part of the row and always read with it. Use a [relation](/relations/declaring) when the data has its own rows, its own key, or is shared between rows.
+
+:::
+
+### The field must be a struct value
+
+`ant:"embedded"` goes on a struct value. On a pointer, a scalar, or a struct that holds such a field, ant returns an error that names the field:
+
+```go
+type Courier struct {
+	ID    int64
+	// spot-next-line
+	Depot *Address `ant:"embedded,prefix=depot_"`
+}
+```
+
+```text
+ant: embedded field Courier.Depot must be a struct value, got *Address
+```
+
+`ant.Open` returns it, and so does every query, raw query and projection that uses the model, because those would otherwise scan into only some of the fields. A pointer is refused because it could be nil, and ant would have to decide when a row of NULL columns means a nil pointer and when it means a zero struct. For an optional group of columns, use plain pointer fields inside the struct:
+
+```go
+type Address struct {
+	City *string
+	Zip  *string
+}
+```
+
+A nested field is named with its path: `ant: embedded field Customer.Home.Depot must be a struct value, got *Address`.
 
 ## Mixins
 
-A mixin is an embedded struct with a `ConfigureMixin` method. It works by column name, without knowing who embeds it, which suits anything many models share.
+A mixin is an embedded struct with a `ConfigureMixin` method. It works on columns by name, without knowing which model embeds it, so it suits anything many models share: an index, a check, a filter.
 
 ```go
 type Created struct {
@@ -80,6 +127,8 @@ type Event struct {
 }
 ```
 
-A mixin can add a [global filter](/lifecycle/global-filters) too, which is how [multi-tenancy](/recipes/multi-tenancy) stays impossible to forget. A hook method on the mixin is promoted to every model that embeds it.
+`events` gets `events_created_idx` and `events_created_positive`. `m.Table()` is the name of the embedding model's table, which keeps the names unique.
+
+A mixin can add a [global filter](/lifecycle/global-filters), which is how [multi-tenancy](/recipes/multi-tenancy) stays impossible to forget. A hook method on the mixin is promoted to every model that embeds it.
 
 <Tests path="model_definition/embedded_test.go" />

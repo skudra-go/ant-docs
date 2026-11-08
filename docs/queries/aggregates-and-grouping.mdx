@@ -1,89 +1,94 @@
 ---
 title: Aggregates and grouping
-description: Sums, counts, GROUP BY, and HAVING, with typed results.
+description: Sums, counts, GROUP BY and HAVING, with typed results.
 ---
 
-An aggregate runs one query and gives you back a value of the column's type. Grouped results go into a struct you define, through [`Project`](/queries/projections).
+An aggregate runs one query and returns a value of the column's type. Grouped results go into a struct you define, through [`Project`](/queries/projections).
 
-## One number
+## Sum, average, minimum, maximum
+
+`SumOf`, `AvgOf`, `MinOf` and `MaxOf` take a query and a column.
 
 ```go
 adults := db.Users.Where(ant.Gt(&U.Age, 18))
 
-// spot-start
-total, err := ant.SumOf(ctx, adults, &U.Age)   // int
+total, err := ant.SumOf(ctx, adults, &U.Age) // int
+// SELECT SUM("users"."age") FROM "users" WHERE "users"."age" > $1
+
 average, err := ant.AvgOf(ctx, adults, &U.Age) // float64
-lowest, err := ant.MinOf(ctx, adults, &U.Age)  // int
-last, err := ant.MaxOf(ctx, adults, &U.Name)   // string
-// spot-end
+// SELECT AVG("users"."age") FROM "users" WHERE "users"."age" > $1
+
+lowest, err := ant.MinOf(ctx, adults, &U.Age) // int
+// SELECT MIN("users"."age") FROM "users" WHERE "users"."age" > $1
+
+last, err := ant.MaxOf(ctx, adults, &U.Name) // string
+// SELECT MAX("users"."name") FROM "users" WHERE "users"."age" > $1
 ```
 
-`MIN` and `SUM` over no rows are `NULL` in SQL. Here, they're zero.
+`SUM`, `AVG`, `MIN` and `MAX` over no rows are `NULL` in SQL. These calls return zero instead. For a plain row count, see [`Count`](/queries/reading-rows#count-and-check).
 
-## Grouping
+## Group rows
 
-Define what a result holds, give it a probe, and map columns and aggregates into it.
+Define a struct for what a result row holds, give it a probe, and map columns and aggregates into it.
 
 ```go
-// spot-start
 type AgeGroup struct {
 	Age   int
 	Users int64
 }
 
 var G = ant.Fields[AgeGroup]()
-// spot-end
 
 groups, err := ant.Project[AgeGroup](
-	// spot-start
 	db.Users.GroupBy(&U.Age).Order(ant.Col(&U.Age).Asc()),
 	ant.Into(&G.Age, &U.Age),
 	ant.IntoExpr(&G.Users, ant.Count()),
-	// spot-end
 ).All(ctx)
+// SELECT "users"."age" AS "age", COUNT(*) AS "users"
+// FROM "users" GROUP BY "users"."age" ORDER BY "users"."age"
 ```
 
-```sql
-SELECT "users"."age" AS "age", COUNT(*) AS "users" FROM "users" GROUP BY "users"."age" ORDER BY "users"."age"
-```
+`groups` is a `[]AgeGroup`. Both sides of each mapping are probes, so the compiler checks them.
 
-`groups` is a `[]AgeGroup`. Both sides of each mapping are probes, so the compiler checks those as well.
-
-## Filtering groups
+## Filter groups
 
 `Where` filters rows before grouping, and `Having` filters groups after.
 
 ```go
 groups, err := ant.Project[AgeGroup](
 	db.Users.
-		// spot-start
 		Where(ant.Gt(&U.Age, 20)).
 		GroupBy(&U.Age).
 		Having(ant.Count().Gt(1)).
-		// spot-end
 		Order(ant.Count().Desc()).
 		Limit(5),
 	ant.Into(&G.Age, &U.Age),
 ).All(ctx)
+// SELECT "users"."age" AS "age" FROM "users"
+// WHERE "users"."age" > $1
+// GROUP BY "users"."age"
+// HAVING COUNT(*) > $2
+// ORDER BY COUNT(*) DESC
+// LIMIT $3
 ```
 
-## More than one column
+## Group by several columns or an expression
 
-`ant.Then` adds a column to the group, and `GroupByExpr` groups by an expression.
+`ant.Then` adds a column to the group, and `GroupByExpr` groups by an [expression](/queries/expressions).
 
 ```go
-// spot-next-line
 byAgeAndName := ant.Then(db.Users.GroupBy(&U.Age), &U.Name)
+// ... GROUP BY "users"."age", "users"."name"
 
-// spot-next-line
 decade := ant.SQL[int]("? / 10", ant.Col(&U.Age))
 
 groups, err := ant.Project[AgeGroup](
-	// spot-next-line
 	db.Users.GroupByExpr(decade).Order(decade.Asc()),
 	ant.IntoExpr(&G.Age, decade),
 	ant.IntoExpr(&G.Users, ant.Count()),
 ).All(ctx)
+// SELECT "users"."age" / 10 AS "age", COUNT(*) AS "users"
+// FROM "users" GROUP BY "users"."age" / 10 ORDER BY "users"."age" / 10
 ```
 
 ## Aggregate functions
@@ -97,10 +102,11 @@ groups, err := ant.Project[AgeGroup](
 | `ant.Avg(&U.Age)` | `float64` |
 | `ant.Min(&U.Age)`, `ant.Max(&U.Age)` | the column's type |
 
-Each is an [expression](/queries/expressions), so `.Filter(...)` narrows one aggregate without touching the rest of the query.
+Each is an [expression](/queries/expressions), so `.Filter(...)` narrows one aggregate without touching the rest of the query:
 
 ```go
 ant.IntoExpr(&G.Users, ant.Count().Filter(ant.Eq(&U.Name, "Ada")))
+// COUNT(*) FILTER (WHERE "users"."name" = $1) AS "users"
 ```
 
 {/*
@@ -111,15 +117,45 @@ func filtered() ant.Mapping {
 ```
 */}
 
-## Across a join
+`FILTER` is native on PostgreSQL and SQLite and written with `CASE` on the other databases. See [databases](/reference/databases).
+
+## Group across a join
+
+Group by a column of a joined model, and count the rows of the other side. This is the call for a report such as posts per author.
 
 ```go
-counts, err := ant.Project[AgeGroup](
-	// spot-next-line
-	db.Posts.Join(&P.User).GroupBy(&U.Age),
-	ant.Into(&G.Age, &U.Age),
-	ant.IntoExpr(&G.Users, ant.Count()),
+type PostCount struct {
+	Author string
+	Posts  int64
+}
+
+var PC = ant.Fields[PostCount]()
+
+counts, err := ant.Project[PostCount](
+	db.Posts.Join(&P.User).GroupBy(&U.Name).Having(ant.Count().Gt(2)).Order(ant.Count().Desc()),
+	ant.Into(&PC.Author, &U.Name),
+	ant.IntoExpr(&PC.Posts, ant.Count()),
 ).All(ctx)
+// SELECT "users"."name" AS "author", COUNT(*) AS "posts"
+// FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+// GROUP BY "users"."name"
+// HAVING COUNT(*) > $1
+// ORDER BY COUNT(*) DESC
 ```
+
+An inner join drops authors with no posts. To list them with a count of 0, start from the users and use a [left join](/queries/joins#left-joins), counting a column of the posts instead of `*`:
+
+```go
+counts, err := ant.Project[PostCount](
+	db.Users.LeftJoinMany(&U.Posts).GroupBy(&U.Name),
+	ant.Into(&PC.Author, &U.Name),
+	ant.IntoExpr(&PC.Posts, ant.CountOf(&P.ID)),
+).All(ctx)
+// SELECT "users"."name" AS "author", COUNT("posts"."id") AS "posts"
+// FROM "users" LEFT JOIN "posts" ON "users"."id" = "posts"."user_id"
+// GROUP BY "users"."name"
+```
+
+To attach a count to whole models instead, see [a computed field](/queries/projections#a-computed-field).
 
 <Tests path="querying/group_by_test.go" />

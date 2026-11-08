@@ -3,7 +3,7 @@ title: Working in a team
 description: What happens when two branches add a migration, and squashing history.
 ---
 
-When two branches each add a migration, they usually collide. ant catches every way that can happen.
+Two branches that each add a migration usually collide. ant catches each way it can happen.
 
 | What happened | What ant does | What to do |
 | --- | --- | --- |
@@ -12,7 +12,29 @@ When two branches each add a migration, they usually collide. ant catches every 
 | A clean merge that lost the snapshot | `check` compares `latest` with the newest file, and fails if they differ | Run `snapshot` |
 | A migration older than what ran | `up` refuses it, because it was written against a schema that is gone | Renumber it, or set `Config.OutOfOrder` |
 
-`Config.Name = migrate.Timestamped` makes collisions rare, by naming files with the time.
+## Two migrations with the same number
+
+Both branches wrote `0002`. After the merge every command refuses and names both files:
+
+```text
+Error: ant: two migrations share a version: 0002_add_bio_and_age and 0002_add_nick. Renumber the one not yet applied anywhere
+```
+
+Rename the file that no database has applied yet, and run `check`.
+
+## A snapshot that doesn't match the files
+
+The snapshot records which migration it was written for. When a merge keeps one side's snapshot and the other side's files, `check` says so:
+
+```text
+Error: ant: snapshot does not match the migration files: it was written for 0018_enable_citext, and the newest file is 0017_drop_ip. After a merge, renumber if needed, then run snapshot
+```
+
+`snapshot` records the merged models with no new migration. If the merged models need a migration of their own, `diff` writes it after that.
+
+## Avoid collisions with timestamps
+
+`Config.Name = migrate.Timestamped` names files with the time, so two branches rarely pick the same number.
 
 ```go
 package main
@@ -38,7 +60,12 @@ Long histories can be squashed. `squash` replaces every file with a single basel
 go run ./cmd/migrate squash
 ```
 
-The new file starts with `-- ant:replaces 0040`. A database that already has those migrations records it without running it, and a new database simply runs it, so no environment needs a special step. A database that hasn't reached `0040` yet is refused, and has to catch up from an older release first.
+```text
+Wrote migrations/versions/0003_baseline.up.sql, replacing 2 migrations through 0002.
+Warning: a squash keeps what the models describe. Anything written by hand, such as extensions, types, triggers, or data, is gone from this file. Add it back, or squash with --keep to join the old files instead.
+```
+
+The new file starts with `-- ant:replaces 0002`. A database that already has those migrations records it without running it, and a new database runs it, so no environment needs a special step. A database that hasn't reached `0002` yet is refused, and has to catch up from an older release first.
 
 :::warning[What a squash loses]
 

@@ -1,13 +1,13 @@
 ---
 title: Concepts
-description: The five ideas ant is built on, and what the compiler cannot catch.
+description: The five ideas ant is built on, and the mistakes the compiler cannot catch.
 ---
 
-Almost everything in ant comes back to five ideas. Once they click, the rest of the API reads like plain English.
+Five ideas cover most of the API. Read this page first, then the rest of the docs will make sense.
 
 ## Models are plain structs
 
-There's no base type you have to embed, no generated code, and no schema file. A struct maps to a table, its fields map to columns, and the field names decide the column names. Most of the time, that's all the configuration you'll write.
+A struct maps to a table, its fields map to columns, and the field names decide the column names. There is no base type to embed, no generated code, and no schema file.
 
 ```go
 // spot-start
@@ -24,9 +24,11 @@ type LibraryDB struct {
 }
 ```
 
+`Book` is the table `books`, with `id` as its generated primary key. See [defining models](/models/defining-models) for names and overrides.
+
 ## A probe names a column
 
-`ant.Fields[T]()` gives you a `*T` that never holds any data. It's there so that `&B.Pages` is a pointer ant can recognise. The compiler sees a `*int`, so whatever you compare it with has to be an `int`.
+`ant.Fields[T]()` returns a `*T` that never holds data. `&B.Pages` is then a pointer ant can recognise as the `pages` column, and the compiler sees a `*int`, so whatever you compare it with has to be an `int`.
 
 ```go
 var B = ant.Fields[Book]()
@@ -35,13 +37,14 @@ books, err := db.Books.
 	// spot-next-line
 	Where(ant.Gt(&B.Pages, 100)).
 	All(ctx)
+// SELECT ... FROM "books" WHERE "books"."pages" > $1
 ```
 
-There's more on this in [field probes](/models/field-probes).
+See [field probes](/models/field-probes).
 
 ## The context is your database
 
-You declare a struct with an `ant.Table[T]` for each model, and `ant.Open` fills it in. Tables, transactions, and sessions all hand you back that same typed struct, so `db.Users` works the same everywhere.
+Declare a struct with an `ant.Table[T]` for each model. `ant.Open` fills it in. Tables, transactions and sessions hand you back the same struct type, so `db.Users` works the same everywhere.
 
 ```go
 type AppDB struct {
@@ -54,9 +57,11 @@ type AppDB struct {
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
 ```
 
+`Open` reads every model, so a model that can't be mapped fails here, at startup.
+
 ## Errors arrive at the last call
 
-Builder methods like `Where` and `OrderBy` never return an error, which keeps chains readable. Mistakes are collected along the way, and the call that actually runs the query hands them back. That call always takes a `context.Context` first.
+Builder methods such as `Where` and `OrderBy` never return an error. ant collects mistakes along the way, and the call that runs the query returns them. That call always takes a `context.Context` first.
 
 ```go
 query := db.Users.
@@ -65,13 +70,14 @@ query := db.Users.
 
 // spot-next-line
 users, err := query.All(ctx) // runs here, and fails here
+// SELECT ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users"."name"
 ```
 
-`All`, `First`, `Single`, `Find`, `Count`, `Exists`, `Each`, `Insert`, `Update`, `Delete`, `Exec`, and `SaveChanges` are the calls that run something. Everything before them just describes the query.
+These calls run something: `All`, `First`, `Single`, `Find`, `Count`, `Exists`, `Each`, `Insert`, `Update`, `Delete`, `Exec` and `SaveChanges`. Everything before them describes the query.
 
 ## Nothing happens behind your back
 
-Reading a field never runs a query. A relation you didn't load stays `nil`, and one you loaded that has no rows is an empty slice, so you can always tell the two apart. Loading is something you ask for, and it's always batched.
+Reading a field never runs a query. A relation you didn't load stays `nil`. A relation you loaded that has no rows is an empty slice, so you can tell the two apart. Loading is always requested, and always batched: one extra query per relation, however many parents.
 
 ```go
 user, err := db.Users.Find(ctx, id)
@@ -81,16 +87,18 @@ fmt.Println(user.Posts == nil) // true: not loaded, and no query ran
 
 // spot-start
 user, err = db.Users.Include(&U.Posts).Find(ctx, id)
+// SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
+// SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1)
 
 fmt.Println(user.Posts == nil) // false: loaded, even if there are none
 // spot-end
 ```
 
-Writing is just as explicit: nothing is saved until you call `SaveChanges`.
+Writing is explicit too. Changes to tracked entities are saved only when you call `SaveChanges`.
 
 ## What the compiler cannot catch
 
-Generics catch a lot, but not everything. These mistakes compile, and ant reports them when the query runs. [antvet](/tooling/antvet) catches them before you run anything at all.
+Generics catch most mistakes. These compile, and ant returns an error when the query runs. [antvet](/tooling/antvet) finds them before that.
 
 | Mistake | Example | Error |
 | --- | --- | --- |

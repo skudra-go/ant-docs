@@ -1,13 +1,13 @@
 ---
 title: Quick start
-description: From an empty folder to a saved row with ant and PostgreSQL.
+description: A small program that creates two tables, saves a user with posts, queries them, and updates a row on PostgreSQL.
 ---
 
-Let's go from an empty folder to a saved row on PostgreSQL. You'll need Go 1.27 or later, and Docker for the database.
+This page builds a small program against PostgreSQL. It creates two tables, saves a user with two posts, loads them back and updates one column. The data stays in the database, so you can run it as often as you like and look at the rows afterwards. You need Go 1.27 or later, and Docker for the database.
 
 ## Set up
 
-Make a module, then add ant and a PostgreSQL driver to it:
+Create a module and add ant and a PostgreSQL driver:
 
 ```bash
 mkdir hello && cd hello
@@ -15,18 +15,16 @@ go mod init example.com/hello
 go get github.com/skudra-go/ant github.com/jackc/pgx/v5/stdlib
 ```
 
-ant sits on top of `database/sql`, so the driver is your choice. For PostgreSQL, that's `pgx`.
+ant runs on top of `database/sql`, so you pick the driver. For PostgreSQL that's `pgx`.
 
-Then start a database:
+Start a database:
 
 ```bash
 docker run -d --name hello-db -p 127.0.0.1:5432:5432 \
   -e POSTGRES_PASSWORD=hello postgres:17
 ```
 
-## Write the program
-
-Here's all of `main.go`. Every line that touches ant is lit, and the rest is everyday Go.
+## The program
 
 ```go title="main.go"
 package main
@@ -38,19 +36,17 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	// spot-start
 	"github.com/skudra-go/ant"
 	"github.com/skudra-go/ant/dialect/postgres"
-	// spot-end
 )
 
 // spot-start
 type User struct {
-	ant.Base
-	Name  string
-	Email string `ant:"unique"`
-	Age   int
-	Posts []Post
+	ant.Base // ID, CreatedAt, UpdatedAt
+	Name     string
+	Email    string `ant:"unique"`
+	Age      int
+	Posts    []Post // found through Post.UserID
 }
 
 type Post struct {
@@ -78,43 +74,50 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// spot-next-line
 	defer db.Close()
 
-	// Just for this first run. Real projects use migrations.
+	// Creates the tables if they're missing. Real projects use migrations.
 	// spot-next-line
 	if err := db.EnsureCreated(ctx); err != nil {
 		log.Fatal(err)
 	}
 
+	// Insert Alice and her posts on the first run, and find her on later ones.
 	// spot-start
-	alice := &User{
+	alice, created, err := db.Users.FirstOrCreate(ctx, &User{
 		Name:  "Alice",
 		Email: "alice@example.com",
 		Age:   30,
 		Posts: []Post{{Title: "Hello"}, {Title: "Second post"}},
-	}
-
-	err = db.Users.Insert(ctx, alice)
+	}, ant.Eq(&U.Email, "alice@example.com"))
 	// spot-end
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	if created {
+		fmt.Println("Created", alice.Name)
+	}
+
+	// Load every adult with their posts.
 	// spot-start
 	adults, err := db.Users.
-		Where(ant.Gt(&U.Age, 18)).
+		Where(ant.Gte(&U.Age, 18)).
 		Include(&U.Posts).
+		OrderBy(&U.Name).
 		All(ctx)
 		// spot-end
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println(adults[0].Name, "has", len(adults[0].Posts), "posts")
+	for _, u := range adults {
+		fmt.Printf("%s is %d and has %d posts\n", u.Name, u.Age, len(u.Posts))
+	}
 
+	// Change a loaded user and save.
 	// spot-start
-	adults[0].Age = 31
+	adults[0].Age++
 
 	err = db.SaveChanges(ctx)
 	// spot-end
@@ -122,19 +125,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// spot-next-line
-	stored, err := db.Users.NoTracking().Find(ctx, alice.ID)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(stored.Name, "is now", stored.Age)
-
-	// Clean up, so you can run this again.
-	// spot-next-line
-	if err := db.EnsureDeleted(ctx); err != nil {
-		log.Fatal(err)
-	}
+	fmt.Println("Happy birthday,", adults[0].Name)
 }
 ```
 
@@ -146,27 +137,81 @@ go run .
 ```
 
 ```text
-Alice has 2 posts
-Alice is now 31
+Created Alice
+Alice is 30 and has 2 posts
+Happy birthday, Alice
 ```
 
-## What just happened
+Run it again. Alice already exists, so nothing is inserted, and she's a year older because the last run saved her new age:
 
-1. **`User` and `Post` are ordinary structs.** `ant.Base` gives each one `ID`, `CreatedAt`, and `UpdatedAt`. The `Posts` field is a relation, and ant finds it through `Post.UserID` by name.
-2. **`AppDB` is your database, as a Go type.** `ant.Open` fills in every table on it.
-3. **`U` is a field probe.** `&U.Age` stands for the `age` column, and the compiler checks whatever you compare it with.
-4. **`Insert` saved the whole graph.** Alice went in first, then her posts with `UserID` already filled in, and every new key landed back on the structs.
-5. **`Include` ran a single extra query** to fetch all the posts at once.
-6. **`SaveChanges` wrote one column.** ant compared Alice with what it had loaded, saw only `Age` had changed, and sent just this:
+```text
+Alice is 31 and has 2 posts
+Happy birthday, Alice
+```
+
+The rows are in the database:
+
+```bash
+docker exec hello-db psql -U postgres -c 'SELECT id, name, age FROM users'
+```
+
+```text
+ id | name  | age
+----+-------+-----
+  1 | Alice |  32
+```
+
+## What each step sent
+
+**`EnsureCreated`** created the tables from the structs, because they didn't exist yet. On later runs it finds them and does nothing. It's meant for tests and prototypes; use [migrations](/migrations/overview) for a real schema.
+
+```sql
+CREATE TABLE "users" (
+    "id" bigint GENERATED BY DEFAULT AS IDENTITY,
+    "created_at" timestamptz NOT NULL,
+    "updated_at" timestamptz NOT NULL,
+    "name" text NOT NULL,
+    "email" text NOT NULL,
+    "age" bigint NOT NULL,
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "users_email_key" UNIQUE ("email")
+)
+-- and "posts", an index on "posts"."user_id", and its foreign key
+```
+
+**`FirstOrCreate`** looked for a user with that email. On the first run there was none, so it inserted Alice, then both posts in one statement with `user_id` filled in from her new key:
+
+```sql
+SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2
+INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age") VALUES ($1, $2, $3, $4, $5) RETURNING "id"
+INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title") VALUES ($1, $2, $3, $4), ($5, $6, $7, $8) RETURNING "id"
+```
+
+**`Include`** loaded the posts of every user in one extra query, however many users there are:
+
+```sql
+SELECT ... FROM "users" WHERE "users"."age" >= $1 ORDER BY "users"."name"
+SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1)
+```
+
+**`SaveChanges`** compared Alice with the copy ant kept when it loaded her, found that only `Age` changed, and wrote that column and the timestamp:
 
 ```sql
 UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
-`NoTracking().Find` reads straight from the database, past anything ant has in memory, which is how you can see that the change really landed.
+`&U.Age` in `Where` is a [field probe](/models/field-probes): a pointer to the `Age` field that stands for the `age` column. Misspell it, or compare it with a string, and the program doesn't compile.
+
+## Start over
+
+To delete the database and its data:
+
+```bash
+docker rm -f hello-db
+```
 
 ## Next
 
-- [Concepts](/concepts): the handful of ideas behind everything above.
-- [Migrations](/migrations/overview): swap `EnsureCreated` for SQL files you review.
-- [Example projects](https://github.com/skudra-go/ant-examples): a blog API, an audit service, and a ledger.
+- [Concepts](/concepts): the ideas behind the program above.
+- [Migrations](/migrations/overview): replace `EnsureCreated` with SQL files you review.
+- [Example projects](https://github.com/skudra-go/ant-examples): a blog API, an audit service and a ledger.

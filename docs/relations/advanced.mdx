@@ -1,13 +1,13 @@
 ---
 title: Advanced relations
-description: Through relations, polymorphism, scoped relations, and more.
+description: Through relations, polymorphic relations, scoped relations, latest-of-many, inverses, and touching a parent.
 ---
 
-These are the less common shapes a relation can take, each one configured in a single line.
+These are the less common shapes a relation can take. Each is configured in a line or two.
 
-## Through another table
+## Reach across a table in the middle
 
-`HasManyThrough` reaches across a table in the middle: a country's articles, by way of its members. It loads like any other relation, but it's never written, since those rows belong to the models in the middle.
+`HasManyThrough` reaches across a table in the middle: a country's articles, by way of its members. `HasOneThrough` does the same for one row. They load like any other relation, but they're never written, since those rows belong to the models in the middle.
 
 ```go
 type Country struct {
@@ -42,6 +42,20 @@ var (
 )
 
 countries, err := db.Countries.Include(&Cn.Articles).All(ctx)
+// SELECT ... FROM "countries"
+// SELECT "country_id", "id" FROM "members" WHERE "country_id" IN ($1)
+// SELECT ... FROM "articles" WHERE "articles"."member_id" IN ($1)
+```
+
+`Has` and counts work through the middle table as well:
+
+```go
+// spot-next-line
+withArticles, err := db.Countries.Where(ant.Has(&Cn.Articles)).All(ctx)
+// SELECT ... FROM "countries" WHERE EXISTS (
+//   SELECT 1 FROM "articles" AS "ant_related"
+//   JOIN "members" AS "ant_related_pivot" ON "ant_related_pivot"."id" = "ant_related"."member_id"
+//   WHERE "ant_related_pivot"."country_id" = "countries"."id")
 ```
 
 {/*
@@ -49,6 +63,7 @@ countries, err := db.Countries.Include(&Cn.Articles).All(ctx)
 type PageDB struct {
 	ant.Context
 	Countries ant.Table[Country]
+	Essays    ant.Table[Essay]
 	Comments  ant.Table[Comment]
 	Novelists ant.Table[Novelist]
 	Answers   ant.Table[Answer]
@@ -56,9 +71,9 @@ type PageDB struct {
 ```
 */}
 
-## Polymorphic relations
+## Share a table between several owners
 
-One foreign key for several tables, plus a second column saying which table. Essay 1 and Video 1 share a key, and each still sees only its own comments. Saving through the relation sets the type column for you.
+A polymorphic relation uses one foreign key for several tables, plus a second column saying which table. Use it for comments, tags, or attachments that can belong to an essay or a video. Essay 1 and Video 1 can share a key, and each still sees only its own comments. Saving through the relation sets the type column for you.
 
 ```go
 type Comment struct {
@@ -92,17 +107,32 @@ type Video struct {
 	Comments []Comment
 }
 
+func (Video) Configure(b *ant.ModelBuilder[Video]) {
+	// spot-next-line
+	b.HasMany(&Vd.Comments).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "video")
+}
+
 var (
 	Cm = ant.Fields[Comment]()
 	Es = ant.Fields[Essay]()
+	Vd = ant.Fields[Video]()
 )
+```
+
+Both sides of each relation need the same `.Morph`, or the relation is read with the wrong type. The query filters on the type:
+
+```go
+essays, err := db.Essays.Include(&Es.Comments).All(ctx)
+// SELECT ... FROM "essays"
+// SELECT ... FROM "comments" WHERE "comments"."owner_type" = $1 AND "comments"."owner_id" IN ($2)
+// $1 = 'essay'
 ```
 
 What's stored is the value you give `.Morph`, so renaming a Go type can't change your data. Migrations write no foreign key here, since one column can't point at several tables.
 
 ## Scoped relations and latest of many
 
-A relation can carry a condition, or pick one row per parent.
+A relation can carry a condition, or pick one row per parent. `Live` below is a "published novels" relation. `Newest` is the single most recent novel, which is how to show "last order" or "current address" next to a list.
 
 ```go
 type Novelist struct {
@@ -133,9 +163,19 @@ var (
 )
 ```
 
-Counts and `Has` follow the scope. `.Oldest` is the opposite of `.Latest`.
+```go
+novelists, err := db.Novelists.Include(&Nv.Live).IncludeOne(&Nv.Newest).All(ctx)
+// SELECT ... FROM "novelists"
+// SELECT ... FROM "novels" WHERE "novels"."published" = $1 AND "novels"."novelist_id" IN ($2)
+// SELECT * FROM (
+//   SELECT ..., ROW_NUMBER() OVER (PARTITION BY "novels"."novelist_id" ORDER BY "novels"."year" DESC) AS "ant_row"
+//   FROM "novels" WHERE "novels"."novelist_id" IN ($1)
+// ) AS "ant_partition" WHERE "ant_partition"."ant_row" > $2 AND "ant_partition"."ant_row" <= $3
+```
 
-## Filling the way back
+Counts, `Has` and joins follow the scope. `.Oldest` is the opposite of `.Latest`. For a one-off filter that isn't part of the model, use a [shaped `Include`](/relations/loading#filter-and-order-what-loads) instead.
+
+## Fill the way back
 
 `Inverse` points each child at its parent, with no query.
 
@@ -150,7 +190,7 @@ After `Include(&Nv.Novels)`, `novels[0].Novelist` is the same instance as its pa
 
 ## Touching the parent
 
-`Touch` moves a parent's `UpdatedAt` when a child is written.
+`Touch` moves a parent's `UpdatedAt` when a child is written. Use it when a cache or a "last activity" list reads the parent's timestamp.
 
 ```go
 type Answer struct {
@@ -170,6 +210,12 @@ type Discussion struct {
 }
 
 var An = ant.Fields[Answer]()
+```
+
+Saving an answer then also runs:
+
+```go
+// UPDATE "discussions" SET "updated_at" = $1 WHERE "discussions"."id" = $2
 ```
 
 <Tests path="relations/advanced_test.go" />

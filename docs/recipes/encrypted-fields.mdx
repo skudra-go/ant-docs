@@ -1,11 +1,26 @@
 ---
 title: Encrypted fields
-description: Values stored with AES-256-GCM, so a dump reveals nothing.
+description: Store values with AES-256-GCM so a database dump reveals nothing.
 ---
 
-`secure.Value[T]` stores a value encrypted with AES-256-GCM, so a database dump or a stolen backup gives nothing away.
+`secure.Value[T]` stores a value encrypted with AES-256-GCM, so a database dump or a stolen backup gives nothing away. The column is `text`, and the value in it reads `key:base64(nonce+ciphertext)`.
 
-## Storing a value
+{/*
+```go
+var key []byte
+
+var ssn string
+
+type PatientDB struct {
+	ant.Context
+	Patients ant.Table[Patient]
+}
+```
+*/}
+
+## Store a value
+
+Set the keys once at startup. A key is 32 bytes, and its name is stored with every value, so keep names stable and free of colons. `SetKeys` returns an error for a key of the wrong size.
 
 ```go
 type Patient struct {
@@ -15,58 +30,32 @@ type Patient struct {
 }
 
 // spot-next-line
-err := secure.SetKeys("2026", map[string][]byte{"2026": key}) // 32 bytes, at startup
+err := secure.SetKeys("2026", map[string][]byte{"2026": key})
 
-// spot-next-line
 patient := &Patient{SSN: secure.New("123-45-6789")}
 
 err = db.Patients.Insert(ctx, patient)
+// INSERT INTO "patients" ("ssn") VALUES ($1) RETURNING "id"
+// -- $1 = '2026:<base64>'
 
 loaded, err := db.Patients.Find(ctx, patient.ID)
 
-fmt.Println(loaded.SSN.V)
+fmt.Println(loaded.SSN.V) // 123-45-6789
 ```
 
-{/*
-```go
-var key []byte
+The value can't leak by accident: `fmt` and JSON both print `[encrypted]`, and you read `.V` when you need it. `ant.LogValues` logs the SQL arguments, so add `.Sensitive()` to the column to keep them out of logs (see [security](/reference/security#logs-and-errors)).
 
-type PatientDB struct {
-	ant.Context
-	Patients ant.Table[Patient]
-}
-```
-*/}
+### What can go inside
 
-The value can't leak by accident: `fmt` and JSON both print `[encrypted]`, and you read `.V` when you actually need it. Add `.Sensitive()` too, so `ant.LogValues` keeps it out of logs.
+`T` can be any type `encoding/json` handles, such as a struct or a slice, and it is sealed as JSON. A NULL column reads as the zero `T`.
 
-## Rotating keys
+`secure.Value` refuses text that isn't valid UTF-8, as a text column does. `encoding/json` would store U+FFFD in its place, which would change the value without a word, so the write fails instead. To store arbitrary bytes, encode them first with `base64` or `hex`.
 
-Add a new key and make it the active one. Old rows still read with the old key, because each value records which key it used, and every new write uses the new one.
+Without `SetKeys`, reads and writes return `secure.ErrNoKeys`.
 
-```go
-// spot-next-line
-err := secure.SetKeys("2027", map[string][]byte{"2027": newKey, "2026": oldKey})
-```
+## Search by a value
 
-{/*
-```go
-var (
-	newKey []byte
-	oldKey []byte
-)
-```
-*/}
-
-To finish, load and save the rows that still use the old key, then drop it. [`ChunkByKey`](/queries/ordering-and-paging#chunks) suits this, and this SQL finds what is left:
-
-```sql
-SELECT count(*) FROM patients WHERE ssn NOT LIKE '2027:%';
-```
-
-## Searching
-
-A value encrypts differently every time, so `ant.Eq` can't find it, and an index is no help. To look rows up, store a keyed hash beside it. Keep the hash as text, since `ant.Eq` needs a comparable type and `[]byte` isn't one.
+A value encrypts differently every time, so `ant.Eq` can't find it and an index is no help. To look rows up, store a keyed hash beside it. Keep the hash as a string, since `ant.Eq` needs a comparable type and `[]byte` isn't one.
 
 ```go
 type Patient struct {
@@ -85,24 +74,71 @@ func blindIndex(value string) string {
 
 var P = ant.Fields[Patient]()
 
+patient := &Patient{SSN: secure.New(ssn), SSNHash: blindIndex(ssn)}
+
+err := db.Patients.Insert(ctx, patient)
+
 // spot-next-line
-patient, err := db.Patients.Where(ant.Eq(&P.SSNHash, blindIndex(ssn))).First(ctx)
+found, err := db.Patients.Where(ant.Eq(&P.SSNHash, blindIndex(ssn))).First(ctx)
+// SELECT ... FROM "patients" WHERE "patients"."ssn_hash" = $1 LIMIT $2
 ```
 
 {/*
 ```go
 var hashKey []byte
-
-var ssn string
 ```
 */}
 
-The hash needs its own key. It reveals when two rows hold the same value, so use it only where that is acceptable.
+The hash needs its own key. It reveals when two rows hold the same value, so use it only where that is acceptable. Update the hash whenever you change the value.
+
+## Rotate keys
+
+Add a new key and make it the active one. Old rows still read with the old key, because each value records which key it used, and every new write uses the new one.
+
+```go
+// spot-next-line
+err := secure.SetKeys("2027", map[string][]byte{"2027": newKey, "2026": oldKey})
+```
+
+{/*
+```go
+var (
+	newKey []byte
+	oldKey []byte
+)
+```
+*/}
+
+To finish, rewrite the rows that still use the old key, then drop it. A row whose key is gone fails to read with `secure.ErrUnknownKey`, so check that none is left first. `MarkModified` makes `SaveChanges` write the row even though the plaintext didn't change, and [`ChunkByKey`](/queries/ordering-and-paging#chunks) keeps its place while the callback changes the rows it reads:
+
+```go
+old := ant.SQLCond("ssn NOT LIKE ?", "2027:%")
+
+err := db.Patients.Where(old).ChunkByKey(ctx, 500, func(batch []*Patient) error {
+	for _, p := range batch {
+		if err := ant.MarkModified(ctx, db, p); err != nil {
+			return err
+		}
+	}
+
+	return db.SaveChanges(ctx)
+})
+// SELECT ... FROM "patients" WHERE (ssn NOT LIKE $1) ORDER BY "patients"."id" LIMIT $2
+// UPDATE "patients" SET "ssn" = $1, "ssn_hash" = $2 WHERE "patients"."id" = $3
+```
+
+To count what is left, use the same condition:
+
+```go
+left, err := db.Patients.Where(ant.SQLCond("ssn NOT LIKE ?", "2027:%")).Count(ctx)
+```
+
+`secure.NeedsRotation(stored)` does the same check on one stored string.
 
 ## Limits
 
 - A value isn't tied to its row, so someone who can write to the table can copy a ciphertext from one row to another.
-- Keys live in the process. Keep them in a secret store, and never in the repository.
+- Keys live in the process. Keep them in a secret store, never in the repository.
 - GCM with random nonces is safe for about four billion values per key. Rotate before then.
 - It protects data at rest. It doesn't protect against an application that is itself compromised.
 

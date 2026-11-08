@@ -1,9 +1,9 @@
 ---
 title: Databases
-description: What each of the five databases supports, and how they differ.
+description: What each of the five supported databases can do, and where they differ.
 ---
 
-ant runs on five databases. PostgreSQL gets everything. The others run queries, writes, relations, change tracking, and transactions, but don't have migrations yet.
+ant runs on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. PostgreSQL has everything. The others run queries, writes, relations, change tracking and transactions, but have no migrations yet.
 
 ## Support
 
@@ -14,8 +14,9 @@ ant runs on five databases. PostgreSQL gets everything. The others run queries, 
 | Driver name | `pgx` | `mysql` | `mysql` | `sqlite` | `sqlserver` |
 | Queries, relations, tracking, transactions | Yes | Yes | Yes | Yes | Yes |
 | Migrations, `EnsureCreated`, `SchemaOf` | Yes | No | No | No | No |
-| Whole feature suite | Yes | No | No | No | No |
+| Whole feature suite (`tests/features`) | Yes | No | No | No | No |
 | Conformance suite | Yes | Yes | Yes | Yes | Yes |
+| Concurrency suite (`tests/concurrency`) | Yes | Yes | Yes | Yes | Yes |
 | Upsert | Yes | Yes | Yes | Yes | No |
 | `MERGE` | From 15 | No | No | No | Yes |
 | Row locks | Yes | Yes | `ForUpdate` only | No | No |
@@ -25,13 +26,14 @@ ant runs on five databases. PostgreSQL gets everything. The others run queries, 
 | `DeleteReturning`, `Toggle` | Yes | No | Yes | Yes | Yes |
 | `Today` | Yes | Yes | Yes | No | No |
 | `DatePart` | Yes | No | No | No | No |
+| `WITH` in a subquery, as in `Update` or `Delete` after `FromCTE` or `Recursive` | Yes | Yes | Yes | Yes | No |
 | `ILike`, `FILTER`, `NULLS FIRST` | Native | Emulated | Emulated | `ILike` emulated | Emulated |
 
-Only PostgreSQL runs the full feature suite, whose tables are written in its own DDL. The conformance suite covers what each dialect writes differently, on every database, but it's smaller, so expect a few rough edges off PostgreSQL that nobody has hit yet.
+Only PostgreSQL runs the whole feature suite, because its tables are written in PostgreSQL's DDL. The conformance suite covers what the dialects write differently, on every database, but it is smaller. Expect a few rough edges off PostgreSQL that nobody has hit yet.
 
-## When something is missing
+## Check for a missing feature
 
-ant refuses before it sends any SQL, so the error tells you what's missing. To check ahead of time, ask the dialect.
+ant refuses before it sends any SQL, and the error wraps `ant.ErrUnsupported`.
 
 ```go
 _, err := db.Users.Where(ant.Eq(&U.ID, id)).DeleteReturning(ctx)
@@ -40,15 +42,20 @@ _, err := db.Users.Where(ant.Eq(&U.ID, id)).DeleteReturning(ctx)
 if errors.Is(err, ant.ErrUnsupported) {
 	log.Println("not on this database")
 }
+```
 
-// spot-start
+To check before building the query, ask the dialect:
+
+```go
+// spot-next-line
 if dialect.Supports(db.Dialect(), dialect.Merge) {
 	log.Println("MERGE is available")
 }
-// spot-end
 ```
 
-## Drivers
+Error helpers mean the same on every database. `ant.IsUniqueViolation` works on all five, because each dialect translates its own error numbers.
+
+## Import a driver
 
 Import a driver in your application. ant doesn't choose one for you, with one exception: `dialect/mysql` imports `go-sql-driver/mysql`, because it has no other way to read the driver's error numbers.
 
@@ -59,26 +66,120 @@ import _ "modernc.org/sqlite"              // SQLite
 import _ "github.com/microsoft/go-mssqldb" // SQL Server
 ```
 
-Use `parseTime=true` in a MySQL DSN, or times come back as bytes. Use `_pragma=foreign_keys(1)` in a SQLite DSN, or foreign keys aren't enforced.
+Set these in the DSN:
 
-## What differs
+| Database | Setting | Without it |
+| --- | --- | --- |
+| MySQL, MariaDB | `parseTime=true` | Times come back as bytes |
+| SQLite | `_pragma=foreign_keys(1)` | Foreign keys aren't enforced |
+| SQLite | `_pragma=busy_timeout(5000)&_txlock=immediate` | A second writer fails at once. See [writers at once](#sqlite-writers-at-once) |
 
-**Generated keys.** MySQL has no `RETURNING`, so a key comes from `LastInsertId`, and other database-filled columns are read back with a second query. Rows with generated keys go in one at a time there, in both `SaveChanges` and `InsertMany`.
+## Generated keys
 
-**`ON DUPLICATE KEY` on MySQL and MariaDB.** It has no target: any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns, and reports that it wrote nothing. Name the only unique key that can collide.
+MySQL has no `RETURNING`, so a key comes from `LastInsertId`, and other database-filled columns are read back with a second query. Rows with generated keys go in one at a time there, in both `SaveChanges` and `InsertMany`.
 
-**`OUTPUT` on SQL Server.** SQL Server refuses it on a table with triggers, so a model that needs a key back can't be inserted into one.
+SQL Server reads a key back with `OUTPUT`, which it refuses on a table with triggers. A model that needs a key back can't be inserted into such a table.
 
-**Upserts on SQL Server.** There's no `ON CONFLICT`. Use `ant.Merge`.
+## Upsert on MySQL and MariaDB
 
-**Paging on SQL Server.** `OFFSET ... FETCH` needs an `ORDER BY`, so ant adds a meaningless one if the query has none. SQL Server refuses a `Limit` of zero.
+`ON DUPLICATE KEY UPDATE` has no target. Any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns and reports that it wrote nothing. Name the only unique key that can collide.
 
-**Times.** SQLite stores times as text, and SQL Server's `DATETIME2` has no zone, so ant binds UTC on both to keep one clock. MySQL's driver does the same. `ant.Past` and `ant.Future` compare with the server's own clock, so run the server in UTC. On SQLite and MySQL, `CURRENT_TIMESTAMP` has whole seconds.
+It takes no condition either. An `Upsert` of a copy that carries a version still checks it: each assignment keeps the stored value unless the version matches, and a copy that is out of date changes nothing and returns `ErrConcurrency`. This reads the affected-row count, so leave the driver's `clientFoundRows` off, as it is by default.
 
-**Parameters.** Limits differ: 65,535 on PostgreSQL and MySQL, 32,766 on SQLite, and about 2,100 on SQL Server, where ant stays at 2,000. `InsertMany`, `SaveChanges`, and `Include` split their work to fit. Your own `In` with a long list doesn't.
+## Upsert on SQL Server
 
-**Types.** `postgres.Array`, `postgres.JSONSet`, `postgres.Vector`, and the rest of `dialect/postgres` need PostgreSQL. `Collate` quotes its name, which SQL Server doesn't accept.
+There is no `ON CONFLICT`. Use `ant.Merge`, which ant writes with `WITH (HOLDLOCK)` there. Without it, two `MERGE` statements at once can both find no row and both insert it.
 
-## Adding a dialect
+## MERGE at once on PostgreSQL
+
+PostgreSQL's documentation says a `MERGE` that inserts a row another `MERGE` inserted in the meantime fails with a unique violation, which the application retries. `Upsert` has no such failure on PostgreSQL.
+
+## Writes that read their own table on MySQL
+
+MySQL refuses an `UPDATE` or `DELETE` whose subquery reads the table being written (error 1093). ant wraps such a subquery in a derived table, which MySQL reads first.
+
+- A subquery whose columns share a name, or are expressions, needs MySQL 8.0.19 or later, for the derived table's column list.
+- A correlated subquery needs 8.0.14.
+- An upsert's `Set` that reads its own table is refused even through a derived table, so ant writes the rows as `INSERT ... SELECT`, which MySQL allows. A `SELECT` has no `DEFAULT`, so `InsertMany` with such a `Set` and a column left to its default is refused with `ErrUnsupported`.
+
+## Retry deadlocks and conflicts
+
+`ant.IsRetryable`, and so `ant.Attempts`, accept the failures that a second run can get past:
+
+| Database | Retried |
+| --- | --- |
+| PostgreSQL | `40001` (serialization failure), `40P01` (deadlock) |
+| MySQL, MariaDB | Deadlocks |
+| MariaDB | Error 1020. From 11.6 it rolls a transaction back when a row the transaction read changed since its snapshot |
+| SQL Server | Deadlocks |
+| SQLite | A busy database |
+
+## SQLite: writers at once
+
+SQLite has one writer at a time. A second connection that writes fails at once with "database is locked" unless the DSN makes it wait. A transaction that reads and then writes can fail even then, unless it takes the write lock when it begins.
+
+```go
+dsn := "file:app.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
+```
+
+`PRAGMA journal_mode=WAL` lets readers go on while one connection writes. It stays with the file, so run it once at startup. Don't put it in the DSN, where every new connection would need the write lock to set it.
+
+## Paging on SQL Server
+
+`OFFSET ... FETCH` needs an `ORDER BY`, so ant adds a meaningless one if the query has none. SQL Server refuses a `Limit` of zero.
+
+## Recursive queries on SQL Server
+
+A recursive `WITH` there has no `RECURSIVE` keyword and joins its parts only with `UNION ALL`. That keeps a row each time it is reached and never ends a cycle. So ant makes each row carry the path of keys that reached it, doesn't follow a row already on its path, and returns one row per key, as `UNION` does elsewhere.
+
+The path also lets ant lift SQL Server's limit of 100 levels with `OPTION (MAXRECURSION 0)`. `Count` and `Exists` put the `WITH` at the start of their statement, the only place SQL Server takes one.
+
+## Long In lists
+
+A list of more values than one statement can take as parameters is sent on PostgreSQL as one array, `= ANY($1)`, when its values are plain and of one type. Elsewhere, and for a list of secrets or of mixed types, the driver refuses it. Use [`InSub`](/queries/subqueries-and-sets) or split the list.
+
+| Database | Parameters in one statement |
+| --- | --- |
+| PostgreSQL, MySQL, MariaDB | 65,535 |
+| SQLite | 32,766 |
+| SQL Server | About 2,100. ant stays at 2,000 |
+
+`InsertMany`, `SaveChanges` and `Include` split their work to fit. Your own `In` with a long list doesn't.
+
+## Values the drivers can't take
+
+These are limits of `database/sql` or of a driver, and ant doesn't work around them.
+
+- An `sql.Null[uint64]` above `math.MaxInt64` is refused by `database/sql`, though a bare `uint64` field is not.
+- `NULL` can't be read into a named `[]byte` type such as `json.RawMessage` or `net.IP`. Use a pointer to it for a column that allows `NULL`.
+- pgx hands an `INTERVAL` to `database/sql` as text, which doesn't convert to a `time.Duration`. Read it into `pgtype.Interval`, or store a number of microseconds.
+- `ant.JSON` and `secure.Value` refuse text that isn't valid UTF-8, as a text column does. `encoding/json` would otherwise store U+FFFD in its place.
+
+## Times
+
+SQLite stores times as text, and SQL Server's `DATETIME2` has no zone, so ant binds UTC on both to keep one clock. MySQL's driver does the same.
+
+The conversion applies to every shape a time can take:
+
+- `time.Time`, `*time.Time`, `sql.NullTime`, an `sql.Null` of a time, and a pointer to one
+- an interface that holds one
+- types built on them, such as `ant.DeletedAt`
+- arguments of raw queries, each element of an `IN` list included
+
+A `driver.Valuer` of your own is passed as it is, so have it return a time in UTC.
+
+`ant.Past` and `ant.Future` compare with the server's own clock, so run the server in UTC. On SQLite and MySQL, `CURRENT_TIMESTAMP` has whole seconds.
+
+## Types
+
+`postgres.Array`, `postgres.JSONSet`, `postgres.Vector` and the rest of `dialect/postgres` need PostgreSQL. `Collate` quotes its name, which SQL Server doesn't accept.
+
+## Rollbacks on SQL Server
+
+`go-mssqldb` v1.11.2 rolls a transaction back with the context it began with. If that context has ended, it leaves a goroutine reading the connection after the connection went back to the pool, where the next statement races it.
+
+ant avoids this for its own transactions (`Tx`, `Begin`, `SaveChanges`, `DryRun`). It begins them on a context that doesn't end, on a connection taken with yours, and rolls them back itself when yours ends. A transaction you begin yourself and pass to `UseTx` can meet the problem. On SQL Server, end it before its context does.
+
+## Add a dialect
 
 A dialect implements `dialect.Dialect`. Its `Render` calls `dialect.Render`, and its `Syntax` method lists what differs from PostgreSQL, so it states only its differences. `dialect.RegisterErrors` connects its error codes. Migrations are a separate interface, `schema.Dialect`. See `dialect/sqlite/sqlite.go`, which is about 70 lines.

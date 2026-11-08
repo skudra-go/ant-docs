@@ -1,37 +1,59 @@
 ---
 title: Bulk writes
-description: Write thousands of rows quickly, in few statements.
+description: InsertMany, UpdateMany, InsertFrom, Truncate, and PostgreSQL's COPY and batches.
 ---
 
-For large writes, these skip the model layer and go straight for speed.
+These calls skip the model layer for speed. They run no hooks, track nothing, and write relations only when you do it yourself.
 
-## InsertMany
+## Insert many rows
 
-`InsertMany` writes many rows in multi-row statements, inside one transaction, and tells you how many went in. Generated keys come back, except with a conflict clause, where some rows may be skipped. It ignores relations and doesn't track the rows.
+`InsertMany` writes rows in multi-row statements inside one transaction and returns how many went in. Use it for batch loads, such as an import file or a seed. Generated keys are copied back onto your structs.
 
 ```go
 // spot-next-line
 n, err := db.Users.InsertMany(ctx, users, ant.BatchSize(500))
+// INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...), ... RETURNING "id"
 ```
 
-It splits the work to fit the database's parameter limit, so a batch size bigger than one statement can hold still works. It's all or nothing, and keys are cleared if it fails.
+A batch holds 1,000 rows unless you set `ant.BatchSize`. ant also splits a batch to fit the database's [parameter limit](/reference/databases), so a size larger than one statement can take still works. The whole call is all or nothing, and the keys are cleared if it fails.
 
-## UpdateMany
+`InsertMany` ignores relation fields. To save a graph, use [`Insert`](/writing/insert#insert-a-whole-graph).
 
-`UpdateMany` writes a different value per row, for the columns you name. Fields you don't name are left alone.
+### Skip rows that already exist
+
+`ant.WithConflict` applies a [conflict clause](/writing/upsert-and-merge) to every row. With `DoNothing`, a re-run of the same import inserts only the rows that are new:
+
+```go
+// spot-next-line
+n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&U.Email).DoNothing()))
+// INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...) ON CONFLICT ("email") DO NOTHING
+```
+
+`n` counts the rows written. Skipped rows may leave their structs without a key, so keys are not copied back when a conflict clause is set.
+
+With `DoUpdate` or `Set`, existing rows are updated instead. A model with a version moves the version on for each row it updates, and `InsertMany` doesn't check it. See [upsert](/writing/upsert-and-merge#versioned-rows).
+
+On MySQL and MariaDB, rows with generated keys go in one statement each, since the key comes from `LastInsertId`. See [databases](/reference/databases).
+
+## Update many rows
+
+`UpdateMany` writes a different value per row, for the columns you name, one `UPDATE` per row in a single transaction. Other fields are left alone. Name each column once; naming one twice returns an error before anything runs.
 
 ```go
 alice.Age, bob.Age = 31, 18
 
 // spot-next-line
 n, err := db.Users.UpdateMany(ctx, []*User{alice, bob}, ant.F(&U.Age))
+// UPDATE "users" SET "age" = $1 WHERE "users"."id" = $2  -- once per row
 ```
 
-Tracked entities keep their snapshots, so prefer `SaveChanges` for them.
+Use it for values that come from your code, such as prices from a feed. When every row gets the same value or an expression, a [bulk `Update`](/writing/update-and-delete#update) is one statement.
 
-## InsertFrom
+Tracked entities keep their snapshots, so use `SaveChanges` for them.
 
-`InsertFrom` copies rows with one statement, in the database.
+## Copy rows inside the database
+
+`InsertFrom` copies rows with one `INSERT ... SELECT`, so the data never reaches your program. `ant.Into` maps a column to a source field, and `ant.IntoExpr` to an expression.
 
 ```go
 type Archive struct {
@@ -49,7 +71,12 @@ n, err := db.Archives.InsertFrom(ctx, ant.Project[Archive](
 	ant.IntoExpr(&A.Tag, ant.SQL[string]("'archived'")),
 ))
 // spot-end
+// INSERT INTO "archives" ("title", "tag")
+// SELECT "posts"."title" AS "title", 'archived' AS "tag"
+// FROM "posts" WHERE "posts"."published" = $1
 ```
+
+Mapping one column twice returns an error before anything runs.
 
 {/*
 ```go
@@ -62,9 +89,9 @@ type PageDB struct {
 ```
 */}
 
-## Truncate
+## Empty a table
 
-`Truncate` empties a table, faster than `Delete`. It fails on a table others still refer to, and it doesn't clear the tracker, so call `db.ClearTracked()` if you hold these rows.
+`Truncate` empties a table, faster than `Delete`. It fails on a table others still refer to. It doesn't clear the tracker, so call `db.ClearTracked(ctx)` if you hold these rows.
 
 ```go
 // spot-next-line
@@ -73,7 +100,7 @@ err := db.Posts.Truncate(ctx)
 
 ## COPY on PostgreSQL
 
-`pgxext.Copy` is the fast path for loading many rows, through PostgreSQL's `COPY`. Timestamps are filled in, and keys from the database don't come back. It needs the `pgx` driver.
+`pgxext.Copy` loads rows through PostgreSQL's `COPY`, the fastest way in for large files. Timestamps are filled in, but keys from the database don't come back. It needs the `pgx` driver.
 
 ```go
 // spot-next-line
@@ -82,7 +109,7 @@ n, err := pgxext.Copy(ctx, db, users)
 
 ## Batches in one round trip
 
-`pgxext.Batch` sends statements together, as one transaction, so a failure undoes all of them. `UpdateSQL` and `DeleteSQL` build a statement without running it.
+`pgxext.Batch` sends several statements together, as one transaction, so a failure undoes all of them. `UpdateSQL` and `DeleteSQL` build a statement without running it.
 
 ```go
 // spot-next-line

@@ -3,7 +3,7 @@ title: Hand-written changes
 description: Views, functions, data migrations, seeds, and statements outside a transaction.
 ---
 
-Some things your models can't express. Each section here is a home for one of them.
+The models can't express everything. This page covers where the rest goes.
 
 {/*
 ```go
@@ -22,12 +22,23 @@ type AppDB struct {
 ```
 */}
 
-## An empty migration
+## Write an empty migration
 
-`diff --empty` writes a blank file for extensions, types, triggers, or anything else. Your models and snapshot stay as they are, and if the models changed too, `snapshot` accepts them.
+`diff --empty` writes a blank file for extensions, types, triggers, or anything else the models can't express. The models and the snapshot stay as they are. If the models changed too, `snapshot` accepts them.
 
 ```bash
 go run ./cmd/migrate diff enable_citext --empty
+```
+
+```text
+Wrote migrations/versions/0018_enable_citext.up.sql
+```
+
+```sql title="migrations/versions/0018_enable_citext.up.sql"
+-- Written by hand. Plain SQL, run in one transaction.
+-- Add -- ant:no-transaction above for statements that cannot run in one.
+
+CREATE EXTENSION IF NOT EXISTS citext;
 ```
 
 ## Views and functions
@@ -64,7 +75,7 @@ Put it in a package that both `cmd/migrate` and any program calling `migrate.Up`
 
 ## Statements that refuse a transaction
 
-`-- ant:no-transaction` at the top of a file runs it without one, a statement at a time. `.Concurrently()` on an index adds it for you.
+`-- ant:no-transaction` at the top of a file runs it without one, a statement at a time. `diff` adds it for you when it writes `CREATE INDEX CONCURRENTLY`, and when a file adds an enum value that the same file then uses (see [generated SQL](/migrations/generated-sql#add-an-enum-value)).
 
 ```sql
 -- spot-next-line
@@ -72,7 +83,7 @@ Put it in a package that both `cmd/migrate` and any program calling `migrate.Up`
 CREATE INDEX CONCURRENTLY "posts_title_idx" ON "posts" ("title");
 ```
 
-If such a file fails partway, `up` stops until someone has looked: see [troubleshooting](/migrations/troubleshooting).
+If such a file fails partway, `up` stops until someone has looked: see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
 
 ## Seed data
 

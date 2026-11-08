@@ -797,6 +797,49 @@ pre,
 
 .hero-ant {
   padding: 2.4rem 0 1.4rem;
+  position: relative;
+}
+
+/* A small note in the hero's top corner, off the main text. */
+.hero-ant__aside {
+  animation: hero-aside-float 6s ease-in-out infinite;
+  color: var(--ant-ink-faint);
+  font-size: 0.8rem;
+  margin: 0;
+  max-width: 14em;
+  position: absolute;
+  right: 0;
+  text-align: right;
+  top: 3rem;
+  transform: rotate(-4deg);
+}
+
+@keyframes hero-aside-float {
+  0%,
+  100% {
+    transform: rotate(-4deg) translateY(0);
+  }
+
+  50% {
+    transform: rotate(-4deg) translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-ant__aside {
+    animation: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .hero-ant__aside {
+    margin-bottom: 0.6rem;
+    max-width: none;
+    position: static;
+    text-align: left;
+    transform: none;
+    animation: none;
+  }
 }
 
 .hero-ant__mark {
