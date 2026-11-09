@@ -35,12 +35,6 @@ export default function Hero() {
 
   return (
     <header className="hero-ant">
-      <p className="hero-ant__aside">
-        It's lavender because that's my favorite color.{' '}
-        <span role="img" aria-label="rolling eyes">
-          🙄
-        </span>
-      </p>
       <div className="hero-ant__mark">
         <AntMark watch size={96} />
       </div>

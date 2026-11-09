@@ -1,8 +1,8 @@
 // Code sits on one dark stage in both colour modes, so the spotlight reads the
-// same everywhere. Syntax colours stay quiet and lavender-leaning: the spotlight is
+// same everywhere. Syntax colours stay quiet and purple-leaning: the spotlight is
 // the loudest thing in a block, not the keywords.
-const ink = '#ece9f5';
-const faint = '#8b8499';
+const ink = '#e6eaf2';
+const faint = '#8590a3';
 const keyword = '#c4b5fd';
 const string = '#a7dcc6';
 const type = '#a5c4f7';
@@ -21,8 +21,8 @@ module.exports = {
     {types: ['number', 'boolean', 'constant', 'symbol'], style: {color: number}},
     {types: ['class-name', 'builtin', 'tag'], style: {color: type}},
     {types: ['function', 'attr-name'], style: {color: func}},
-    {types: ['operator', 'entity', 'url'], style: {color: '#d5cfe6'}},
-    {types: ['punctuation'], style: {color: '#a29bb5'}},
+    {types: ['operator', 'entity', 'url'], style: {color: '#cdd4e0'}},
+    {types: ['punctuation'], style: {color: '#9aa5b8'}},
     {types: ['deleted'], style: {color: '#f28ba8'}},
     {types: ['variable', 'parameter'], style: {color: ink}},
   ],

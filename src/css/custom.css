@@ -1,22 +1,22 @@
-/* ant's docs: lavender on violet-tinted black and white, set in Figtree. Code sits
+/* ant's docs: purple accents on cold near-black and cold white, set in Figtree. Code sits
    on a dark stage in both modes, so a spotlight can be a real light on it. */
 
 :root {
-  --ant-paper: #fbfafe;
-  --ant-raised: #f4f1fb;
-  --ant-ink: #15121e;
-  --ant-ink-soft: #4a4560;
-  --ant-ink-faint: #736d88;
-  --ant-heading: #3f355e;
-  --ant-line: #e3ddf2;
+  --ant-paper: #f8fafc;
+  --ant-raised: #f1f5f9;
+  --ant-ink: #0d1220;
+  --ant-ink-soft: #475569;
+  --ant-ink-faint: #64748b;
+  --ant-heading: #1e293b;
+  --ant-line: #e2e8f0;
   --ant-lavender: #b6a4f8;
   --ant-lavender-soft: #ece6fd;
   --ant-accent: #5b3fd0;
   --ant-rose: #c9335c;
 
-  --ant-stage: #15121e;
-  --ant-stage-raised: #1f1b2d;
-  --ant-stage-line: #2f2a44;
+  --ant-stage: #0d1220;
+  --ant-stage-raised: #161d2e;
+  --ant-stage-line: #273149;
   --ant-spot: #c4b5fd;
   --ant-pain: #ff7d9c;
   --ant-fix: #c4b5fd;
@@ -78,19 +78,19 @@
 }
 
 html[data-theme='dark'] {
-  --ant-paper: #0e0c14;
-  --ant-raised: #17141f;
-  --ant-ink: #ece9f5;
-  --ant-ink-soft: #b4adc6;
-  --ant-ink-faint: #8a8399;
-  --ant-heading: #ece9f5;
-  --ant-line: #2a2638;
+  --ant-paper: #0a0e17;
+  --ant-raised: #111827;
+  --ant-ink: #e6eaf2;
+  --ant-ink-soft: #a9b3c4;
+  --ant-ink-faint: #848ea0;
+  --ant-heading: #e6eaf2;
+  --ant-line: #1f2837;
   --ant-lavender-soft: #231e33;
   --ant-accent: #c4b5fd;
   --ant-rose: #ff7d9c;
-  --ant-stage: #17141f;
-  --ant-stage-raised: #211d2e;
-  --ant-stage-line: #322c47;
+  --ant-stage: #111827;
+  --ant-stage-raised: #1a2235;
+  --ant-stage-line: #2a344b;
 
   /* Infima sets these on the same selector, so :root alone does not reach them. */
   --ifm-background-color: var(--ant-paper);
@@ -217,7 +217,7 @@ pre,
   background: var(--ant-stage);
   border: 1px solid var(--ant-stage-line);
   border-radius: 10px;
-  box-shadow: 0 10px 28px rgb(21 18 30 / 18%);
+  box-shadow: 0 10px 28px rgb(13 18 32 / 18%);
   display: none;
   left: 0;
   max-width: min(32rem, calc(100vw - 1.5rem));
@@ -237,7 +237,7 @@ pre,
 }
 
 .api-card__decl {
-  color: #e9e4f8;
+  color: #e6eaf2;
   display: block;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.78rem;
@@ -248,7 +248,7 @@ pre,
 }
 
 .api-card__doc {
-  color: #b4adc6;
+  color: #a9b3c4;
   display: block;
   font-size: 0.84rem;
   font-weight: 400;
@@ -545,7 +545,7 @@ pre,
 .marked-code__title {
   background: var(--ant-stage-raised);
   border-bottom: 1px solid var(--ant-stage-line);
-  color: #a79fbc;
+  color: #94a0b4;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.75rem;
   font-weight: 500;
@@ -688,13 +688,13 @@ pre,
   background: var(--ant-stage);
   border: 1px solid var(--ant-stage-line);
   border-radius: 12px;
-  color: #bfb8d0;
+  color: #b4bdcc;
   min-width: 0;
   overflow: hidden;
 }
 
 .lib code {
-  color: #ece9f5;
+  color: #e6eaf2;
 }
 
 .lib .theme-code-block,
@@ -800,48 +800,6 @@ pre,
   position: relative;
 }
 
-/* A small note in the hero's top corner, off the main text. */
-.hero-ant__aside {
-  animation: hero-aside-float 6s ease-in-out infinite;
-  color: var(--ant-ink-faint);
-  font-size: 0.8rem;
-  margin: 0;
-  max-width: 14em;
-  position: absolute;
-  right: 0;
-  text-align: right;
-  top: 3rem;
-  transform: rotate(-4deg);
-}
-
-@keyframes hero-aside-float {
-  0%,
-  100% {
-    transform: rotate(-4deg) translateY(0);
-  }
-
-  50% {
-    transform: rotate(-4deg) translateY(-4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-ant__aside {
-    animation: none;
-  }
-}
-
-@media (max-width: 700px) {
-  .hero-ant__aside {
-    margin-bottom: 0.6rem;
-    max-width: none;
-    position: static;
-    text-align: left;
-    transform: none;
-    animation: none;
-  }
-}
-
 .hero-ant__mark {
   color: var(--ant-heading);
   margin-left: -0.6rem;
@@ -902,7 +860,7 @@ pre,
 
 .hero-ant__install code {
   background: transparent;
-  color: #e9e4f8;
+  color: #e6eaf2;
   font-size: 0.88rem;
   overflow-x: auto;
   padding: 0;
@@ -919,7 +877,7 @@ pre,
   background: transparent;
   border: 1px solid var(--ant-stage-line);
   border-radius: 7px;
-  color: #b4adc6;
+  color: #a9b3c4;
   cursor: pointer;
   font: inherit;
   font-size: 0.8rem;
@@ -931,7 +889,7 @@ pre,
 
 .hero-ant__install button:hover {
   border-color: var(--ant-spot);
-  color: #e9e4f8;
+  color: #e6eaf2;
 }
 
 @media (max-width: 480px) {
@@ -1059,7 +1017,7 @@ pre,
   background: var(--ant-stage);
   border: 1px solid var(--ant-stage-line);
   border-radius: 14px;
-  color: #ece9f5;
+  color: #e6eaf2;
   margin: 1.2rem 0 1.6rem;
   padding: 1.25rem;
 }
@@ -1095,7 +1053,7 @@ pre,
 }
 
 .trace__label {
-  color: #a79fbc;
+  color: #94a0b4;
   display: block;
   font-size: 0.76rem;
   font-weight: 600;
@@ -1113,7 +1071,7 @@ pre,
 
 .trace .trace__note {
   background: transparent;
-  color: #a79fbc;
+  color: #94a0b4;
   display: block;
   font-size: 0.84rem;
   margin-top: 0.15rem;
@@ -1170,7 +1128,7 @@ pre,
 }
 
 .trace__key dd {
-  color: #bfb8d0;
+  color: #b4bdcc;
   font-size: 0.92rem;
   line-height: 1.5;
   margin: 0;
@@ -1178,7 +1136,7 @@ pre,
 
 .trace__aside {
   border-top: 1px dashed var(--ant-stage-line);
-  color: #a79fbc;
+  color: #94a0b4;
   font-size: 0.86rem;
   margin: 1rem 0 0;
   padding-top: 0.75rem;
@@ -1194,7 +1152,7 @@ pre,
 }
 
 .save-demo__fields label > span {
-  color: #a79fbc;
+  color: #94a0b4;
   display: block;
   font-size: 0.74rem;
   font-weight: 600;
@@ -1205,7 +1163,7 @@ pre,
   background: var(--ant-stage-raised);
   border: 1px solid var(--ant-stage-line);
   border-radius: 7px;
-  color: #ece9f5;
+  color: #e6eaf2;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.88rem;
   padding: 0.38rem 0.55rem;
@@ -1240,7 +1198,7 @@ pre,
 }
 
 .save-demo__toggle i::after {
-  background: #a79fbc;
+  background: #94a0b4;
   border-radius: 50%;
   content: '';
   height: 1.4rem;
@@ -1256,7 +1214,7 @@ pre,
 }
 
 .save-demo__toggle input:checked + i::after {
-  background: #1b1530;
+  background: #0d1220;
   transform: translateX(1.4rem);
 }
 
@@ -1269,7 +1227,7 @@ pre,
   background: transparent;
   border: 1px solid var(--ant-stage-line);
   border-radius: 7px;
-  color: #bfb8d0;
+  color: #b4bdcc;
   cursor: pointer;
   font: inherit;
   font-size: 0.85rem;
@@ -1287,7 +1245,7 @@ pre,
 }
 
 .save-demo__hint {
-  color: #a79fbc;
+  color: #94a0b4;
   font-size: 0.82rem;
   margin: 0 0 0.3rem auto;
 }
@@ -1332,7 +1290,7 @@ pre,
 }
 
 .save-demo__stored {
-  color: #a79fbc;
+  color: #94a0b4;
   font-size: 0.76rem;
   margin: 0.15rem 0 0.4rem;
 }
@@ -1375,7 +1333,7 @@ pre,
 
 .save-demo__sql {
   background: transparent !important;
-  color: #a79fbc !important;
+  color: #94a0b4 !important;
   display: block;
   font-size: 0.72rem !important;
   line-height: 1.4;
@@ -1398,7 +1356,7 @@ pre,
   background: transparent;
   border: 1px solid var(--ant-stage-line);
   border-radius: 7px;
-  color: #ece9f5;
+  color: #e6eaf2;
   cursor: pointer;
   font: inherit;
   font-weight: 600;
@@ -1408,7 +1366,7 @@ pre,
 .logs__control button.is-active {
   background: var(--ant-spot);
   border-color: var(--ant-spot);
-  color: #1b1530;
+  color: #0d1220;
 }
 
 .logs__control button:focus-visible {
@@ -1496,7 +1454,7 @@ pre,
 
 .lost__who {
   align-self: center;
-  color: #a79fbc;
+  color: #94a0b4;
   font-size: 0.8rem;
   font-weight: 600;
   grid-column: 1;
@@ -1519,7 +1477,7 @@ pre,
 }
 
 .lost__step span {
-  color: #bfb8d0;
+  color: #b4bdcc;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.76rem;
 }
@@ -1546,7 +1504,7 @@ pre,
 }
 
 .lost__result span {
-  color: #a79fbc;
+  color: #94a0b4;
   display: block;
   font-size: 0.78rem;
   font-weight: 600;
@@ -1561,7 +1519,7 @@ pre,
 }
 
 .lost__result em {
-  color: #bfb8d0;
+  color: #b4bdcc;
   font-size: 0.84rem;
   font-style: normal;
 }
@@ -1608,7 +1566,7 @@ pre,
 .path li::before {
   background: var(--ant-spot);
   border-radius: 50%;
-  color: #1b1530;
+  color: #0d1220;
   content: counter(path);
   font-size: 0.68rem;
   font-weight: 700;
@@ -1632,7 +1590,7 @@ pre,
 }
 
 .path li span {
-  color: #bfb8d0;
+  color: #b4bdcc;
   display: block;
   font-size: 0.86rem;
   line-height: 1.4;
