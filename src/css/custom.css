@@ -17,6 +17,11 @@
   --ant-stage: #0d1220;
   --ant-stage-raised: #161d2e;
   --ant-stage-line: #273149;
+  /* Text on the stage, the same in both modes because the stage is always dark:
+     code, and the quieter text of a code block's title bar. */
+  --ant-stage-ink: #e6eaf2;
+  --ant-stage-muted: #94a0b4;
+  --ant-stage-dim: #6b7690;
   --ant-spot: #c4b5fd;
   --ant-pain: #ff7d9c;
   --ant-fix: #c4b5fd;
@@ -168,6 +173,14 @@ h3 {
   display: table;
   width: 100%;
   font-size: 0.93rem;
+}
+
+/* On a phone a wide table scrolls by itself instead of widening the page. */
+@media (max-width: 640px) {
+  .markdown table {
+    display: block;
+    overflow-x: auto;
+  }
 }
 
 .markdown table th {
@@ -545,11 +558,73 @@ pre,
 .marked-code__title {
   background: var(--ant-stage-raised);
   border-bottom: 1px solid var(--ant-stage-line);
-  color: #94a0b4;
+  color: var(--ant-stage-muted);
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.75rem;
   font-weight: 500;
   padding: 0.5rem var(--ifm-pre-padding);
+}
+
+/* A collapsible code block: closed, only the title bar shows; open, the fenced
+   block inside it becomes the body, so the two read as one block. */
+
+.collapsible-code {
+  background: var(--ant-stage);
+  border: 1px solid var(--ant-stage-line);
+  /* The radius a fenced block ends up with: Docusaurus's own rule for it wins
+     over the one above for .theme-code-block. */
+  border-radius: var(--ifm-code-border-radius);
+  font-size: 0.86rem;
+  margin-bottom: var(--ifm-leading);
+  overflow: hidden;
+}
+
+.collapsible-code__bar {
+  background: var(--ant-stage-raised);
+  color: var(--ant-stage-muted);
+  cursor: pointer;
+  display: flex;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 500;
+  gap: 0.5em;
+  list-style: none;
+  padding: 0.5rem var(--ifm-pre-padding);
+}
+
+.collapsible-code__bar::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-code[open] > .collapsible-code__bar {
+  border-bottom: 1px solid var(--ant-stage-line);
+}
+
+.collapsible-code__bar:hover {
+  color: var(--ant-stage-ink);
+}
+
+.collapsible-code__bar:focus-visible {
+  outline: 2px solid var(--ant-spot);
+  outline-offset: -2px;
+}
+
+.collapsible-code__chevron::before {
+  content: '▸';
+}
+
+.collapsible-code[open] .collapsible-code__chevron::before {
+  content: '▾';
+}
+
+.collapsible-code__note {
+  color: var(--ant-stage-dim);
+}
+
+.collapsible-code__body > .theme-code-block {
+  border: 0;
+  border-radius: 0;
+  margin-bottom: 0;
 }
 
 /* The spotlight. Lines marked with spot comments stay lit, on a soft band that
@@ -668,11 +743,20 @@ pre,
   margin-bottom: 0.45rem;
 }
 
+.compare-frame {
+  container: compare / inline-size;
+  margin: 1.2rem 0 0;
+}
+
 .compare {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.8rem;
-  margin: 1.2rem 0 0;
+}
+
+/* On one column, ant's card comes first. */
+.compare > .lib--ant {
+  order: -1;
 }
 
 .compare__others {
@@ -1741,14 +1825,17 @@ pre,
   }
 }
 
-@media (min-width: 900px) {
+/* Two columns only where the content is wide enough for code lines to fit
+   without scrolling sideways. */
+@container compare (min-width: 680px) {
   .compare {
     align-items: start;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   /* The ant card hugs its content, and stays beside the stack as it scrolls. */
-  .lib--ant {
+  .compare > .lib--ant {
+    order: 0;
     position: sticky;
     top: calc(var(--ifm-navbar-height) + 1rem);
   }
@@ -1792,4 +1879,336 @@ pre,
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Verdict tables: CatchTable and BenchTable. Fixed layout gives every data column
+   the same width, so both benchmark tables line up. Colour sits in a rounded fill
+   inside the cell, only where it means something. */
+:root {
+  --verdict-good-bg: #dcf5e4;
+  --verdict-good-ink: #166534;
+  --verdict-meh-bg: #fbf0c9;
+  --verdict-meh-ink: #854d0e;
+  --verdict-bad-bg: #fbe3e6;
+  --verdict-bad-ink: #9f1239;
+}
+
+html[data-theme='dark'] {
+  --verdict-good-bg: rgba(74, 222, 128, 0.14);
+  --verdict-good-ink: #86efac;
+  --verdict-meh-bg: rgba(250, 204, 21, 0.12);
+  --verdict-meh-ink: #fcd34d;
+  --verdict-bad-bg: rgba(251, 113, 133, 0.13);
+  --verdict-bad-ink: #fda4af;
+}
+
+.verdict {
+  overflow-x: auto;
+  margin-bottom: 1.5rem;
+}
+
+.markdown .verdict__table {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 640px;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.markdown .verdict__table col.verdict__label {
+  width: 26%;
+}
+
+.markdown .verdict__table th,
+.markdown .verdict__table td {
+  border: 0;
+  border-bottom: 1px solid var(--ant-line);
+  padding: 0.4rem 0.3rem;
+  background: transparent;
+}
+
+.markdown .verdict__table thead th {
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--ant-ink-faint);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--ant-heading);
+  text-align: center;
+  vertical-align: bottom;
+  line-height: 1.25;
+}
+
+.markdown .verdict__table--bench thead th {
+  text-align: right;
+  padding-right: 0.9rem;
+}
+
+.markdown .verdict__table thead th:first-child {
+  text-align: left;
+  font-weight: 400;
+  color: var(--ant-ink-faint);
+}
+
+.markdown .verdict__table thead th.verdict__ant {
+  color: var(--ant-accent);
+}
+
+.markdown .verdict__table thead th.verdict__baseline {
+  color: var(--ant-ink-faint);
+}
+
+.verdict__sub {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--ant-ink-faint);
+}
+
+.markdown .verdict__table tbody th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ant-ink);
+  padding-left: 0;
+}
+
+.markdown .verdict__table tbody tr:last-child th,
+.markdown .verdict__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown .verdict__table td {
+  text-align: center;
+}
+
+.verdict__fill {
+  display: block;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.verdict__table--bench .verdict__fill {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict__baseline .verdict__fill,
+.verdict__none .verdict__fill {
+  color: var(--ant-ink-faint);
+}
+
+.verdict__none .verdict__fill {
+  text-align: center;
+}
+
+.verdict__good {
+  background: var(--verdict-good-bg);
+  color: var(--verdict-good-ink);
+  font-weight: 600;
+}
+
+.verdict__meh {
+  background: var(--verdict-meh-bg);
+  color: var(--verdict-meh-ink);
+}
+
+.verdict__bad {
+  background: var(--verdict-bad-bg);
+  color: var(--verdict-bad-ink);
+}
+
+.verdict__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.84rem;
+  color: var(--ant-ink-soft);
+}
+
+.verdict__key {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.4rem;
+  border-radius: 3px;
+  vertical-align: -0.05rem;
+}
+
+.markdown .verdict__table thead,
+.markdown .verdict__table thead tr {
+  background: transparent;
+}
+
+.markdown .verdict__table col.verdict__label {
+  width: 22%;
+}
+
+.markdown .verdict__table:not(.verdict__table--bench) {
+  font-size: 0.84rem;
+}
+
+.markdown .verdict__table:not(.verdict__table--bench) .verdict__fill {
+  padding: 0.3rem 0.3rem;
+  text-align: center;
+}
+
+.verdict__key.verdict__good {
+  background: var(--verdict-good-ink);
+}
+
+.verdict__key.verdict__meh {
+  background: var(--verdict-meh-ink);
+}
+
+.verdict__key.verdict__bad {
+  background: var(--verdict-bad-ink);
+}
+
+/* CatchTable: icons only in the grid, like a feature matrix. */
+:root {
+  --catch-yes: #1f9d55;
+  --catch-tool: #d99a06;
+  --catch-no: #dc4a55;
+  --catch-dash: #b8c2d0;
+}
+
+html[data-theme='dark'] {
+  --catch-yes: #3fcf7d;
+  --catch-tool: #f0b429;
+  --catch-no: #f26d78;
+  --catch-dash: #3a4458;
+}
+
+.markdown .verdict__table.catch {
+  min-width: 0;
+  font-size: 0.9rem;
+}
+
+.markdown .verdict__table.catch thead th {
+  font-size: 0.95rem;
+  padding-top: 0.2rem;
+}
+
+.markdown .verdict__table.catch td {
+  padding: 0.75rem 0.3rem;
+  vertical-align: middle;
+  line-height: 0;
+}
+
+.markdown .verdict__table.catch tbody th {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.catch__mark {
+  width: 1.45rem;
+  height: 1.45rem;
+  vertical-align: middle;
+}
+
+.catch__mark circle {
+  stroke: none;
+}
+
+.catch__mark path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+html[data-theme='dark'] .catch__mark path {
+  stroke: var(--ant-paper);
+}
+
+.catch__mark--yes circle {
+  fill: var(--catch-yes);
+}
+
+.catch__mark--tool circle {
+  fill: var(--catch-tool);
+}
+
+.catch__mark--no circle {
+  fill: var(--catch-no);
+}
+
+.catch__dash {
+  display: inline-block;
+  width: 1.1rem;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--catch-dash);
+  vertical-align: middle;
+}
+
+.verdict__legend .catch__mark {
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0.3rem;
+  vertical-align: -0.2rem;
+}
+
+.verdict__legend .catch__dash {
+  width: 0.8rem;
+  margin: 0 0.35rem 0 0.1rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Headers: every name on the first line and every subtext on the second, so the
+   names line up even where a column has no subtext. Bench values sit centred
+   under their names. */
+.markdown .verdict__table thead th {
+  vertical-align: top;
+}
+
+.verdict__name {
+  display: block;
+  white-space: nowrap;
+}
+
+.markdown .verdict__table--bench thead th,
+.markdown .verdict__table--bench thead th:first-child + th {
+  text-align: center;
+  padding-right: 0.3rem;
+}
+
+.markdown .verdict__table--bench thead th:first-child {
+  text-align: left;
+}
+
+.verdict__table--bench .verdict__fill {
+  text-align: center;
+}
+
+/* The first title in a comparison card names the library, so it reads as a label,
+   not as a file name. */
+.lib > .theme-code-block:first-child [class*='codeBlockTitle'],
+.lib > .marked-code:first-child .marked-code__title {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e6eaf2;
+  letter-spacing: 0.01em;
+}
+
+.lib--ant > .marked-code:first-child .marked-code__title,
+.lib--ant > .theme-code-block:first-child [class*='codeBlockTitle'] {
+  color: var(--ant-spot);
+}
+
+.markdown .compare-frame + * {
+  margin-top: 1.75rem;
 }

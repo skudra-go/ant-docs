@@ -3,9 +3,9 @@ title: Entity states
 description: Mark entities as new, saved, changed or removed, and inspect what the tracker knows.
 ---
 
-Every entity a context tracks has a state, and `SaveChanges` writes according to it. ant sets the state for you when you load, insert or edit. The calls on this page are for the times you need to set it yourself, such as a struct that didn't come from a query.
+`SaveChanges` writes each tracked entity according to its state. ant sets the state on load, insert and edit. Set it yourself for a struct that didn't come from a query.
 
-Each of them takes a `ctx` and returns an error. They claim the tracker like any other operation, so call them on a [session](/tracking/sessions) that no other goroutine is using.
+These calls take a `ctx`, return an error and claim the tracker, so call them on a [session](/tracking/sessions) that no other goroutine is using.
 
 ## The states
 
@@ -38,11 +38,11 @@ err = db.SaveChanges(ctx)
 // DELETE FROM "users" WHERE "users"."id" = $1
 ```
 
-`Remove` on an entity that was added and never saved cancels the insert. It has no row to delete, so the tracker lets it go and `SaveChanges` writes nothing for it.
+`Remove` on an entity that was added and never saved cancels the insert and writes nothing.
 
 ## Track a row you already know
 
-`ant.Attach` tracks an entity as it is and assumes it matches the database. Edits after that are saved as changes, in only the changed columns. Use it for a value from your own cache or from a previous request.
+`ant.Attach` tracks an entity as it is, assuming it matches the database. Later edits save only the changed columns. Use it for a value from your own cache or a previous request.
 
 ```go
 err := ant.Attach(ctx, db, existing)
@@ -55,7 +55,7 @@ err = db.SaveChanges(ctx)
 
 ## Write every column
 
-`ant.MarkModified` is for a struct whose earlier values are unknown, such as a request body for a full update. There is nothing to compare with, so the next save writes every column the struct holds, `updated_at` included.
+`ant.MarkModified` is for a struct with no known earlier values, such as a request body. The next save writes every column the struct holds, `updated_at` included.
 
 :::warning[UpdatedAt is written as the struct holds it]
 
@@ -70,7 +70,7 @@ err = db.SaveChanges(ctx)
 // WHERE "users"."id" = $6
 ```
 
-A field the body left out is written as its zero value, so use this only when the struct is meant to be the whole row.
+A field the body left out is written as its zero value, so use it only when the struct is the whole row.
 
 ## Stop tracking
 
@@ -92,7 +92,7 @@ var (
 
 ## Look at what the tracker knows
 
-`ant.Entry` returns a snapshot of one entity's state. It is taken under the claim, so what you read from it doesn't change if the entity does later.
+`ant.Entry` returns a snapshot of one entity's state, taken under the claim. It doesn't change when the entity does.
 
 ```go
 // spot-next-line
@@ -102,14 +102,14 @@ fmt.Println(entry.State())   // Modified
 fmt.Println(entry.Changed()) // [Age]
 
 // spot-start
-dirty := ant.IsDirty(entry, &U.Age)
-before, err := ant.Original(entry, &U.Age)
+dirty := ant.IsDirty(entry, &Users.Age)
+before, err := ant.Original(entry, &Users.Age)
 // spot-end
 ```
 
 An untracked entity is `Detached`, and `Original` on it returns `ant.ErrNotTracked`.
 
-`ant.Tracked[User](ctx, db)` lists the tracked entities of one type, oldest first. `db.DebugTracked(ctx)` returns the tracker as text, for a log line:
+`ant.Tracked[User](ctx, db)` lists the tracked entities of one type, oldest first. `db.DebugTracked(ctx)` returns the tracker as text:
 
 ```go
 text, err := db.DebugTracked(ctx)
@@ -118,7 +118,7 @@ text, err := db.DebugTracked(ctx)
 
 ## Save a tree from outside
 
-`ant.TrackGraph` tracks a tree that came from outside, like a request body. Nothing says what it held before, so your function decides each entity's state. `HasKey` is true when the entity already has a key.
+`ant.TrackGraph` tracks a tree from outside, like a request body. Your function decides each entity's state, and `HasKey` is true when the entity already has a key.
 
 ```go
 // spot-start

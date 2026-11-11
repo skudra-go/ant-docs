@@ -3,11 +3,11 @@ title: Connections
 description: Open, wrap a pool, share transactions, and use read replicas.
 ---
 
-ant sits on `database/sql`. The pool and the connections are the standard library's, and `db.DB()` gives you the `*sql.DB` whenever you need it.
+ant sits on `database/sql`. The pool and connections are the standard library's, and `db.DB()` returns the `*sql.DB`.
 
 ## Opening
 
-`ant.Open` connects and fills in your context. Import the driver yourself; ant doesn't pick one.
+`ant.Open` connects and fills in your context. ant doesn't pick a driver, so import one.
 
 ```go
 import _ "github.com/jackc/pgx/v5/stdlib"
@@ -18,11 +18,9 @@ func open(ctx context.Context) (*AppDB, error) {
 }
 ```
 
-`Close` closes the pool, and should run once, on the context from `Open`.
+Call `Close` once, on the context from `Open`. It closes the pool.
 
 ## Pool settings
-
-`db.DB()` is the `*sql.DB`.
 
 ```go
 // spot-start
@@ -45,7 +43,7 @@ if err != nil {
 db, err := ant.Wrap[AppDB](postgres.Dialect, pool)
 ```
 
-`Close` closes that pool too, as with `Open`.
+`Close` closes that pool too.
 
 ## Join a transaction started elsewhere
 
@@ -78,11 +76,11 @@ ant can't see how that transaction ends, so:
 - What ant saves in it is treated as saved at once, as outside a transaction. If you roll the `*sql.Tx` back, the tracker still thinks the rows are stored. Reload or clear what it saved.
 - [Observers](/lifecycle/hooks-and-observers#observers) don't run, since they wait for a commit ant can't see.
 - A savepoint ant opens in it, through `bound.Tx`, is ant's own, and its rollback is taken back in the tracker as usual.
-- On SQL Server, end the transaction before its context ends. go-mssqldb rolls back with the context the transaction began with, and an ended context leaves a goroutine reading the connection after it returns to the pool. ant avoids this in the transactions it begins itself, but a transaction from `UseTx` keeps the driver's behavior.
+- On SQL Server, end the transaction before its context ends. go-mssqldb rolls back with the context the transaction began with, and an ended context leaves a goroutine reading the connection after it returns to the pool. ant avoids this in its own transactions, but one from `UseTx` keeps the driver's behavior.
 
 ## Share a transaction between context types
 
-Two context types can share one transaction through `ant.CurrentTx`, so two parts of a program commit or roll back together.
+`ant.CurrentTx` lets two context types share one transaction, so they commit or roll back together.
 
 ```go keep-db
 type OtherDB struct {
@@ -128,7 +126,7 @@ if err != nil {
 _, err = ant.Raw[any](bound, "SET application_name = 'worker'").Exec(ctx)
 ```
 
-An advisory lock is held by a connection, so a job that must run on one instance at a time takes the lock and does its work through the same `bound` context:
+An advisory lock belongs to a connection, so a job that must run on one instance at a time locks and works through the same `bound` context:
 
 ```go
 conn, err := db.DB().Conn(ctx)
@@ -155,7 +153,7 @@ err = bound.Tx(ctx, func(tx *AppDB) error {
 })
 ```
 
-A connection runs one statement at a time. Use `bound` from one goroutine at a time, as you would a `*sql.Conn`. Goroutines may pass it on, but two running together fail in the driver, and two savepoint stacks on one connection would undo each other's work. For parallel work, take a connection for each goroutine.
+Use `bound` from one goroutine at a time, as you would a `*sql.Conn`. Two running together fail in the driver, and two savepoint stacks on one connection would undo each other's work. For parallel work, take a connection per goroutine.
 
 ## Read replicas
 
@@ -175,7 +173,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 )
 ```
 
-`WithStickyWrites` sends a context's reads to the primary for a while after each of its writes, so replication lag can't hide what it just wrote. To force one read:
+`WithStickyWrites` sends a context's reads to the primary for a while after each of its writes, so replication lag can't hide them. `ant.OnPrimary` forces one read:
 
 ```go
 // spot-next-line

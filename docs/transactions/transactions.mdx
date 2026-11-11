@@ -20,13 +20,13 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 })
 ```
 
-The error comes back to you unchanged. Reads inside see the transaction's own writes, and a panic rolls back and then keeps panicking.
+The error is returned unchanged. A panic propagates after the rollback.
 
 Use `tx` inside the function: anything you do on `db` runs outside the transaction. Cancelling the context rolls the transaction back.
 
 ## Lock rows and move money
 
-Lock the rows you read with `ForUpdate`, change them, and save. Two transfers on the same account then take turns instead of overwriting each other.
+`ForUpdate` locks the rows you read, so two transfers on one account take turns.
 
 ```go
 func transfer(ctx context.Context, db *BankDB, from, to, amount int64) error {
@@ -34,12 +34,12 @@ func transfer(ctx context.Context, db *BankDB, from, to, amount int64) error {
 		// A session inside the transaction has a tracker of its own.
 		tx = ant.Session(tx, ant.WithTracking(true))
 
-		source, err := tx.Accounts.Where(ant.Eq(&A.ID, from)).ForUpdate().Single(ctx)
+		source, err := tx.Accounts.Where(ant.Eq(&Accounts.ID, from)).ForUpdate().Single(ctx)
 		if err != nil {
 			return err
 		}
 
-		target, err := tx.Accounts.Where(ant.Eq(&A.ID, to)).ForUpdate().Single(ctx)
+		target, err := tx.Accounts.Where(ant.Eq(&Accounts.ID, to)).ForUpdate().Single(ctx)
 		if err != nil {
 			return err
 		}
@@ -55,8 +55,6 @@ func transfer(ctx context.Context, db *BankDB, from, to, amount int64) error {
 	})
 }
 ```
-
-A transfer sends:
 
 ```sql
 SELECT ... FROM "accounts" WHERE "accounts"."id" = $1 LIMIT $2 FOR UPDATE
@@ -83,7 +81,7 @@ type BankDB struct {
 	Accounts ant.Table[Account]
 }
 
-var A = ant.Fields[Account]()
+var Accounts = ant.Fields[Account]()
 
 var bank *BankDB
 
@@ -112,7 +110,7 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 // RELEASE SAVEPOINT ant_sp_1
 ```
 
-If the transaction then rolls back, the tracker takes the save back too. The entity looks unsaved again: a rolled-back insert has its generated key and timestamps cleared and is inserted by the next `SaveChanges`, and a rolled-back update is pending again.
+If the transaction then rolls back, the tracker takes the save back too: a rolled-back insert has its generated key and timestamps cleared and is inserted by the next `SaveChanges`, and a rolled-back update is pending again.
 
 ```go
 user.Age = 50
@@ -133,7 +131,7 @@ has, _ := db.HasChanges(ctx)
 
 ## Nest transactions
 
-A `Tx` inside a `Tx` becomes a savepoint, so only the inner part rolls back. That is also how you recover from a failed statement, which PostgreSQL otherwise doesn't allow: after an error, every later statement in the transaction fails until a rollback.
+A `Tx` inside a `Tx` becomes a savepoint, so only the inner part rolls back. That also recovers from a failed statement, after which PostgreSQL fails every later statement in the transaction until a rollback.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
@@ -170,14 +168,14 @@ var carl, dup *User
 
 ## Find or create inside a transaction
 
-`FirstOrCreate` returns the row that matches, or inserts yours. When another writer inserts the same row between the read and the insert, the unique constraint stops the insert, and `FirstOrCreate` returns the other writer's row. Inside a transaction, the re-read takes a lock (`FOR SHARE`, or `FOR UPDATE` on MariaDB), because the transaction's snapshot, at MySQL's default `REPEATABLE READ`, was taken before that row existed and wouldn't show it.
+`FirstOrCreate` returns the matching row or inserts yours. If another writer inserts the same row in between, the unique constraint stops the insert and `FirstOrCreate` returns that writer's row. Inside a transaction the re-read takes a lock (`FOR SHARE`, or `FOR UPDATE` on MariaDB), because the snapshot, at MySQL's default `REPEATABLE READ`, predates that row and wouldn't show it.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
 	eve := &User{Name: "Eve", Email: "eve@example.com"}
 
 	// spot-next-line
-	found, created, err := tx.Users.FirstOrCreate(ctx, eve, ant.Eq(&U.Email, eve.Email))
+	found, created, err := tx.Users.FirstOrCreate(ctx, eve, ant.Eq(&Users.Email, eve.Email))
 	if err != nil {
 		return err
 	}
@@ -195,7 +193,7 @@ The failed insert runs in a savepoint, so the transaction stays usable.
 
 ## Begin and Commit yourself
 
-`ant.Begin` hands you the transaction to finish. Prefer `Tx` where you can, since it can't leave one open by accident.
+`ant.Begin` returns a transaction you must finish. Prefer `Tx`, which can't leave one open.
 
 ```go
 // spot-next-line
@@ -214,7 +212,7 @@ if err := tx.Users.Insert(ctx, alice); err != nil {
 return tx.Commit()
 ```
 
-After `Commit`, the deferred `Rollback` returns `ant.ErrTxDone` and does nothing. `db.Commit()` outside a transaction is `ant.ErrNotInTx`.
+After `Commit`, the deferred `Rollback` returns `ant.ErrTxDone` and does nothing. `db.Commit()` outside a transaction returns `ant.ErrNotInTx`.
 
 ## Savepoints by hand
 
@@ -263,7 +261,7 @@ err = db.Tx(
 
 ## Preview what a transaction writes
 
-`ant.DryRun` runs a function in a transaction that always rolls back, and returns the statements it ran. It is how to check what `SaveChanges` decides to write before you trust it.
+`ant.DryRun` runs a function in a transaction that always rolls back, and returns the statements it ran.
 
 ```go
 statements, err := ant.DryRun(ctx, bank, func(tx *BankDB) error {
@@ -279,9 +277,9 @@ Sequences still move on, and anything the function does outside the database sti
 
 ## One goroutine at a time
 
-A transaction is one connection, and a connection runs one statement at a time. Use `tx` from one goroutine at a time, as with a `*sql.Tx`. Goroutines may pass it from one to the next, but two running together fail in the driver, and two sets of savepoints on one connection would undo each other's work. A context from [`UseConn`](/transactions/connections#keep-work-on-one-connection) is one connection too.
+A transaction is one connection, so use `tx` from one goroutine at a time, as with a `*sql.Tx`. Goroutines may pass it on, but two running together fail in the driver, and two sets of savepoints on one connection would undo each other's work. A context from [`UseConn`](/transactions/connections#keep-work-on-one-connection) is one connection too.
 
-To work in parallel, give each goroutine a transaction of its own:
+For parallel work, give each goroutine its own transaction:
 
 ```go
 var wg sync.WaitGroup
@@ -297,7 +295,7 @@ for _, batch := range batches {
 wg.Wait()
 ```
 
-A transaction ends when your function returns, or when `ctx` is cancelled, whichever comes first. On SQL Server, ant rolls the transaction back itself when `ctx` ends, because go-mssqldb v1.11.2 leaves a goroutine reading the connection after a rollback with an ended context.
+On SQL Server, ant rolls the transaction back itself when `ctx` ends, because go-mssqldb v1.11.2 leaves a goroutine reading the connection after a rollback with an ended context.
 
 {/*
 ```go

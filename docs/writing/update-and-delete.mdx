@@ -7,34 +7,32 @@ description: Bulk update and delete with explicit assignments, the guard that st
 
 ## Update
 
-Every assignment is explicit, so zero values and `nil` are written like any other.
+Assignments are explicit, so zeros and `nil` are written.
 
 ```go
 n, err := db.Users.
-	Where(ant.Eq(&U.ID, id)).
+	Where(ant.Eq(&Users.ID, id)).
 	// spot-next-line
-	Update(ctx, ant.Set(&U.Age, 0), ant.Set(&U.Bio, nil))
+	Update(ctx, ant.Set(&Users.Age, 0), ant.Set(&Users.Bio, nil))
 // UPDATE "users" SET "age" = $1, "bio" = $2, "updated_at" = $3 WHERE "users"."id" = $4
 ```
 
-`UpdatedAt` moves by itself, and an explicit `ant.Set(&U.UpdatedAt, t)` wins. On a model with a [version](/lifecycle/optimistic-concurrency), the version moves on by one:
+`UpdatedAt` is set automatically unless you pass `ant.Set(&Users.UpdatedAt, t)`. On a model with a [version](/lifecycle/optimistic-concurrency), the version is incremented:
 
 ```go
 // UPDATE "docs" SET "views" = ("docs"."views" + $1), "updated_at" = $2, "version" = ("version" + $3)
 // WHERE "docs"."title" = $4
 ```
 
-You can't assign the version yourself. `Update` returns an error before running if you try.
-
-A column takes one value per write. Assigning the same field twice returns an error naming it, because databases disagree on what that means: PostgreSQL and SQL Server refuse it and MySQL keeps the last.
+Assigning the version returns an error before the statement runs. Assigning the same field twice also returns an error naming it, because PostgreSQL and SQL Server refuse it and MySQL keeps the last.
 
 ## Change a value relative to the row
 
-`Inc` and `Dec` run in the database, so two writers can't lose each other's update. Use them for counters:
+`Inc` and `Dec` run in the database, so concurrent writers don't lose updates:
 
 ```go
 // spot-next-line
-_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Inc(&U.Age, 1))
+_, err := db.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.Inc(&Users.Age, 1))
 // UPDATE "users" SET "age" = ("users"."age" + $1), "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
@@ -42,29 +40,27 @@ _, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Inc(&U.Age, 1))
 
 ```go
 // spot-next-line
-_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.SetExpr(&U.Email, ant.Lower(&U.Name)))
+_, err := db.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.SetExpr(&Users.Email, ant.Lower(&Users.Name)))
 // UPDATE "users" SET "email" = LOWER("users"."name"), "updated_at" = $1 WHERE "users"."id" = $2
 ```
 
-Or a subquery:
-
 ```go
 // spot-start
-oldest := ant.SubExpr(db.Users.Where(), ant.Max(&U.Age)).Expr()
+oldest := ant.SubExpr(db.Users.Where(), ant.Max(&Users.Age)).Expr()
 
-_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.SetExpr(&U.Age, oldest))
+_, err := db.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.SetExpr(&Users.Age, oldest))
 // spot-end
 // UPDATE "users" SET "age" = (SELECT MAX("users"."age") FROM "users"), "updated_at" = $1
 // WHERE "users"."id" = $2
 ```
 
-On MySQL, a write whose subquery reads its own table is wrapped in a derived table for you, because MySQL refuses the plain form. See [databases](/reference/databases).
+On MySQL, a write whose subquery reads its own table is wrapped in a derived table, because MySQL refuses the plain form. See [databases](/reference/databases).
 
 ## Delete
 
 ```go
 // spot-next-line
-n, err := db.Users.Where(ant.Lt(&U.Age, 18)).Delete(ctx)
+n, err := db.Users.Where(ant.Lt(&Users.Age, 18)).Delete(ctx)
 // DELETE FROM "users" WHERE "users"."age" < $1
 ```
 
@@ -72,11 +68,11 @@ On a model with [soft deletes](/lifecycle/soft-deletes), this marks the rows ins
 
 ### Delete by relation
 
-Conditions can use relations, which is how to delete with a join:
+Conditions can use relations, so no join is needed:
 
 ```go
 // spot-next-line
-n, err := db.Users.Where(ant.HasNone(&U.Posts)).Delete(ctx)
+n, err := db.Users.Where(ant.HasNone(&Users.Posts)).Delete(ctx)
 // DELETE FROM "users" WHERE NOT EXISTS (
 //   SELECT 1 FROM "posts" AS "ant_related" WHERE "ant_related"."user_id" = "users"."id")
 ```
@@ -93,7 +89,7 @@ err := db.Users.DeleteByID(ctx, id)
 
 ## The no-condition guard
 
-A bulk write with no condition returns `ant.ErrNoCondition`, because a forgotten filter would change the whole table. `Unfiltered` says you mean it.
+A bulk write with no condition returns `ant.ErrNoCondition`. `Unfiltered` opts out.
 
 ```go
 // spot-start
@@ -104,55 +100,53 @@ n, err := db.Users.Unfiltered().Delete(ctx) // every row, on purpose
 // spot-end
 ```
 
-The guard also sees through conditions that can't exclude a row. Those are the dangerous ones, because the code looks filtered.
+The guard also refuses conditions that can't exclude a row.
 
 ```go
 var none []string
 
 // spot-start
-_, err := db.Users.Where(ant.And()).Delete(ctx)                  // refused
-_, err = db.Users.Where(ant.NotIn(&U.Name, none...)).Delete(ctx) // refused
+_, err := db.Users.Where(ant.And()).Delete(ctx)                      // refused
+_, err = db.Users.Where(ant.NotIn(&Users.Name, none...)).Delete(ctx) // refused
 // spot-end
 
-n, err := db.Users.Where(ant.In(&U.Name, none...)).Delete(ctx) // fine: deletes nothing
+n, err := db.Users.Where(ant.In(&Users.Name, none...)).Delete(ctx) // fine: deletes nothing
 ```
 
 A `When` that was skipped leaves the guard on too.
 
 ## Limit a write
 
-`Limit` and `Offset` bound a bulk write. Add an ordering to choose which rows. SQL has no `LIMIT` on `UPDATE` or `DELETE`, so ant selects the rows by key in a subquery:
+`Limit` and `Offset` bound a bulk write. Add an ordering to choose which rows. SQL has no `LIMIT` on `UPDATE` or `DELETE`, so ant selects the rows by key in a subquery.
 
 ```go
 // spot-next-line
-n, err := db.Users.Where(ant.Lt(&U.Age, 18)).OrderBy(&U.CreatedAt).Limit(100).Delete(ctx)
+n, err := db.Users.Where(ant.Lt(&Users.Age, 18)).OrderBy(&Users.CreatedAt).Limit(100).Delete(ctx)
 // DELETE FROM "users" WHERE "users"."id" IN (
 //   SELECT "users"."id" FROM "users" WHERE "users"."age" < $1
 //   ORDER BY "users"."created_at" LIMIT $2)
 ```
 
-This is how you purge in chunks: repeat until `n` is zero, so no single statement locks millions of rows. `Offset` also works without `Limit`, on MySQL and MariaDB too.
+To purge in chunks, repeat until `n` is zero. `Offset` also works without `Limit`, on MySQL and MariaDB too.
 
 ## Write through a derived source
 
-`UPDATE` and `DELETE` name only a table. When the query reads from `From`, `FromCTE`, a set operation (`Union`, `Except` and the rest), or `Recursive`, ant selects the matching rows by key in a subquery, so the source's conditions apply. Without that, they would run against every row of the table.
+`UPDATE` and `DELETE` name only a table. When the query reads from `From`, `FromCTE`, a set operation (`Union`, `Except` and the rest), or `Recursive`, ant selects the matching rows by key in a subquery, so the source's conditions apply.
 
 ```go
 // spot-start
-old := db.Users.Where(ant.Gt(&U.Age, 60))
+old := db.Users.Where(ant.Gt(&Users.Age, 60))
 
-n, err := db.Users.Query().From(old).Update(ctx, ant.Inc(&U.Age, 1))
+n, err := db.Users.Query().From(old).Update(ctx, ant.Inc(&Users.Age, 1))
 // spot-end
 // UPDATE "users" SET "age" = ("users"."age" + $1), "updated_at" = $2
 // WHERE "users"."id" IN (SELECT "users"."id" FROM (
 //   SELECT ... FROM "users" WHERE "users"."age" > $3) AS "users")
 ```
 
-`FromCTE` puts the source in a `WITH`:
-
 ```go
 // spot-start
-old := db.Users.Where(ant.Gt(&U.Age, 60))
+old := db.Users.Where(ant.Gt(&Users.Age, 60))
 
 n, err := db.Users.Query().FromCTE("old", old).Delete(ctx)
 // spot-end
@@ -174,10 +168,10 @@ The rules, each checked before anything runs:
 
 ```go
 // spot-start
-changed, err := db.Users.Where(ant.Gt(&U.Age, 18)).UpdateReturning(ctx, ant.Inc(&U.Age, 1))
+changed, err := db.Users.Where(ant.Gt(&Users.Age, 18)).UpdateReturning(ctx, ant.Inc(&Users.Age, 1))
 // UPDATE "users" SET ... WHERE "users"."age" > $2 RETURNING "id", "created_at", ...
 
-removed, err := db.Users.Where(ant.Eq(&U.Name, "Bob")).DeleteReturning(ctx)
+removed, err := db.Users.Where(ant.Eq(&Users.Name, "Bob")).DeleteReturning(ctx)
 // DELETE FROM "users" WHERE "users"."name" = $1 RETURNING "id", "created_at", ...
 // spot-end
 ```
@@ -186,10 +180,10 @@ Both apply the same no-condition guard.
 
 ## Reloading an entity
 
-`Reload` replaces an entity's columns with what is stored now and discards unsaved changes. Relations are left alone. Use it after a bulk write changed rows you hold.
+`Reload` replaces an entity's columns with what is stored now and discards unsaved changes. Relations are left alone.
 
 ```go
-_, err := db.Users.Where(ant.Eq(&U.ID, user.ID)).Update(ctx, ant.Set(&U.Age, 41))
+_, err := db.Users.Where(ant.Eq(&Users.ID, user.ID)).Update(ctx, ant.Set(&Users.Age, 41))
 
 // spot-next-line
 err = db.Users.Reload(ctx, user)

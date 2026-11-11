@@ -3,7 +3,7 @@ title: Field roles
 description: Tags that decide how a field is read and written.
 ---
 
-A tag gives a field a role in how ant reads and writes it. Tags combine with commas, as in `ant:"default='new',immutable"`.
+Tags combine with commas, as in `ant:"default='new',immutable"`.
 
 ## All the tags
 
@@ -23,7 +23,7 @@ A tag gives a field a role in how ant reads and writes it. Tags combine with com
 
 ## Read a value the database generates
 
-`readonly` is for generated columns and values a trigger sets. ant leaves the column out of every write and copies the value back after an insert.
+`readonly` suits generated columns and trigger-set values. ant leaves the column out of every write and copies the value back after an insert.
 
 ```go
 type Account struct {
@@ -45,7 +45,7 @@ A column declared with `b.Column(&...).Generated(expr)` is read-only without the
 
 ## Keep a value out of query results
 
-`writeonly` is for values that should never come back out, such as a password hash. The column is written, and left out of every select.
+`writeonly` suits a value that must never be read back, such as a password hash. The column is written and left out of every select.
 
 ```go
 type Account struct {
@@ -66,7 +66,7 @@ fmt.Println(found.Password) // empty: never read
 
 ## Write a value once
 
-`immutable` writes the field on insert. Changing it afterwards isn't a change as far as `SaveChanges` is concerned: nothing is written, and the entity is not marked modified. Use it for `CreatedBy`, or an owner that must not move.
+`immutable` writes the field on insert. `SaveChanges` ignores a later change: nothing is written and the entity is not marked modified.
 
 ```go
 type Account struct {
@@ -81,13 +81,13 @@ account.CreatedBy = "someone else"
 changed, err := db.HasChanges(ctx) // false
 ```
 
-In v0.2.0 the tag guards `SaveChanges` only, and an explicit `db.Accounts.Where(...).Update(ctx, ant.Set(&A.CreatedBy, "x"))` still writes the column. From the next release, a bulk `Update`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it ([#62](https://github.com/skudra-go/ant/issues/62)).
+In v0.2.0 the tag guards `SaveChanges` only, and an explicit `db.Accounts.Where(...).Update(ctx, ant.Set(&Accounts.CreatedBy, "x"))` still writes the column. From the next release, a bulk `Update`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it ([#62](https://github.com/skudra-go/ant/issues/62)).
 
 {/*
 ```go
 var account *Account
 
-var A = ant.Fields[Account]()
+var Accounts = ant.Fields[Account]()
 
 type RolesDB struct {
 	ant.Context
@@ -99,7 +99,7 @@ type RolesDB struct {
 
 ## Computed
 
-`computed` has no column. `Query.With` fills it from an expression, and without `With` it stays empty. Use it for counts and sums that belong on the loaded row.
+`computed` has no column. `Query.With` fills it from an expression; without `With` it stays empty.
 
 ```go
 type Writer struct {
@@ -115,11 +115,11 @@ type Article struct {
 	WriterID int64
 }
 
-var W = ant.Fields[Writer]()
+var Writers = ant.Fields[Writer]()
 
 writers, err := db.Writers.
 	// spot-next-line
-	With(&W.ArticleCount, ant.CountRelated(&W.Articles)).
+	With(&Writers.ArticleCount, ant.CountRelated(&Writers.Articles)).
 	All(ctx)
 // SELECT "writers"."id", "writers"."name",
 //   (SELECT COUNT(*) FROM "articles" AS "ant_related" WHERE "ant_related"."writer_id" = "writers"."id") AS "article_count"

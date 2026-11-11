@@ -29,14 +29,14 @@ ant runs on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. PostgreSQL has ev
 | `WITH` in a subquery, as in `Update` or `Delete` after `FromCTE` or `Recursive` | Yes | Yes | Yes | Yes | No |
 | `ILike`, `FILTER`, `NULLS FIRST` | Native | Emulated | Emulated | `ILike` emulated | Emulated |
 
-Only PostgreSQL runs the whole feature suite, because its tables are written in PostgreSQL's DDL. The conformance suite covers what the dialects write differently, on every database, but it is smaller. Expect a few rough edges off PostgreSQL that nobody has hit yet.
+Only PostgreSQL runs the whole feature suite, because its tables are written in PostgreSQL's DDL. The smaller conformance suite covers what the dialects write differently, on every database.
 
 ## Check for a missing feature
 
-ant refuses before it sends any SQL, and the error wraps `ant.ErrUnsupported`.
+ant refuses before sending SQL, with an error that wraps `ant.ErrUnsupported`.
 
 ```go
-_, err := db.Users.Where(ant.Eq(&U.ID, id)).DeleteReturning(ctx)
+_, err := db.Users.Where(ant.Eq(&Users.ID, id)).DeleteReturning(ctx)
 
 // spot-next-line
 if errors.Is(err, ant.ErrUnsupported) {
@@ -44,7 +44,7 @@ if errors.Is(err, ant.ErrUnsupported) {
 }
 ```
 
-To check before building the query, ask the dialect:
+To check before building the query:
 
 ```go
 // spot-next-line
@@ -53,11 +53,11 @@ if dialect.Supports(db.Dialect(), dialect.Merge) {
 }
 ```
 
-Error helpers mean the same on every database. `ant.IsUniqueViolation` works on all five, because each dialect translates its own error numbers.
+Error helpers such as `ant.IsUniqueViolation` work on all five databases, because each dialect translates its own error numbers.
 
 ## Import a driver
 
-Import a driver in your application. ant doesn't choose one for you, with one exception: `dialect/mysql` imports `go-sql-driver/mysql`, because it has no other way to read the driver's error numbers.
+Import a driver in your application. The exception is `dialect/mysql`, which imports `go-sql-driver/mysql` to read the driver's error numbers.
 
 ```go no-check
 import _ "github.com/jackc/pgx/v5/stdlib"  // PostgreSQL
@@ -78,13 +78,13 @@ Set these in the DSN:
 
 MySQL has no `RETURNING`, so a key comes from `LastInsertId`, and other database-filled columns are read back with a second query. Rows with generated keys go in one at a time there, in both `SaveChanges` and `InsertMany`.
 
-SQL Server reads a key back with `OUTPUT`, which it refuses on a table with triggers. A model that needs a key back can't be inserted into such a table.
+SQL Server reads a key back with `OUTPUT`, which it refuses on a table with triggers.
 
 ## Upsert on MySQL and MariaDB
 
 `ON DUPLICATE KEY UPDATE` has no target. Any unique key triggers it, not only the columns you name. If a different key is the one that collides, `Upsert` can't find the row by your columns and reports that it wrote nothing. Name the only unique key that can collide.
 
-It takes no condition either. An `Upsert` of a copy that carries a version still checks it: each assignment keeps the stored value unless the version matches, and a copy that is out of date changes nothing and returns `ErrConcurrency`. This reads the affected-row count, so leave the driver's `clientFoundRows` off, as it is by default.
+It takes no condition either. An `Upsert` of a copy that carries a version still checks it: each assignment keeps the stored value unless the version matches. A stale copy changes nothing and returns `ErrConcurrency`. This reads the affected-row count, so leave the driver's `clientFoundRows` off, as it is by default.
 
 ## Upsert on SQL Server
 
@@ -104,7 +104,7 @@ MySQL refuses an `UPDATE` or `DELETE` whose subquery reads the table being writt
 
 ## Retry deadlocks and conflicts
 
-`ant.IsRetryable`, and so `ant.Attempts`, accept the failures that a second run can get past:
+`ant.IsRetryable`, and so `ant.Attempts`, accept these failures:
 
 | Database | Retried |
 | --- | --- |
@@ -148,7 +148,7 @@ A list of more values than one statement can take as parameters is sent on Postg
 
 ## Values the drivers can't take
 
-These are limits of `database/sql` or of a driver, and ant doesn't work around them.
+ant doesn't work around these limits of `database/sql` and drivers.
 
 - An `sql.Null[uint64]` above `math.MaxInt64` is refused by `database/sql`, though a bare `uint64` field is not.
 - `NULL` can't be read into a named `[]byte` type such as `json.RawMessage` or `net.IP`. Use a pointer to it for a column that allows `NULL`.
@@ -159,7 +159,7 @@ These are limits of `database/sql` or of a driver, and ant doesn't work around t
 
 SQLite stores times as text, and SQL Server's `DATETIME2` has no zone, so ant binds UTC on both to keep one clock. MySQL's driver does the same.
 
-The conversion applies to every shape a time can take:
+The conversion applies to:
 
 - `time.Time`, `*time.Time`, `sql.NullTime`, an `sql.Null` of a time, and a pointer to one
 - an interface that holds one
@@ -182,4 +182,4 @@ ant avoids this for its own transactions (`Tx`, `Begin`, `SaveChanges`, `DryRun`
 
 ## Add a dialect
 
-A dialect implements `dialect.Dialect`. Its `Render` calls `dialect.Render`, and its `Syntax` method lists what differs from PostgreSQL, so it states only its differences. `dialect.RegisterErrors` connects its error codes. Migrations are a separate interface, `schema.Dialect`. See `dialect/sqlite/sqlite.go`, which is about 70 lines.
+A dialect implements `dialect.Dialect`. Its `Render` calls `dialect.Render`, and its `Syntax` method lists what differs from PostgreSQL. `dialect.RegisterErrors` connects its error codes. Migrations are a separate interface, `schema.Dialect`. See `dialect/sqlite/sqlite.go`, which is about 70 lines.

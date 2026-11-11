@@ -40,8 +40,6 @@ These take `--dsn`, and otherwise read `DATABASE_URL`, then `Config.DSN`.
 
 ## Look at the models
 
-`inspect` lists the tables and columns the models describe, with no database:
-
 ```bash
 go run ./cmd/migrate inspect tickets
 ```
@@ -58,11 +56,7 @@ tickets
   index tickets_views_idx
 ```
 
-`schema-dump` prints the whole schema as SQL, from the models, or from the snapshot with `--snapshot`.
-
 ## Look at the database
-
-`db-show` gives the version, the size and a row estimate per table:
 
 ```bash
 go run ./cmd/migrate db-show
@@ -74,7 +68,7 @@ TABLE           ROWS (ESTIMATE)  SIZE
 ant_migrations  0                32 kB
 ```
 
-`drift` lists what differs between the database and the snapshot, and exits with status 1 when anything does. With `--sql` it also prints the migration that would close the gap, which you can use as a starting point:
+`drift` lists what differs between the database and the snapshot, and exits with status 1 on any difference. `--sql` also prints a migration that would close the gap:
 
 ```bash
 go run ./cmd/migrate drift --sql
@@ -111,4 +105,4 @@ go run ./cmd/migrate repair
 Accepted the current contents of 0015_orders.
 ```
 
-It also clears a failed no-transaction run, and forgets a migration whose file is gone. [Troubleshooting](/migrations/troubleshooting) says when to use each.
+It also clears a failed no-transaction run and forgets a migration whose file is gone. [Troubleshooting](/migrations/troubleshooting) says when to use each.

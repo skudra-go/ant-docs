@@ -21,9 +21,9 @@ type AppDB struct {
 	Posts ant.Table[Post]
 }
 
-var U = ant.Fields[User]()
+var Users = ant.Fields[User]()
 
-var P = ant.Fields[Post]()
+var Posts = ant.Fields[Post]()
 
 var ctx context.Context
 

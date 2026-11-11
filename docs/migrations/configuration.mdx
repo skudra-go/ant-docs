@@ -3,7 +3,7 @@ title: Configuration
 description: The migrate.Config fields, with their defaults, and how to replace storage, file names and the SQL text.
 ---
 
-`migrate.Config` holds the settings. Pass it to `migrate.Main` for the command line tool, or to `migrate.Up` to apply migrations from your own code. Every field has a default, so `migrate.Config{}` works.
+Pass `migrate.Config` to `migrate.Main` for the command line tool, or to `migrate.Up` to apply migrations from your own code. Every field has a default, so `migrate.Config{}` works.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ description: The migrate.Config fields, with their defaults, and how to replace 
 
 ## Read migrations from somewhere else
 
-`Source` lists migrations from anywhere, such as a table or an object store. Implement `Store` as well for the commands that write.
+`Source` lists migrations from anywhere, such as a table or an object store. Implement `Store` too for the commands that write.
 
 ```go
 type Source interface {
@@ -38,11 +38,11 @@ type Source interface {
 
 ## Name files your own way
 
-`Name` chooses a new file's name, and `Parse` reads a version and name back. `migrate.Timestamped` is built in, and makes collisions between branches rare: see [working in a team](/migrations/teams).
+`Name` chooses a new file's name, and `Parse` reads a version and name back. `migrate.Timestamped` makes collisions between branches rare: see [working in a team](/migrations/teams).
 
 ## Change the SQL that is written
 
-`Render` receives the plan, as data, and can wrap the default. This one starts every generated file with a lock timeout:
+`Render` receives the plan and can wrap the default. This one starts every generated file with a lock timeout:
 
 ```go
 config := migrate.Config{

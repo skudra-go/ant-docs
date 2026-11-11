@@ -3,7 +3,7 @@ title: Declaring relations
 description: Declare a relation as a field on the struct, found by name or configured in Go.
 ---
 
-A relation is a field on the struct. `[]Post` is one-to-many, and `*User` is many-to-one or one-to-one. ant finds the foreign key by name, so most relations need no configuration.
+A relation is a field on the struct: `[]Post` is one-to-many, `*User` is many-to-one or one-to-one. ant finds the foreign key by name.
 
 ## Declare a relation by name
 
@@ -32,17 +32,17 @@ type Pet struct {
 }
 ```
 
-The foreign key is the owner's name plus `ID`: `Pet.PersonID` joins to `Person.ID`. Relation fields aren't columns, and a query leaves them empty until you [load them](/relations/loading). You can declare a relation on one side only, and use it from that side.
+The foreign key is the owner's name plus `ID`: `Pet.PersonID` joins to `Person.ID`. Relation fields aren't columns and stay empty until you [load them](/relations/loading). A relation can be declared on one side only and used from that side.
 
 ```go
-users, err := db.Users.Include(&U.Posts).All(ctx)
+users, err := db.Users.Include(&Users.Posts).All(ctx)
 // SELECT ... FROM "users"
 // SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
 ```
 
 ## Name the foreign key
 
-When names can't find the key, `Configure` names it. Either side can do this.
+When the name rule doesn't fit, name the key in `Configure`, on either side.
 
 ```go
 type Author struct {
@@ -53,7 +53,7 @@ type Author struct {
 
 func (Author) Configure(b *ant.ModelBuilder[Author]) {
 	// spot-next-line
-	b.HasMany(&Au.Books).ForeignKey(&Bk.WriterID).OnDelete(ant.Cascade)
+	b.HasMany(&Authors.Books).ForeignKey(&Books.WriterID).OnDelete(ant.Cascade)
 }
 
 type Book struct {
@@ -65,27 +65,27 @@ type Book struct {
 
 func (Book) Configure(b *ant.ModelBuilder[Book]) {
 	// spot-next-line
-	b.BelongsTo(&Bk.Writer).ForeignKey(&Bk.WriterID)
+	b.BelongsTo(&Books.Writer).ForeignKey(&Books.WriterID)
 }
 
 var (
-	Au = ant.Fields[Author]()
-	Bk = ant.Fields[Book]()
+	Authors = ant.Fields[Author]()
+	Books   = ant.Fields[Book]()
 )
 ```
 
 | Call | Declares |
 | --- | --- |
-| `b.HasMany(&U.Posts)` | one-to-many |
-| `b.HasOne(&U.Passport)` | one-to-one, key on the other side |
-| `b.BelongsTo(&P.User)` | many-to-one, key on this side |
-| `b.ManyToMany(&U.Roles)` | [through a join table](/relations/many-to-many) |
+| `b.HasMany(&Users.Posts)` | one-to-many |
+| `b.HasOne(&Users.Passport)` | one-to-one, key on the other side |
+| `b.BelongsTo(&Posts.User)` | many-to-one, key on this side |
+| `b.ManyToMany(&Users.Roles)` | [through a join table](/relations/many-to-many) |
 
 A relation that nothing connects returns `ant.ErrNoForeignKey` at the terminal call (`All`, `First` and so on), not when the model is declared.
 
 ## Join on a column other than the key
 
-`References` points at another column of the owner, which must be unique. Use it when children refer to a natural key such as a handle or a SKU.
+`References` joins on another column of the owner, which must be unique, such as a handle or a SKU.
 
 {/*
 ```go
@@ -107,20 +107,20 @@ type Quote struct {
 
 func (Author) Configure(b *ant.ModelBuilder[Author]) {
 	// spot-next-line
-	b.HasMany(&Au.Quotes).ForeignKey(&Qt.AuthorHandle).References(&Au.Handle)
+	b.HasMany(&Authors.Quotes).ForeignKey(&Quotes.AuthorHandle).References(&Authors.Handle)
 }
 
-var Qt = ant.Fields[Quote]()
+var Quotes = ant.Fields[Quote]()
 ```
 
 ## Choose what happens on delete
 
-The foreign key is `NO ACTION` unless you set it, so deleting a parent that still has children fails and nothing is removed that you didn't ask for.
+The foreign key is `NO ACTION` unless set, so deleting a parent that still has children fails.
 
 ```go
 func (Post) Configure(b *ant.ModelBuilder[Post]) {
 	// spot-next-line
-	b.BelongsTo(&P.User).OnDelete(ant.Cascade).OnUpdate(ant.NoAction)
+	b.BelongsTo(&Posts.User).OnDelete(ant.Cascade).OnUpdate(ant.NoAction)
 }
 ```
 
@@ -131,15 +131,15 @@ The actions are `ant.Cascade` (delete the children too), `ant.SetNull`, `ant.Res
 ```go
 func (Post) Configure(b *ant.ModelBuilder[Post]) {
 	// spot-start
-	b.BelongsTo(&P.User).NoForeignKey() // keep the relation, skip the constraint
-	b.BelongsTo(&P.User).NoIndex()      // skip the automatic index
+	b.BelongsTo(&Posts.User).NoForeignKey() // keep the relation, skip the constraint
+	b.BelongsTo(&Posts.User).NoIndex()      // skip the automatic index
 	// spot-end
 }
 ```
 
 ## Point a model at itself
 
-The parent is found through `ParentID`, and the children through the matching back-reference. Use it for trees such as folders and categories.
+The parent is found through `ParentID`, the children through the back-reference.
 
 ```go
 type Folder struct {

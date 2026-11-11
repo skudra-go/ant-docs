@@ -3,11 +3,11 @@ title: Interceptors and events
 description: Hook into every statement, every save, and every change of state.
 ---
 
-An interceptor sees every statement a context runs, bulk writes and raw SQL included. Logging, metrics and tracing are interceptors, and since an `ant.Option` can install one, it is also how you write a plugin.
+An interceptor sees every statement a context runs, bulk writes and raw SQL included. Logging, metrics and tracing are interceptors. An `ant.Option` can install one, which is how plugins are written.
 
 ## Write an interceptor
 
-An interceptor has two methods. `Before` runs ahead of the statement. It can return a new context, as tracing needs, and change the statement, and an error from it stops the statement. `After` receives the outcome.
+`Before` runs ahead of the statement. It can return a new context, as tracing needs, and change the statement. An error from it stops the statement. `After` receives the outcome.
 
 ```go
 type Timer struct{}
@@ -26,11 +26,11 @@ func (Timer) After(ctx context.Context, s *ant.Statement, o ant.Outcome) {
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(Timer{}))
 ```
 
-`s.Replica` says whether the statement ran on a replica, and `o.Err` is the failure, if any. `o.Duration` ends when the database answers, before rows are read. `s.Args` holds real values, so take care what you record. Several interceptors run in the order given, and `After` runs in reverse order.
+`s.Replica` says whether the statement ran on a replica, and `o.Err` is the failure, if any. `o.Duration` ends when the database answers, before rows are read. `s.Args` holds real values. Several interceptors run in the order given, and `After` runs in reverse order.
 
 ## Log slow queries
 
-To log only statements over a limit, with the caller's context so a request ID or trace ID shows up in the line:
+To log only statements over a limit, with the caller's context for request and trace IDs:
 
 ```go
 type SlowLog struct {
@@ -52,11 +52,11 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 )
 ```
 
-ant's own [logger](/tooling/logging#slow-queries) does this with `ant.SlowThreshold`. Write your own when you need to send the line somewhere else.
+ant's own [logger](/tooling/logging#slow-queries) does this with `ant.SlowThreshold`.
 
 ## Refuse a statement
 
-An error from `Before` stops the statement before it reaches the database. This one keeps a context read-only. A write that starts with `WITH` gets past its check, so treat it as a guard against mistakes:
+This one keeps a context read-only. A write that starts with `WITH` gets past its check, so treat it as a guard against mistakes:
 
 ```go
 type ReadOnly struct{}
@@ -77,7 +77,7 @@ func (ReadOnly) After(context.Context, *ant.Statement, ant.Outcome) {}
 
 ## Watch saves {#watching-saves}
 
-An interceptor that also has a `SavingChanges` method is an `ant.SaveInterceptor`. It sees each `SaveChanges` before anything is written, as whole entities and field names, and an error cancels the save. A single-entity `Insert` is reported too, as one change in state `Added`. Bulk `Update` and `Delete`, `InsertMany` and raw SQL are not; the plain interceptor methods see those statements. Use it for rules that span a unit of work.
+An interceptor that also has a `SavingChanges` method is an `ant.SaveInterceptor`. It sees each `SaveChanges` before anything is written, as whole entities and field names. An error cancels the save. A single-entity `Insert` is reported too, as one change in state `Added`. Bulk `Update` and `Delete`, `InsertMany` and raw SQL are not; the plain interceptor methods see those statements.
 
 ```go
 type Audit struct {
@@ -97,7 +97,7 @@ func (Audit) SavingChanges(ctx context.Context, changes []ant.Change) error {
 
 ## Follow the unit of work
 
-Events are callbacks on the unit of work as a whole. They cannot stop anything, and a nil callback is skipped. `Tracked` and `StateChanged` must not call back into the context.
+Events are callbacks on the unit of work as a whole. They cannot stop anything. A nil callback is skipped. `Tracked` and `StateChanged` must not call back into the context.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,

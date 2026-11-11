@@ -19,12 +19,12 @@ export default function TwoPaths() {
         <div className="path">
           <h4>Starting a new project</h4>
           <ol>
-            <Step title="Write your structs">They're the schema.</Step>
+            <Step title="Write your structs"><code>diff</code> reads them.</Step>
             <Step title={<code>migrate diff create_tables</code>}>
               Writes the first SQL file. No database needed.
             </Step>
-            <Step title="Read the file">It's plain SQL, and yours to edit.</Step>
-            <Step title={<code>migrate up</code>}>Applies it, and records that it ran.</Step>
+            <Step title="Read the file">It's plain SQL you can edit.</Step>
+            <Step title={<code>migrate up</code>}>Applies it and records that it ran.</Step>
           </ol>
         </div>
         <div className="path">

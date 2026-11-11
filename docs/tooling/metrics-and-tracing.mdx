@@ -7,13 +7,11 @@ Both are [interceptors](/tooling/interceptors), so they see every statement a co
 
 ## OpenTelemetry tracing
 
-The tracer is a separate module, so the OpenTelemetry SDK stays out of ant's core. It starts one span per statement, as a child of the span in the caller's context.
+The tracer is a separate module. It starts one span per statement, as a child of the span in the caller's context.
 
 ```bash
 go get github.com/skudra-go/ant/contrib/otel
 ```
-
-Pass a tracer from your provider:
 
 ```go
 tracer := otel.New(provider.Tracer("ant"))
@@ -29,7 +27,7 @@ var provider trace.TracerProvider
 
 ### A complete setup
 
-The program below imports the package as `antotel`, because OpenTelemetry's own package is also named `otel`. It sends traces to an OpenTelemetry collector over OTLP. Replace the exporter to send them elsewhere.
+The program imports the package as `antotel` because OpenTelemetry's own package is also named `otel`. It sends traces to an OpenTelemetry collector over OTLP.
 
 ```go no-check
 package main
@@ -84,7 +82,7 @@ func main() {
 | `db.query.text` | The SQL, with placeholders. Values are never recorded |
 | Status | Error, with the error recorded, when the statement fails |
 
-Pass the request's context to every ant call. The span becomes a child of the request's span only if the context carries it. With an HTTP server instrumented by `otelhttp`, a request's trace then shows each statement under it.
+Pass the request's context to every ant call: the span is a child of the request's span only if the context carries it. With `otelhttp`, a request's trace then shows each statement.
 
 In v0.2.0 the tracer sets `db.system` to `postgresql` for every database, so on MySQL, SQLite or SQL Server, relabel that attribute in your collector. The next release adds a `WithDialect` option to `otel.New`, which names the database ([#61](https://github.com/skudra-go/ant/issues/61)).
 
@@ -120,7 +118,7 @@ Duration ends when the database answers, before rows are read.
 
 ### Read the numbers in code
 
-`Snapshot` returns the totals as data, so a few lines of your own can publish them through any meter, such as an OpenTelemetry callback gauge:
+`Snapshot` returns the totals as data, for publishing through another meter such as an OpenTelemetry callback gauge:
 
 ```go
 for _, s := range m.Snapshot() {
@@ -130,7 +128,7 @@ for _, s := range m.Snapshot() {
 
 ### Use both
 
-Interceptors stack. Pass `WithInterceptor` once for each:
+Pass `WithInterceptor` once for each:
 
 ```go no-check
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,

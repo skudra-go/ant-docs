@@ -3,7 +3,7 @@ title: Encrypted fields
 description: Store values with AES-256-GCM so a database dump reveals nothing.
 ---
 
-`secure.Value[T]` stores a value encrypted with AES-256-GCM, so a database dump or a stolen backup gives nothing away. The column is `text`, and the value in it reads `key:base64(nonce+ciphertext)`.
+`secure.Value[T]` stores a value encrypted with AES-256-GCM, so a database dump or stolen backup reveals nothing. The column is `text` holding `key:base64(nonce+ciphertext)`.
 
 {/*
 ```go
@@ -20,7 +20,7 @@ type PatientDB struct {
 
 ## Store a value
 
-Set the keys once at startup. A key is 32 bytes, and its name is stored with every value, so keep names stable and free of colons. `SetKeys` returns an error for a key of the wrong size.
+Set the keys once at startup. A key is 32 bytes (`SetKeys` returns an error otherwise). Its name is stored with every value, so keep names stable and free of colons.
 
 ```go
 type Patient struct {
@@ -43,19 +43,19 @@ loaded, err := db.Patients.Find(ctx, patient.ID)
 fmt.Println(loaded.SSN.V) // 123-45-6789
 ```
 
-The value can't leak by accident: `fmt` and JSON both print `[encrypted]`, and you read `.V` when you need it. `ant.LogValues` logs the SQL arguments, so add `.Sensitive()` to the column to keep them out of logs (see [security](/reference/security#logs-and-errors)).
+`fmt` and JSON print `[encrypted]`. Read `.V` for the value. `ant.LogValues` logs SQL arguments, so add `.Sensitive()` to the column to keep them out of logs (see [security](/reference/security#logs-and-errors)).
 
 ### What can go inside
 
 `T` can be any type `encoding/json` handles, such as a struct or a slice, and it is sealed as JSON. A NULL column reads as the zero `T`.
 
-`secure.Value` refuses text that isn't valid UTF-8, as a text column does. `encoding/json` would store U+FFFD in its place, which would change the value without a word, so the write fails instead. To store arbitrary bytes, encode them first with `base64` or `hex`.
+`secure.Value` refuses text that isn't valid UTF-8, as a text column does. `encoding/json` would silently store U+FFFD in its place, so the write fails instead. To store arbitrary bytes, encode them first with `base64` or `hex`.
 
 Without `SetKeys`, reads and writes return `secure.ErrNoKeys`.
 
 ## Search by a value
 
-A value encrypts differently every time, so `ant.Eq` can't find it and an index is no help. To look rows up, store a keyed hash beside it. Keep the hash as a string, since `ant.Eq` needs a comparable type and `[]byte` isn't one.
+A value encrypts differently every time, so `ant.Eq` and indexes can't find it. Store a keyed hash beside it, as a string since `[]byte` isn't comparable.
 
 ```go
 type Patient struct {
@@ -72,14 +72,14 @@ func blindIndex(value string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-var P = ant.Fields[Patient]()
+var Patients = ant.Fields[Patient]()
 
 patient := &Patient{SSN: secure.New(ssn), SSNHash: blindIndex(ssn)}
 
 err := db.Patients.Insert(ctx, patient)
 
 // spot-next-line
-found, err := db.Patients.Where(ant.Eq(&P.SSNHash, blindIndex(ssn))).First(ctx)
+found, err := db.Patients.Where(ant.Eq(&Patients.SSNHash, blindIndex(ssn))).First(ctx)
 // SELECT ... FROM "patients" WHERE "patients"."ssn_hash" = $1 LIMIT $2
 ```
 
@@ -93,7 +93,7 @@ The hash needs its own key. It reveals when two rows hold the same value, so use
 
 ## Rotate keys
 
-Add a new key and make it the active one. Old rows still read with the old key, because each value records which key it used, and every new write uses the new one.
+Add a new key and make it active. Old rows still read with the old key, since each value records its key. New writes use the new one.
 
 ```go
 // spot-next-line
@@ -109,7 +109,7 @@ var (
 ```
 */}
 
-To finish, rewrite the rows that still use the old key, then drop it. A row whose key is gone fails to read with `secure.ErrUnknownKey`, so check that none is left first. `MarkModified` makes `SaveChanges` write the row even though the plaintext didn't change, and [`ChunkByKey`](/queries/ordering-and-paging#chunks) keeps its place while the callback changes the rows it reads:
+To finish, rewrite the rows that still use the old key, then drop it. A row whose key is gone fails to read with `secure.ErrUnknownKey`, so check that none is left first. `MarkModified` makes `SaveChanges` write an unchanged row, and [`ChunkByKey`](/queries/ordering-and-paging#chunks) keeps its place while the callback changes the rows it reads:
 
 ```go
 old := ant.SQLCond("ssn NOT LIKE ?", "2027:%")
@@ -126,8 +126,6 @@ err := db.Patients.Where(old).ChunkByKey(ctx, 500, func(batch []*Patient) error 
 // SELECT ... FROM "patients" WHERE (ssn NOT LIKE $1) ORDER BY "patients"."id" LIMIT $2
 // UPDATE "patients" SET "ssn" = $1, "ssn_hash" = $2 WHERE "patients"."id" = $3
 ```
-
-To count what is left, use the same condition:
 
 ```go
 left, err := db.Patients.Where(ant.SQLCond("ssn NOT LIKE ?", "2027:%")).Count(ctx)

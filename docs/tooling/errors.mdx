@@ -3,7 +3,7 @@ title: Errors
 description: Every error ant returns, how to match them, and how to read the failing SQL.
 ---
 
-Match errors with `errors.Is` and `errors.As`, never by their text. Builders collect errors as you chain calls, and the call that runs the query returns them, joined if there is more than one.
+Match errors with `errors.Is` and `errors.As`, never by their text. Builders collect errors while you chain. The call that runs the query returns them, joined if there are several.
 
 {/*
 ```go
@@ -13,7 +13,7 @@ type Page struct {
 	Version int64  `ant:"version"`
 }
 
-var G = ant.Fields[Page]()
+var Pages = ant.Fields[Page]()
 
 var stale *Page
 
@@ -64,8 +64,8 @@ if errors.Is(err, ant.ErrNotFound) {
 
 | Error | Means |
 | --- | --- |
-| `ant.ErrNotProbe` | A pointer that is not a field of a [probe](/models/field-probes) from `ant.Fields` |
-| `ant.ErrWrongModel` | A probe of a model the query does not use |
+| `ant.ErrNotProbe` | A pointer that does not come from a [probe](/models/field-probes) |
+| `ant.ErrWrongModel` | A field pointer from another model's probe |
 | `ant.ErrNotColumn` | A relation used as a column |
 | `ant.ErrNotRelation` | A field that is not a relation, used as one |
 | `ant.ErrNoKey` | A key operation on a model with no primary key |
@@ -88,9 +88,9 @@ if errors.Is(err, ant.ErrNotFound) {
 
 | Error | Means |
 | --- | --- |
-| `ant.ErrConcurrency` | A version or token check failed. See [below](#stale-writes) |
-| `ant.ErrConcurrentUse` | A context with change tracking was used by two operations at once. See [below](#a-tracking-context-used-twice) |
-| `ant.ErrKeyChanged` | The primary key of a tracked entity was changed. A key identifies the row, so insert a new entity instead |
+| `ant.ErrConcurrency` | A version or token check failed. See [stale writes](#stale-writes) |
+| `ant.ErrConcurrentUse` | A context with change tracking was used by two operations at once. See [a tracking context used twice](#a-tracking-context-used-twice) |
+| `ant.ErrKeyChanged` | The primary key of a tracked entity was changed. Insert a new entity instead |
 | `ant.ErrNotTracked` | An operation on an entity the context does not track |
 | `ant.ErrNotInTx` | `Commit`, `Rollback` or a savepoint outside a transaction |
 | `ant.ErrTxDone` | The transaction already ended |
@@ -98,10 +98,10 @@ if errors.Is(err, ant.ErrNotFound) {
 
 ## Stale writes
 
-`ant.ErrConcurrency` comes back from `SaveChanges`, and from an `Upsert` of a copy that carries a [version](/lifecycle/optimistic-concurrency), on every database including MySQL and MariaDB. The error is an `*ant.ConcurrencyError` that names the row:
+`ant.ErrConcurrency` comes back from `SaveChanges` and from an `Upsert` of a copy that carries a [version](/lifecycle/optimistic-concurrency), on every database including MySQL and MariaDB. It is an `*ant.ConcurrencyError` naming the row:
 
 ```go
-_, err := db.Pages.Upsert(ctx, stale, ant.OnConflict(&G.Slug))
+_, err := db.Pages.Upsert(ctx, stale, ant.OnConflict(&Pages.Slug))
 
 var conflict *ant.ConcurrencyError
 
@@ -112,15 +112,15 @@ if errors.As(err, &conflict) {
 
 ## A tracking context used twice
 
-A context with change tracking is one unit of work. If a second operation starts on it while the first runs, the second gets `ant.ErrConcurrentUse` at once and does not wait. Give each request its own `ant.Session`, or share a context opened with `WithTracking(false)`. A query that a hook makes must use the `context.Context` the hook received. See [sessions](/tracking/sessions) and [hooks](/lifecycle/hooks-and-observers#query-from-a-hook).
+If a second operation starts on a tracking context while the first runs, the second gets `ant.ErrConcurrentUse` at once without waiting. Give each request its own `ant.Session`, or share a context opened with `WithTracking(false)`. A query that a hook makes must use the `context.Context` the hook received. See [sessions](/tracking/sessions) and [hooks](/lifecycle/hooks-and-observers#query-from-a-hook).
 
 ## Unsupported on this database
 
-`ant.ErrUnsupported` means the connected database cannot do what you asked, and ant refuses before sending SQL. The message names the feature and the dialect.
+`ant.ErrUnsupported` means the connected database cannot do what you asked. ant refuses before sending SQL.
 
 ```go
-_, err := ant.Merge(&db.Users, db.Posts.Query(), ant.EqCol(&U.ID, &P.UserID)).
-	WhenMatched(ant.Set(&U.Age, 1)).
+_, err := ant.Merge(&db.Users, db.Posts.Query(), ant.EqCol(&Users.ID, &Posts.UserID)).
+	WhenMatched(ant.Set(&Users.Age, 1)).
 	Exec(ctx)
 // ant: not supported by this database: MERGE on mysql
 ```
@@ -132,7 +132,7 @@ Cases beyond the feature table in [databases](/reference/databases):
 - On MySQL, `InsertMany` with a `Set` that reads its own table and a column left to its default.
 - An upsert with no conflict columns on a database that needs them.
 
-Ask the dialect first to avoid the error:
+Check first:
 
 ```go
 if dialect.Supports(db.Dialect(), dialect.Merge) {
@@ -142,10 +142,10 @@ if dialect.Supports(db.Dialect(), dialect.Merge) {
 
 ## Naming a column twice
 
-PostgreSQL and SQL Server refuse a write that gives a column two values, and MySQL keeps the last. ant refuses it before any SQL runs, on every database, with a plain error that names the field. It covers `DoUpdate` and `Set` of an upsert, a bulk `Update`, `UpdateMany`, a merge's `WhenMatched` and `WhenNotMatched`, and the mappings of `InsertFrom`.
+PostgreSQL and SQL Server refuse a write that gives a column two values. MySQL keeps the last. ant refuses it before any SQL runs, on every database. It covers `DoUpdate` and `Set` of an upsert, a bulk `Update`, `UpdateMany`, a merge's `WhenMatched` and `WhenNotMatched`, and the mappings of `InsertFrom`.
 
 ```go
-_, err := db.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Name, "x"), ant.Set(&U.Name, "y"))
+_, err := db.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.Set(&Users.Name, "x"), ant.Set(&Users.Name, "y"))
 // ant: User.Name has two assignments; give it one
 ```
 
@@ -157,7 +157,7 @@ A failed [field rule](/lifecycle/validation) is an `*ant.ValidationError` with `
 
 ## Database errors
 
-These classify a database's error without string matching, on all five databases.
+These classify a database's error on all five databases.
 
 ```go
 err := db.Users.Insert(ctx, user)
@@ -176,7 +176,7 @@ case ant.IsRetryable(err):
 // spot-end
 ```
 
-`ant.SQLState(err)` returns the code itself, such as `23505`. Each dialect translates its own codes, so one value means one thing everywhere.
+`ant.SQLState(err)` returns the code itself, such as `23505`. Each dialect translates its own codes.
 
 | Function | SQLSTATE |
 | --- | --- |
@@ -220,17 +220,17 @@ err := db.Users.Insert(ctx, user)
 slog.Error("insert failed", "sql", ant.FailedSQL(err))
 ```
 
-`ant.WithDetailedErrors()` adds the statement to every error's message, which helps in development. Leave it off where errors reach users. A database error's message can also quote a value, so do not return `err.Error()` to a client.
+`ant.WithDetailedErrors()` adds the statement to every error's message. Leave it off where errors reach users. A database error's message can also quote a value, so do not return `err.Error()` to a client.
 
 ## Strict scanning
 
-By default a result column with no field is ignored. `ant.WithStrict()` returns `ant.ErrUnknownColumn` instead, which catches a model that has fallen behind its table.
+By default a result column with no field is ignored. `ant.WithStrict()` returns `ant.ErrUnknownColumn` instead.
 
 ```go
 // spot-next-line
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithStrict())
 ```
 
-`ant.WithLooseScan()` says the default out loud, for code that builds options in layers and needs to switch `WithStrict` off.
+`ant.WithLooseScan()` switches `WithStrict` back off, for code that builds options in layers.
 
 <Tests path="developer_tooling/errors_test.go" />

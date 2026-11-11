@@ -115,7 +115,7 @@ const config = {
         },
         items: [
           {to: '/quick-start', label: 'Quick start', position: 'left'},
-          {to: '/models/defining-models', label: 'Models', position: 'left'},
+          {to: '/why-ant', label: 'Why ant', position: 'left'},
           {to: '/queries/conditions', label: 'Queries', position: 'left'},
           {to: '/migrations/overview', label: 'Migrations', position: 'left'},
           {href: reference, label: 'API', position: 'right'},

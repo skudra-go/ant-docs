@@ -3,7 +3,7 @@ title: Joins
 description: Follow relations, or join on any condition, across up to four models.
 ---
 
-A join follows a relation, or any condition you give it. The result is typed by the models in it, and conditions and ordering can use any of them. `Select` turns each joined row into a value of your own.
+A join follows a relation or any condition you give it. Conditions and ordering can use any joined model. `Select` turns each joined row into a value of your own.
 
 ## Join through a relation
 
@@ -11,9 +11,9 @@ A join follows a relation, or any condition you give it. The result is typed by 
 
 ```go
 rows, err := db.Posts.
-	Join(&P.User).
-	Where(ant.Eq(&U.Name, "Alice")).
-	OrderBy(&P.Title).
+	Join(&Posts.User).
+	Where(ant.Eq(&Users.Name, "Alice")).
+	OrderBy(&Posts.Title).
 	Select(func(p *Post, u *User) string { return u.Name + ": " + p.Title }).
 	All(ctx)
 // SELECT ... FROM "posts"
@@ -24,7 +24,7 @@ rows, err := db.Posts.
 
 ```go
 titles, err := db.Users.
-	JoinMany(&U.Posts).
+	JoinMany(&Users.Posts).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
 // SELECT ... FROM "users" JOIN "posts" ON "users"."id" = "posts"."user_id"
@@ -32,7 +32,7 @@ titles, err := db.Users.
 
 :::tip[`Join` or `Include`?]
 
-A join gives you one flat row per match, to project or filter on. To load whole models with their relations attached, use [`Include`](/relations/loading).
+A join gives one flat row per match. To load whole models with their relations attached, use [`Include`](/relations/loading).
 
 :::
 
@@ -42,7 +42,7 @@ A join gives you one flat row per match, to project or filter on. To load whole 
 
 ```go
 rows, err := db.Users.
-	LeftJoinMany(&U.Posts).
+	LeftJoinMany(&Users.Posts).
 	Select(func(u *User, p *Post) string {
 		if p == nil {
 			return u.Name + " has no posts"
@@ -60,14 +60,14 @@ rows, err := db.Users.
 
 ```go
 rows, err := db.Users.
-	JoinOn[Post](ant.EqCol(&U.ID, &P.UserID), ant.Eq(&P.Published, true)).
+	JoinOn[Post](ant.EqCol(&Users.ID, &Posts.UserID), ant.Eq(&Posts.Published, true)).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
 // SELECT ... FROM "users"
 // JOIN "posts" ON "users"."id" = "posts"."user_id" AND "posts"."published" = $1
 ```
 
-Conditions in the join put the filter in the `ON` clause. On a left join this matters: a published-only condition in `ON` keeps users with no published posts, and the same condition in `Where` drops them.
+Conditions passed to the join go in the `ON` clause. On a left join, a published-only condition in `ON` keeps users with no published posts. The same condition in `Where` drops them.
 
 `LeftJoinOn`, `RightJoinOn` and `FullJoinOn` work the same way. `CrossJoin[Post]()` takes no condition and pairs every row with every row:
 
@@ -79,13 +79,13 @@ pairs, err := db.Users.
 // SELECT ... FROM "users" CROSS JOIN "posts"
 ```
 
-`JoinUsing[Post](&U.ID)` joins on a column both tables have, and is called on a query: `db.Users.Query().JoinUsing[Post](&U.ID)`.
+`JoinUsing[Post](&Users.ID)` joins on a column both tables have. Call it on a query: `db.Users.Query().JoinUsing[Post](&Users.ID)`.
 
 `FULL JOIN` depends on the database: PostgreSQL, SQLite and SQL Server have it, MySQL and MariaDB don't. See [databases](/reference/databases).
 
 ## Three and four models
 
-Chain joins, and each step can follow a relation of any model already in the query.
+Chain joins. Each step can follow a relation of any model already in the query.
 
 ```go
 type Comment struct {
@@ -95,11 +95,11 @@ type Comment struct {
 	Post   *Post
 }
 
-var C = ant.Fields[Comment]()
+var Comments = ant.Fields[Comment]()
 
 rows, err := db.Comments.
-	Join(&C.Post).Join(&P.User).
-	Where(ant.Eq(&U.Name, "Ann")).
+	Join(&Comments.Post).Join(&Posts.User).
+	Where(ant.Eq(&Users.Name, "Ann")).
 	Select(func(c *Comment, p *Post, u *User) string {
 		return u.Name + "/" + p.Title + "/" + c.Text
 	}).
@@ -127,7 +127,7 @@ type Folder struct {
 	Parent   *Folder
 }
 
-var F = ant.Fields[Folder]()
+var Folders = ant.Fields[Folder]()
 ```
 */}
 
@@ -137,7 +137,7 @@ Each side of a self-join is its own row. The second copy gets an alias.
 
 ```go
 pairs, err := db.Folders.
-	Join(&F.Parent).
+	Join(&Folders.Parent).
 	Select(func(child, parent *Folder) string { return parent.Name + "/" + child.Name }).
 	All(ctx)
 // SELECT ... FROM "folders" JOIN "folders" AS "t1" ON "folders"."parent_id" = "t1"."id"
@@ -145,13 +145,13 @@ pairs, err := db.Folders.
 
 ## Join a query
 
-`JoinSub` joins the results of a query, so they can be narrowed first. Probes of the joined model refer to its columns.
+`JoinSub` joins the results of a query. Field pointers of the joined model refer to its columns.
 
 ```go
-published := db.Posts.Where(ant.Eq(&P.Published, true))
+published := db.Posts.Where(ant.Eq(&Posts.Published, true))
 
 rows, err := ant.
-	JoinSub(db.Users.OrderBy(&U.Name), published, ant.EqCol(&U.ID, &P.UserID)).
+	JoinSub(db.Users.OrderBy(&Users.Name), published, ant.EqCol(&Users.ID, &Posts.UserID)).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
 // SELECT ... FROM "users"
@@ -164,13 +164,13 @@ rows, err := ant.
 
 ## The newest rows per parent
 
-A lateral join runs once per row, so it can read the top few rows for each parent, which a plain join can't do.
+A lateral join runs once per row, so it can read the top few rows for each parent.
 
 ```go
-newest := db.Posts.Where(ant.EqCol(&P.UserID, &U.ID)).OrderByDesc(&P.ID).Limit(2)
+newest := db.Posts.Where(ant.EqCol(&Posts.UserID, &Users.ID)).OrderByDesc(&Posts.ID).Limit(2)
 
 rows, err := ant.
-	JoinLateral(db.Users.OrderBy(&U.Name), newest).
+	JoinLateral(db.Users.OrderBy(&Users.Name), newest).
 	Select(func(u *User, p *Post) string { return p.Title }).
 	All(ctx)
 // SELECT ... FROM "users"

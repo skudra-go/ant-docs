@@ -3,17 +3,17 @@ title: Composing queries
 description: Reuse queries, add to them conditionally, and name them.
 ---
 
-Builder methods always return a new query, so one query can be the starting point for others, and a function can hand back part of one.
+Builder methods return a new query, so one query can be the base for others.
 
 ## Reuse a query
 
 ```go
-adults := db.Users.Where(ant.Gt(&U.Age, 18)).OrderBy(&U.Name)
+adults := db.Users.Where(ant.Gt(&Users.Age, 18)).OrderBy(&Users.Name)
 
-alice, err := adults.Where(ant.Eq(&U.Name, "Alice")).All(ctx)
+alice, err := adults.Where(ant.Eq(&Users.Name, "Alice")).All(ctx)
 // SELECT ... FROM "users" WHERE "users"."age" > $1 AND "users"."name" = $2 ORDER BY "users"."name"
 
-carol, err := adults.Where(ant.Eq(&U.Name, "Carol")).All(ctx)
+carol, err := adults.Where(ant.Eq(&Users.Name, "Carol")).All(ctx)
 
 // adults is unchanged, and can run again.
 everyone, err := adults.All(ctx)
@@ -22,23 +22,23 @@ everyone, err := adults.All(ctx)
 
 ## Add parts only when needed
 
-`When` adds to a query only if a condition holds at run time, so a search form doesn't need a chain of `if`s.
+`When` applies a function to the query only if its condition is true.
 
 ```go
 func search(ctx context.Context, name string, adultsOnly bool) ([]*User, error) {
 	return db.Users.
-		OrderBy(&U.Name).
+		OrderBy(&Users.Name).
 		When(name != "", func(q *ant.Query[User]) *ant.Query[User] {
-			return q.Where(ant.Eq(&U.Name, name))
+			return q.Where(ant.Eq(&Users.Name, name))
 		}).
 		When(adultsOnly, func(q *ant.Query[User]) *ant.Query[User] {
-			return q.Where(ant.Gte(&U.Age, 18))
+			return q.Where(ant.Gte(&Users.Age, 18))
 		}).
 		All(ctx)
 }
 ```
 
-With no name and `adultsOnly` false, the query has no conditions. With both set, it has both:
+With no name and `adultsOnly` false, the query has no conditions. With both set:
 
 ```go
 users, err := search(ctx, "Bob", true)
@@ -47,15 +47,15 @@ users, err := search(ctx, "Bob", true)
 
 ## Name a reusable piece with a scope
 
-A scope is a function that takes a query and returns one. Pass any number to `Scope`.
+A scope is a function from a query to a query. `Scope` takes any number of them.
 
 ```go
 func Adults(q *ant.Query[User]) *ant.Query[User] {
-	return q.Where(ant.Gte(&U.Age, 18))
+	return q.Where(ant.Gte(&Users.Age, 18))
 }
 
 func OlderFirst(q *ant.Query[User]) *ant.Query[User] {
-	return q.OrderByDesc(&U.Age)
+	return q.OrderByDesc(&Users.Age)
 }
 
 users, err := db.Users.Scope(Adults, OlderFirst).All(ctx)
@@ -67,7 +67,7 @@ For a scope with parameters, write a function that returns one:
 ```go
 func OlderThan(age int) func(*ant.Query[User]) *ant.Query[User] {
 	return func(q *ant.Query[User]) *ant.Query[User] {
-		return q.Where(ant.Gt(&U.Age, age))
+		return q.Where(ant.Gt(&Users.Age, age))
 	}
 }
 
@@ -75,6 +75,6 @@ users, err := db.Users.Scope(OlderThan(30)).All(ctx)
 // SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
 
-You apply scopes by hand. For a condition that should apply to every query of a model, use a [global filter](/lifecycle/global-filters) instead.
+Scopes apply only where you call them. For a condition on every query of a model, use a [global filter](/lifecycle/global-filters).
 
 <Tests path="querying/when_test.go" />

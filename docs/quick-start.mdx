@@ -1,13 +1,38 @@
 ---
 title: Quick start
-description: A small program that creates two tables, saves a user with posts, queries them, and updates a row on PostgreSQL.
+description: A small program that saves a user with posts, queries them, and updates a row, on SQLite with nothing to install or on PostgreSQL in Docker.
 ---
 
-This page builds a small program against PostgreSQL. It creates two tables, saves a user with two posts, loads them back and updates one column. The data stays in the database, so you can run it as often as you like and look at the rows afterwards. You need Go 1.27 or later, and Docker for the database.
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+A small program that saves a user with two posts, loads them back and updates one column. You need Go 1.27 or later.
+
+SQLite needs nothing but Go. PostgreSQL needs Docker, and it's the one to build a real project on, because migrations only support PostgreSQL so far. The two versions differ only in how they connect and create tables.
 
 ## Set up
 
-Create a module and add ant and a PostgreSQL driver:
+<Tabs groupId="database" queryString>
+<TabItem value="sqlite" label="SQLite" default>
+
+```bash
+mkdir hello && cd hello
+go mod init example.com/hello
+go get github.com/skudra-go/ant modernc.org/sqlite
+```
+
+`modernc.org/sqlite` is pure Go, so no C compiler is needed.
+
+Or clone the same program from [examples/hello](https://github.com/skudra-go/ant-examples/tree/main/examples/hello):
+
+```bash
+git clone https://github.com/skudra-go/ant-examples
+cd ant-examples/examples/hello
+go run .
+```
+
+</TabItem>
+<TabItem value="postgres" label="PostgreSQL">
 
 ```bash
 mkdir hello && cd hello
@@ -15,16 +40,144 @@ go mod init example.com/hello
 go get github.com/skudra-go/ant github.com/jackc/pgx/v5/stdlib
 ```
 
-ant runs on top of `database/sql`, so you pick the driver. For PostgreSQL that's `pgx`.
-
-Start a database:
-
 ```bash
 docker run -d --name hello-db -p 127.0.0.1:5432:5432 \
   -e POSTGRES_PASSWORD=hello postgres:17
 ```
 
+</TabItem>
+</Tabs>
+
 ## The program
+
+<Tabs groupId="database" queryString>
+<TabItem value="sqlite" label="SQLite" default>
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	_ "modernc.org/sqlite" // the "sqlite" driver, in pure Go
+
+	"github.com/skudra-go/ant"
+	"github.com/skudra-go/ant/dialect/sqlite"
+)
+
+// spot-start
+type User struct {
+	ant.Base // ID, CreatedAt, UpdatedAt
+	Name     string
+	Email    string `ant:"unique"`
+	Age      int
+	Posts    []Post // found through Post.UserID
+}
+
+type Post struct {
+	ant.Base
+	UserID int64
+	Title  string
+}
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+}
+
+var Users = ant.Fields[User]()
+// spot-end
+
+// Migrations run on PostgreSQL only for now, so on SQLite the tables are plain SQL.
+const tables = `
+CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	name TEXT NOT NULL,
+	email TEXT NOT NULL UNIQUE,
+	age INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS posts (
+	id INTEGER PRIMARY KEY,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	user_id INTEGER NOT NULL REFERENCES users (id),
+	title TEXT NOT NULL
+)`
+
+func main() {
+	ctx := context.Background()
+
+	// spot-next-line
+	db, err := ant.Open[AppDB](ctx, sqlite.Dialect, "file:hello.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer db.Close()
+
+	// spot-next-line
+	if _, err := ant.Raw[any](db, tables).Exec(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	// Insert Alice and her posts on the first run, and find her on later ones.
+	// spot-start
+	alice, created, err := db.Users.FirstOrCreate(
+		ctx,
+		&User{
+			Name:  "Alice",
+			Email: "alice@example.com",
+			Age:   30,
+			Posts: []Post{{Title: "Hello"}, {Title: "Second post"}},
+		},
+		ant.Eq(&Users.Email, "alice@example.com"),
+	)
+	// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if created {
+		fmt.Println("Created", alice.Name)
+	}
+
+	// Load every adult with their posts. ant.Gte(&Users.Age, "18") wouldn't compile.
+	// spot-start
+	adults, err := db.Users.
+		Where(ant.Gte(&Users.Age, 18)).
+		Include(&Users.Posts). // one query for every user's posts
+		OrderBy(&Users.Name).
+		All(ctx)
+		// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, u := range adults {
+		fmt.Printf("%s is %d and has %d posts\n", u.Name, u.Age, len(u.Posts))
+	}
+
+	// Change a loaded user and save. Only the age column is written.
+	// spot-start
+	adults[0].Age++
+
+	err = db.SaveChanges(ctx)
+	// spot-end
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Happy birthday,", adults[0].Name)
+}
+```
+
+</TabItem>
+<TabItem value="postgres" label="PostgreSQL">
 
 ```go title="main.go"
 package main
@@ -61,7 +214,7 @@ type AppDB struct {
 	Posts ant.Table[Post]
 }
 
-var U = ant.Fields[User]()
+var Users = ant.Fields[User]()
 // spot-end
 
 func main() {
@@ -89,7 +242,7 @@ func main() {
 		Email: "alice@example.com",
 		Age:   30,
 		Posts: []Post{{Title: "Hello"}, {Title: "Second post"}},
-	}, ant.Eq(&U.Email, "alice@example.com"))
+	}, ant.Eq(&Users.Email, "alice@example.com"))
 	// spot-end
 	if err != nil {
 		log.Fatal(err)
@@ -102,9 +255,9 @@ func main() {
 	// Load every adult with their posts.
 	// spot-start
 	adults, err := db.Users.
-		Where(ant.Gte(&U.Age, 18)).
-		Include(&U.Posts).
-		OrderBy(&U.Name).
+		Where(ant.Gte(&Users.Age, 18)).
+		Include(&Users.Posts).
+		OrderBy(&Users.Name).
 		All(ctx)
 		// spot-end
 	if err != nil {
@@ -129,6 +282,9 @@ func main() {
 }
 ```
 
+</TabItem>
+</Tabs>
+
 ## Run it
 
 ```bash
@@ -142,7 +298,7 @@ Alice is 30 and has 2 posts
 Happy birthday, Alice
 ```
 
-Run it again. Alice already exists, so nothing is inserted, and she's a year older because the last run saved her new age:
+A second run finds Alice and prints the age the first run saved:
 
 ```text
 Alice is 31 and has 2 posts
@@ -150,6 +306,16 @@ Happy birthday, Alice
 ```
 
 The rows are in the database:
+
+<Tabs groupId="database" queryString>
+<TabItem value="sqlite" label="SQLite" default>
+
+```bash
+sqlite3 hello.db 'SELECT id, name, age FROM users'
+```
+
+</TabItem>
+<TabItem value="postgres" label="PostgreSQL">
 
 ```bash
 docker exec hello-db psql -U postgres -c 'SELECT id, name, age FROM users'
@@ -161,9 +327,41 @@ docker exec hello-db psql -U postgres -c 'SELECT id, name, age FROM users'
   1 | Alice |  32
 ```
 
+</TabItem>
+</Tabs>
+
 ## What each step sent
 
-**`EnsureCreated`** created the tables from the structs, because they didn't exist yet. On later runs it finds them and does nothing. It's meant for tests and prototypes; use [migrations](/migrations/overview) for a real schema.
+<Tabs groupId="database" queryString>
+<TabItem value="sqlite" label="SQLite" default>
+
+**`ant.Raw`** ran the two `CREATE TABLE` statements in `main.go`.
+
+**`FirstOrCreate`** found no user with that email on the first run. It inserted Alice, then both posts in one statement with her new key as `user_id`:
+
+```sql
+SELECT "users"."id", "users"."created_at", "users"."updated_at", "users"."name", "users"."email", "users"."age" FROM "users" WHERE "users"."email" = ? LIMIT ?
+INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age") VALUES (?, ?, ?, ?, ?) RETURNING "id"
+INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title") VALUES (?, ?, ?, ?), (?, ?, ?, ?) RETURNING "id"
+```
+
+**`Include`** loaded every user's posts in one query:
+
+```sql
+SELECT "users"."id", "users"."created_at", "users"."updated_at", "users"."name", "users"."email", "users"."age" FROM "users" WHERE "users"."age" >= ? ORDER BY "users"."name"
+SELECT "posts"."id", "posts"."created_at", "posts"."updated_at", "posts"."user_id", "posts"."title" FROM "posts" WHERE "posts"."user_id" IN (?)
+```
+
+**`SaveChanges`** compared Alice with the copy ant kept at load time. It wrote only `age` and the timestamp:
+
+```sql
+UPDATE "users" SET "age" = ?, "updated_at" = ? WHERE "users"."id" = ?
+```
+
+</TabItem>
+<TabItem value="postgres" label="PostgreSQL">
+
+**`EnsureCreated`** (PostgreSQL only) created the missing tables from the structs. On later runs it does nothing. It's for tests and prototypes, so use [migrations](/migrations/overview) for a real schema.
 
 ```sql
 CREATE TABLE "users" (
@@ -179,7 +377,7 @@ CREATE TABLE "users" (
 -- and "posts", an index on "posts"."user_id", and its foreign key
 ```
 
-**`FirstOrCreate`** looked for a user with that email. On the first run there was none, so it inserted Alice, then both posts in one statement with `user_id` filled in from her new key:
+**`FirstOrCreate`** found no user with that email on the first run. It inserted Alice, then both posts in one statement with her new key as `user_id`:
 
 ```sql
 SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2
@@ -187,22 +385,35 @@ INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age") VALUES 
 INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title") VALUES ($1, $2, $3, $4), ($5, $6, $7, $8) RETURNING "id"
 ```
 
-**`Include`** loaded the posts of every user in one extra query, however many users there are:
+**`Include`** loaded every user's posts in one query:
 
 ```sql
 SELECT ... FROM "users" WHERE "users"."age" >= $1 ORDER BY "users"."name"
 SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1)
 ```
 
-**`SaveChanges`** compared Alice with the copy ant kept when it loaded her, found that only `Age` changed, and wrote that column and the timestamp:
+**`SaveChanges`** compared Alice with the copy ant kept at load time. It wrote only `age` and the timestamp:
 
 ```sql
 UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
-`&U.Age` in `Where` is a [field probe](/models/field-probes): a pointer to the `Age` field that stands for the `age` column. Misspell it, or compare it with a string, and the program doesn't compile.
+</TabItem>
+</Tabs>
+
+`&Users.Age` is a [field pointer](/models/field-probes) for the `age` column. A misspelled field doesn't compile.
 
 ## Start over
+
+<Tabs groupId="database" queryString>
+<TabItem value="sqlite" label="SQLite" default>
+
+```bash
+rm hello.db
+```
+
+</TabItem>
+<TabItem value="postgres" label="PostgreSQL">
 
 To delete the database and its data:
 
@@ -210,8 +421,11 @@ To delete the database and its data:
 docker rm -f hello-db
 ```
 
+</TabItem>
+</Tabs>
+
 ## Next
 
 - [Concepts](/concepts): the ideas behind the program above.
 - [Migrations](/migrations/overview): replace `EnsureCreated` with SQL files you review.
-- [Example projects](https://github.com/skudra-go/ant-examples): a blog API, an audit service and a ledger.
+- [Example projects](https://github.com/skudra-go/ant-examples): this program, a blog API, an audit service and a ledger.

@@ -7,19 +7,124 @@ import FieldTrace from '@site/src/components/FieldTrace';
 import SaveDemo from '@site/src/components/SaveDemo';
 import QueryLog from '@site/src/components/QueryLog';
 import LostUpdate from '@site/src/components/LostUpdate';
-import TwoPaths from '@site/src/components/TwoPaths';
 
-This page shows the problems ant was written to solve, next to how other Go libraries handle them. Code from other libraries comes from their own docs, and the GORM and Bun SQL is what v1.31 and v1.3 sent when the examples were run.
+Four problems Go ORMs commonly have, and how ant, GORM, Bun, ent and sqlc each handle them. Code for the other libraries comes from their docs; the GORM and Bun SQL was captured from real runs.
 
-## How `&U.Age` becomes a column
+## One query, four libraries
 
-Most Go ORMs name columns with strings, which the compiler can't check. ant uses a pointer to the struct field instead, so the compiler checks the column and the type of the value.
+Users over 18 with their posts, sorted by name, 10 at a time. The red strings are not checked. A typo in one is a runtime error. A [test](https://github.com/skudra-go/ant/tree/main/tools/compare) runs all four and checks they return the same rows.
+
+<Compare>
+<Others>
+<Lib>
+
+```go marks no-check title="GORM 1.31"
+var users []User
+
+err := db.WithContext(ctx).
+	Preload(⟦-:"Posts"⟧).
+	Where(⟦-:"age > ?"⟧, 18).
+	Order(⟦-:"name"⟧).
+	Limit(10).
+	Find(&users).
+	Error
+```
+
+</Lib>
+<Lib>
+
+```go marks no-check title="Bun 1.3"
+var users []User
+
+err := db.NewSelect().
+	Model(&users).
+	Relation(⟦-:"Posts"⟧).
+	Where(⟦-:"age > ?"⟧, 18).
+	Order(⟦-:"name"⟧).
+	Limit(10).
+	Scan(ctx)
+```
+
+</Lib>
+<Lib>
+
+```go marks no-check title="ent 0.14"
+users, err := client.User.Query().
+	⟦+:WithPosts()⟧.
+	Where(⟦+:user.AgeGT(18)⟧).
+	Order(⟦+:user.ByName()⟧).
+	Limit(10).
+	All(ctx)
+```
+
+Checked. `go generate` builds these methods from ent's schema.
+
+</Lib>
+</Others>
+<Ant>
+
+```go marks title="ant"
+users, err := db.Users.
+	Include(⟦+:&Users.Posts⟧).
+	Where(ant.Gt(⟦+:&Users.Age⟧, 18)).
+	OrderBy(⟦+:&Users.Name⟧).
+	Limit(10).
+	All(ctx)
+```
+
+`Users` is the probe for your own `User` struct. Nothing is generated.
+
+</Ant>
+</Compare>
+
+### What the compiler catches
+
+<CatchTable />
+
+Each cell was tested by compiling the mistake, or for sqlc by running `sqlc generate` 1.30. GORM's optional [CLI](https://github.com/go-gorm/cli) generates typed field helpers.
+
+## How `&Users.Age` becomes a column
+
+`&Users.Age` is a `*int`, so the compiler checks the field name, and checks that the value compared with it is an `int`.
 
 <FieldTrace />
 
+### How ant finds the column
+
+`ant.Fields[User]()` allocates one empty `User` per model type and records its address. `&Users.Age` is an address inside that value, so ant subtracts the start address to get the field's offset, then matches the offset and the pointer's type against the fields it read from `User` by reflection. It checks the type too, because a struct and its first field share an address. Resolving a field pointer takes about 20 ns and allocates nothing.
+
+This relies on the Go runtime not moving heap objects, which it does not do today. A test in ant, `TestProbeSurvivesGC`, guards it.
+
+<CollapsibleCode title="internal/meta/meta.go" note="Resolve, simplified">
+
+```go no-check
+func Resolve[V any](ptr *V) (Ref, bool) {
+	addr := uintptr(unsafe.Pointer(ptr))
+	t := reflect.TypeFor[V]()
+
+	for _, p := range probes {
+		if addr < p.base || addr >= p.base+p.model.Type.Size() {
+			continue
+		}
+
+		off := addr - p.base
+
+		for _, f := range p.model.Fields {
+			if f.Offset == off && f.Type == t {
+				return Ref{Model: p.model, Field: f}, true
+			}
+		}
+	}
+
+	return Ref{}, false
+}
+```
+
+</CollapsibleCode>
+
 ## What it fixes
 
-Each of these has a workaround in the other libraries. In ant, the default avoids them.
+Each of these has a workaround in the other libraries. ant's defaults avoid them.
 
 {/*
 ```go
@@ -38,8 +143,6 @@ type User struct {
 
 ### Queries are strings
 
-A misspelled column in a string compiles. The error shows up when the query runs.
-
 <Compare>
 <Others>
 <Lib>
@@ -55,8 +158,6 @@ SELECT * FROM "users" WHERE ⟦-:agee⟧ <= 18
 -- ERROR: column "agee" does not exist (SQLSTATE 42703)
 ```
 
-The typo goes into the SQL, and the database reports it.
-
 </Lib>
 <Lib>
 
@@ -71,8 +172,6 @@ SELECT "user"."id", ... FROM "users" AS "user" WHERE (⟦-:agee⟧ <= 18)
 -- ERROR: column "agee" does not exist (SQLSTATE 42703)
 ```
 
-The same: the condition is a string, so the compiler can't check it.
-
 </Lib>
 <Lib>
 
@@ -82,7 +181,7 @@ users, err := client.User.Query().
 	All(ctx)
 ```
 
-This is checked: misspell `AgeLTE` and it won't build. The predicate is generated from a schema written in ent's DSL, so it exists after `go generate`.
+Checked, once `go generate` has built `AgeLTE` from the schema.
 
 </Lib>
 </Others>
@@ -90,21 +189,17 @@ This is checked: misspell `AgeLTE` and it won't build. The predicate is generate
 
 ```go marks compile-fail title="ant"
 users, err := db.Users.
-	Where(ant.Lte(⟦-:&U.Agee⟧, 18)).
+	Where(ant.Lte(⟦-:&Users.Agee⟧, 18)).
 	All(ctx)
 ```
 
 ```text title="go build"
-U.Agee undefined (type *User has no field or method Agee)
+Users.Agee undefined (type *User has no field or method Agee)
 ```
 
 ```sql title="Spelled right, it sends"
 SELECT "users"."id", ... FROM "users" WHERE "users"."age" <= $1
 ```
-
-- A typo fails the build.
-- `&U.Age` is a `*int`, so the value has to be an `int` too.
-- Nothing is generated. The struct is the model.
 
 </Ant>
 </Compare>
@@ -115,7 +210,7 @@ SELECT "users"."id", ... FROM "users" WHERE "users"."age" <= $1
 
 ### Zero values disappear
 
-Go can't tell a field set to `0` from one that was never set, so some libraries treat zero as "not set" and skip it in updates.
+GORM's `Updates`, Bun's `OmitZero` and xorm's `Update` skip zero-valued fields.
 
 <SaveDemo />
 
@@ -136,7 +231,7 @@ UPDATE "users" SET "updated_at"='…',"name"='Ada' WHERE "id" = 1
 -- no age, no active
 ```
 
-Only non-zero fields are written. `Select("Age", "Active")` or a map writes the others, when you remember to use them.
+`Select("Age", "Active")` or a map writes them.
 
 </Lib>
 <Lib>
@@ -153,7 +248,7 @@ UPDATE "users" AS "user" SET "name" = 'Ada' WHERE ("user"."id" = 1)
 -- no age, no active
 ```
 
-Skipping zeros is opt-in here, and once it's on, a real `0` isn't written either. Without it, Bun writes every column.
+`OmitZero` is opt-in. Without it, Bun writes every column.
 
 </Lib>
 <Lib>
@@ -165,7 +260,7 @@ engine.ID(id).Update(&User{
 })
 ```
 
-The same rule, unless you name the columns with `Cols` or `AllCols`.
+`Cols` or `AllCols` writes them.
 
 </Lib>
 </Others>
@@ -185,8 +280,8 @@ UPDATE "users" SET ⟦+:"age" = $1⟧, ⟦+:"active" = $2⟧, "updated_at" = $3
 WHERE "users"."id" = $4
 ```
 
-- ant compares against what it loaded, so `0`, `false`, `""`, and `nil` count as changes like anything else.
-- Zero only means something where you ask for it: a zero integer key means "generate one", and a field tagged [`default`](/models/nullable-and-defaults#database-defaults) leaves zero for the database to fill in.
+- ant compares against what it loaded, so `0`, `false`, `""` and `nil` are changes.
+- Zero has a special meaning in only two places: a zero integer key is generated by the database, and a zero field tagged [`default`](/models/nullable-and-defaults#database-defaults) is left for the database to fill in.
 
 </Ant>
 </Compare>
@@ -197,7 +292,7 @@ WHERE "users"."id" = $4
 
 ### One query per row
 
-Loading a list and then something for each row takes one query for the list plus one per row, the N+1 problem. It goes unnoticed with 3 rows and slows a page down with 500.
+`Include` loads a relation for all rows in one query.
 
 <QueryLog />
 
@@ -216,7 +311,7 @@ SELECT * FROM books WHERE user_id=2
 SELECT * FROM books WHERE user_id=3
 ```
 
-By default, one query per user. `EagerPreload` batches them.
+`EagerPreload` batches them.
 
 </Lib>
 <Lib>
@@ -229,8 +324,6 @@ err := db.⟦-:Preload("Posts")⟧.Find(&users).Error
 SELECT * FROM "users"
 SELECT * FROM "posts" WHERE "posts"."user_id" IN (1,2,3)
 ```
-
-Batched. The relation name is a string, so `Preload("Psots")` compiles and fails when it runs.
 
 </Lib>
 <Lib>
@@ -246,15 +339,13 @@ SELECT "user"."id", ... FROM "users" AS "user"
 SELECT "post"."id", ... FROM "posts" AS "post" WHERE ("post"."user_id" IN (1, 2, 3))
 ```
 
-Batched too, with the same string.
-
 </Lib>
 </Others>
 <Ant>
 
 ```go marks title="ant"
 users, err := db.Users.
-	⟦+:Include(&U.Posts)⟧.
+	⟦+:Include(&Users.Posts)⟧.
 	All(ctx)
 ```
 
@@ -263,10 +354,9 @@ SELECT "users"."id", ... FROM "users"
 SELECT "posts"."id", ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
 ```
 
-- Always batched: one query for the users, one for all of their posts.
-- The relation is a typed pointer, so `Include(&U.Name)` won't build.
+- `&Users.Posts` is a typed field pointer, so `Include(&Users.Name)` won't build.
 - Reading a field never runs a query. A relation that wasn't loaded is `nil`.
-- If you write the loop by hand, [diagnostics](/tooling/diagnostics) warns when one statement repeats within a request.
+- For a loop written by hand, [diagnostics](/tooling/diagnostics) warns when one statement repeats within a request.
 
 </Ant>
 </Compare>
@@ -277,7 +367,7 @@ SELECT "posts"."id", ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
 
 ### Saving undoes someone else's change
 
-Two requests load the same user. If a save writes the whole row back, the one that finishes last undoes the other's change.
+When a save writes the whole row back, the last of two requests undoes the other's change.
 
 <LostUpdate />
 
@@ -297,7 +387,7 @@ UPDATE "users" SET "created_at"='…',"updated_at"='…',"name"='Ada L.',
 WHERE "id" = 1
 ```
 
-`Save` writes every field, including the plan it loaded before the upgrade. Bun's `Update` on a model does the same.
+Bun's `Update` on a model also writes every field.
 
 </Lib>
 <Lib>
@@ -308,7 +398,7 @@ u, err = u.Update().
 	Save(ctx)
 ```
 
-Safe: only the fields named in the setter chain are written. The code that saves has to know which fields changed, so logic spread across functions has to pass that along.
+Only the fields in the setter chain are written. The code that saves has to know which fields changed.
 
 </Lib>
 <Lib>
@@ -320,7 +410,7 @@ UPDATE users SET
 WHERE id = sqlc.arg('id');
 ```
 
-Also safe and explicit: a statement for each shape of update, or a `coalesce` for every optional column.
+Safe, with a statement for each shape of update or a `coalesce` for every optional column.
 
 </Lib>
 </Others>
@@ -339,97 +429,35 @@ UPDATE "users" SET ⟦+:"name" = $1⟧, "updated_at" = $2
 WHERE "users"."id" = $3
 ```
 
-- Only `name` is written, so the plan stays `pro`.
-- Code can change fields anywhere, and nothing has to keep a list of what changed.
-- If both requests change the same field, the last one still wins. Add an [`ant:"version"`](/lifecycle/optimistic-concurrency) field and the second save fails instead.
+- Code can change fields anywhere, and nothing has to pass along which ones changed.
+- If both requests change the same field, the last one wins. With an [`ant:"version"`](/lifecycle/optimistic-concurrency) field, the second save fails instead.
 
 </Ant>
 </Compare>
 
 </Pain>
 
-## Your database, new or existing
+## Migrations
 
-ant doesn't change your schema on its own. There's no auto-migrate, `Open` doesn't touch the schema, and every change is a plain SQL file you review before it runs.
+ant never changes your schema on its own. There is no auto-migrate, and `Open` doesn't touch the schema. `migrate diff` compares your structs with a stored snapshot and writes the difference as a plain SQL file, which you review before `migrate up` applies it. No database is needed to generate it. For an existing database, `migrate drift` lists every difference between your structs and the live schema until there are none.
 
-<TwoPaths />
+Migrations run on PostgreSQL only. On the other databases ant reads and writes your existing tables, and your current migration tool keeps the schema. [Migrations](/migrations/overview) covers new projects and how ant compares with GORM's AutoMigrate, Atlas and sqlc. [Adopting a database](/migrations/adopting) covers existing ones.
 
-For an existing database, `drift` compares your structs with the live schema and lists every difference, so you can check the models before relying on them.
+## What it costs
 
-```text title="go run ./cmd/migrate drift"
-The database differs from the models. To match, it would need to:
-  change column users.name: type character varying(50) to text
-  add unique users_email_key on users
-```
+ant keeps a copy of every row it loads, so `SaveChanges` can find what changed. On a 1000-row read, that makes ant 1.7 times slower than the same query with `NoTracking`, and uses 3 times the memory. Use `NoTracking` for lists, exports and reports; with it, ant read 1000 rows faster than GORM, Bun and ent in our runs.
 
-Each line is something to fix in a struct. Repeat until it prints `No drift`.
+Single-row reads and writes cost about the same in every library, because the round trip to the database is most of the time. ant allocates more than Bun and plain SQL on small queries.
 
-### What this means for a project
+[Benchmarks](/reference/benchmarks) has the full tables and how to run them.
 
-- **Adopting doesn't touch your tables.** `baseline` records your schema as already applied. The only thing it adds is its own table, `ant_migrations`. Your data, and whatever runs your app today, carry on as before.
-- **You can keep your migration tool.** `diff` and `check` don't need a database, so ant can write the SQL while golang-migrate, or whatever you use now, keeps running it.
-- **You can start with just queries.** Structs that match your tables are all you need to read and write. Querying doesn't depend on migrations at all.
-- **You can leave.** The files are ordinary SQL in a common layout, and the history table is yours to drop.
+## Limits
 
-:::note[PostgreSQL only, for now]
-
-Migrations run on PostgreSQL. On MySQL, MariaDB, SQLite, and SQL Server, ant reads and writes your existing tables, and your schema stays with whatever tool you use now.
-
-:::
-
-### Next to the alternatives
-
-<Compare>
-<Others>
-<Lib>
-
-```go marks no-check title="GORM"
-⟦-:db.AutoMigrate(&User{})⟧
-```
-
-Changes the live database directly, with no file to review, and in its own words "WON'T delete unused columns". For versioned migrations, its docs point to Atlas.
-
-</Lib>
-<Lib>
-
-```bash no-check title="ent, with Atlas"
-atlas migrate diff add_bio \
-  --dir "file://ent/migrate/migrations" \
-  --to "ent://ent/schema" \
-  --dev-url "docker://mysql/8/ent"
-```
-
-Versioned SQL files you can review. It needs ent's schema DSL and a dev database to replay the history on.
-
-</Lib>
-<Lib>
-
-```text no-check title="sqlc"
-sqlc does not perform database migrations for you.
-```
-
-From its docs. sqlc reads the files of whichever migration tool you use.
-
-</Lib>
-</Others>
-<Ant>
-
-```text title="go run ./cmd/migrate diff add_bio"
-Wrote migrations/versions/0002_add_bio.up.sql
-  add column users.bio
-Review it, then apply it with: up
-```
-
-```sql title="0002_add_bio.up.sql"
-ALTER TABLE "users" ADD COLUMN "bio" text;
-```
-
-- It compares your structs with a stored snapshot, so generating doesn't need a database.
-- Risky statements come with a warning above them, and renames don't lose data.
-- It's plain SQL, committed with your code. There are no down migrations: to undo something, you write a new one.
-
-</Ant>
-</Compare>
-
-The [migrations guide](/migrations/overview) covers the rest, and [adopting a database](/migrations/adopting) walks the existing-project path step by step.
-
+- **Some mistakes compile.** A field pointer from another model's probe, a pointer that isn't from a probe, and a `Find` key of the wrong type are refused when the query runs, not at build time. [antvet](/tooling/antvet) reports them in `go vet`. ent and sqlc catch these at build or generate time.
+- **Go 1.27 or later.** ant uses generic methods, so it can't support older Go.
+- **Pre-1.0.** The API can still change between releases.
+- **Migrations are PostgreSQL only.** The other four databases get queries, writes, relations, tracking and transactions, and keep their current migration tool.
+- **No down migrations.** To undo a change, write a new migration.
+- **Tracking holds memory.** A tracker grows until it's discarded and serves one unit of work at a time, so use an `ant.Session` per request.
+- **The last write wins** when two requests change the same field. Add an `ant:"version"` field to make the second save fail instead.
+- **Probes rely on heap objects not moving**, which Go does not do today.

@@ -3,7 +3,7 @@ title: Locks and hints
 description: Row locks, job queues, optimizer hints, and query comments.
 ---
 
-A lock holds rows until the transaction ends, so locks belong inside a [`Tx`](/transactions).
+A lock holds rows until the transaction ends, so use locks inside a [`Tx`](/transactions).
 
 {/*
 ```go
@@ -12,7 +12,7 @@ type Job struct {
 	Done bool
 }
 
-var J = ant.Fields[Job]()
+var Jobs = ant.Fields[Job]()
 
 type AppDB struct {
 	ant.Context
@@ -24,11 +24,11 @@ type AppDB struct {
 
 ## Lock a row for update
 
-Read the row with `ForUpdate`, change it, and save in the same transaction. Others who try to lock or write the row wait until you finish.
+Read the row with `ForUpdate`, change it, and save in the same transaction. Others who try to lock or write the row wait.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
-	user, err := tx.Users.Where(ant.Eq(&U.ID, id)).ForUpdate().Single(ctx)
+	user, err := tx.Users.Where(ant.Eq(&Users.ID, id)).ForUpdate().Single(ctx)
 	// SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2 FOR UPDATE
 	if err != nil {
 		return err
@@ -51,11 +51,11 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 
 ## Claim jobs from a queue
 
-`SkipLocked` lets each worker claim a row nobody else holds, so no job runs twice.
+`SkipLocked` lets each worker claim a row nobody else holds.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
-	job, err := tx.Jobs.OrderBy(&J.ID).ForUpdate().SkipLocked().First(ctx)
+	job, err := tx.Jobs.OrderBy(&Jobs.ID).ForUpdate().SkipLocked().First(ctx)
 	// SELECT ... FROM "jobs" ORDER BY "jobs"."id" LIMIT $1 FOR UPDATE SKIP LOCKED
 	if err != nil {
 		return err
@@ -67,13 +67,13 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 })
 ```
 
-When no row is free, `First` returns `ant.ErrNotFound`, which a worker can treat as "queue empty".
+When no row is free, `First` returns `ant.ErrNotFound`.
 
 Row locks depend on the database. PostgreSQL and MySQL have them all, MariaDB has `ForUpdate` only, and SQLite and SQL Server return `ant.ErrUnsupported`. See [databases](/reference/databases).
 
 ## Add an optimizer hint
 
-`Hint` writes an optimizer hint before the statement. PostgreSQL ignores hints unless you install the `pg_hint_plan` extension. A hint tends to outlive the reason for it, so prefer fixing the query.
+`Hint` writes an optimizer hint before the statement. PostgreSQL ignores hints without the `pg_hint_plan` extension.
 
 ```go
 users, err := db.Users.Query().Hint("SeqScan(users)").All(ctx)
@@ -84,13 +84,13 @@ MySQL and MariaDB read the hint right after `SELECT`, so ant writes it there: `S
 
 ## Tag a query
 
-`Tag` adds a comment to the SQL, so a slow query is easy to spot in database logs.
+`Tag` adds a comment to the SQL, to find a query in database logs.
 
 ```go
-users, err := db.Users.Where(ant.Gt(&U.Age, 18)).Tag("dashboard: adults").All(ctx)
+users, err := db.Users.Where(ant.Gt(&Users.Age, 18)).Tag("dashboard: adults").All(ctx)
 // /* dashboard: adults */ SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
 
-Neither `Tag` nor `Hint` can break out of its comment. When `*/` or `/*` appears in the text, ant puts a space between its two characters, so `*/ DROP TABLE users; /*` is written as `* / DROP TABLE users; / *` inside the comment. Text from a request is safe to tag with, though it shows up in the log with those spaces.
+`Tag` and `Hint` can't be broken out of. ant puts a space between the characters of `*/` or `/*` in the text, so `*/ DROP TABLE users; /*` is written as `* / DROP TABLE users; / *`.
 
 <Tests path="querying/locks_test.go" />

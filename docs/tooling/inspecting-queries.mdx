@@ -3,15 +3,13 @@ title: Inspecting queries
 description: See the SQL, the plan, and what a piece of code really writes.
 ---
 
-Four ways to see what ant sends, from one query up to a whole unit of work.
-
 ## ToSQL
 
-`ToSQL` returns a query's statement and arguments without running it. No database is needed.
+`ToSQL` returns a query's statement and arguments without running it or needing a database.
 
 ```go
 // spot-next-line
-text, args, err := db.Users.Where(ant.Gt(&U.Age, 18)).OrderBy(&U.Name).Limit(5).ToSQL()
+text, args, err := db.Users.Where(ant.Gt(&Users.Age, 18)).OrderBy(&Users.Name).Limit(5).ToSQL()
 ```
 
 ```sql
@@ -22,25 +20,25 @@ SELECT "users"."id", ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users".
 
 ## Explain
 
-`Explain` returns the database's query plan as text. Use it to check that an index is used.
+`Explain` returns the database's query plan as text.
 
 ```go
 // spot-next-line
-plan, err := db.Users.Where(ant.Gt(&U.Age, 18)).Explain(ctx)
+plan, err := db.Users.Where(ant.Gt(&Users.Age, 18)).Explain(ctx)
 ```
 
 ## Debug
 
-`Debug` logs one query's SQL and values through slog's default logger. It shows values, so take it out before committing.
+`Debug` logs one query's SQL and values through slog's default logger. Remove it before committing, since it logs values.
 
 ```go
 // spot-next-line
-users, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Debug().All(ctx)
+users, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Debug().All(ctx)
 ```
 
 ## DryRun
 
-`ant.DryRun` runs your code in a transaction, returns every statement it ran, and rolls back. Use it to see what a unit of work writes. Sequences still move on, and anything the function does outside the database still happens.
+`ant.DryRun` runs your code in a transaction, returns every statement it ran, and rolls back. Sequences still move on, and anything the function does outside the database still happens.
 
 ```go
 // spot-start

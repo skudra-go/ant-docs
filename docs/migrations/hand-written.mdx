@@ -3,8 +3,6 @@ title: Hand-written changes
 description: Views, functions, data migrations, seeds, and statements outside a transaction.
 ---
 
-The models can't express everything. This page covers where the rest goes.
-
 {/*
 ```go
 type Role struct {
@@ -12,7 +10,7 @@ type Role struct {
 	Name string
 }
 
-var R = ant.Fields[Role]()
+var Roles = ant.Fields[Role]()
 
 type AppDB struct {
 	ant.Context
@@ -24,7 +22,7 @@ type AppDB struct {
 
 ## Write an empty migration
 
-`diff --empty` writes a blank file for extensions, types, triggers, or anything else the models can't express. The models and the snapshot stay as they are. If the models changed too, `snapshot` accepts them.
+`diff --empty` writes a blank file for extensions, types, triggers, or anything else the models can't express. It leaves the snapshot alone. If the models changed too, `snapshot` accepts them.
 
 ```bash
 go run ./cmd/migrate diff enable_citext --empty
@@ -43,7 +41,7 @@ CREATE EXTENSION IF NOT EXISTS citext;
 
 ## Views and functions
 
-Files in `migrations/code` run after the versioned ones, in name order, and again whenever they change. That way the file stays the one definition of the view or function, and git keeps its history. Number them if one depends on another, as in `10_views/` and `20_functions/`. Each file has to be safe to run again.
+Files in `migrations/code` run after the versioned ones, in name order, and again whenever they change, so the file stays the one definition of the view or function. Number them if one depends on another, as in `10_views/` and `20_functions/`. Each file must be safe to run again.
 
 ```sql title="migrations/code/10_post_stats.sql"
 -- spot-start
@@ -54,7 +52,7 @@ CREATE VIEW post_stats AS SELECT user_id, count(*) AS posts FROM posts GROUP BY 
 
 ## Data, in Go
 
-For changes SQL can't express, register a migration in Go. It runs once, in order with the files, inside a transaction, and `tx` is your context bound to it.
+For changes SQL can't express, register a migration in Go. It runs once, in order with the files, inside a transaction, and `tx` is your context bound to that transaction.
 
 ```go
 func init() {
@@ -71,11 +69,11 @@ func init() {
 }
 ```
 
-Put it in a package that both `cmd/migrate` and any program calling `migrate.Up` import. A model describes today's schema, not the schema at that point in history, so prefer `ant.Raw` in code that has to outlive a model change. For work too big for one transaction, add `migrate.NoTransaction` and commit in batches.
+Put it in a package that `cmd/migrate` and any program calling `migrate.Up` both import. A model describes today's schema, not the schema at that point in history, so use `ant.Raw` in code that must outlive a model change. For work too big for one transaction, add `migrate.NoTransaction` and commit in batches.
 
 ## Statements that refuse a transaction
 
-`-- ant:no-transaction` at the top of a file runs it without one, a statement at a time. `diff` adds it for you when it writes `CREATE INDEX CONCURRENTLY`, and when a file adds an enum value that the same file then uses (see [generated SQL](/migrations/generated-sql#add-an-enum-value)).
+`-- ant:no-transaction` at the top of a file runs it without one, a statement at a time. `diff` adds it when it writes `CREATE INDEX CONCURRENTLY`, and when a file adds an enum value that the same file then uses (see [generated SQL](/migrations/generated-sql#add-an-enum-value)).
 
 ```sql
 -- spot-next-line
@@ -87,13 +85,13 @@ If such a file fails partway, `up` stops until someone has looked: see [troubles
 
 ## Seed data
 
-`seed` runs Go seeders, each in its own transaction, with model hooks off. They run whenever you ask, so write them to be safe to repeat.
+`seed` runs Go seeders, each in its own transaction, with model hooks off. Seeders run on every `seed`, so make them safe to repeat.
 
 ```go
 func init() {
 	// spot-start
 	migrate.Seed[AppDB]("roles", func(ctx context.Context, db *AppDB) error {
-		_, _, err := db.Roles.FirstOrCreate(ctx, &Role{Name: "admin"}, ant.Eq(&R.Name, "admin"))
+		_, _, err := db.Roles.FirstOrCreate(ctx, &Role{Name: "admin"}, ant.Eq(&Roles.Name, "admin"))
 
 		return err
 	})

@@ -1,41 +1,41 @@
 ---
 title: Benchmarks
-description: ant against GORM, Bun, and plain database/sql.
+description: ant against GORM, Bun, ent and plain database/sql.
+hide_table_of_contents: true
 ---
 
-These compare ant with GORM v1.31, Bun v1.3, and plain `database/sql`, doing the same work on the same PostgreSQL 17 in Docker. Plain `database/sql` stands in for sqlc, whose generated code is a query string and a `Scan`.
+ant next to GORM 1.31, Bun 1.3, ent 0.14 and plain `database/sql`, doing the same work on one PostgreSQL 17. Plain SQL stands in for sqlc, whose generated code is a query string and a `Scan`. `TestSameQuery` in the same module checks that all four libraries return the same rows for the query on [Why ant](/why-ant#one-query-four-libraries).
 
-These results came from one run on one laptop in WSL, on 2026-10-31. Read them as a shape, not as a promise. Differences of a few percent are noise: a shorter run of the same code once put ant's single-row read at 504 µs and Bun's update at 5.8 ms, and neither survived a longer one. Allocations are stable, and times aren't.
+## Setup
 
-| Benchmark | `database/sql` | ant | GORM | Bun |
-| --- | --- | --- | --- | --- |
-| **Read 1000 rows** | 1.68 ms | 1.56 ms | 3.03 ms | 2.16 ms |
-| Memory | 223 kB | 254 kB | 369 kB | 270 kB |
-| Allocations | 7,771 | 6,833 | 14,808 | 8,790 |
-| **Find one row** | 370 µs | 384 µs | 390 µs | 375 µs |
-| Memory | 1.5 kB | 6.0 kB | 5.8 kB | 6.4 kB |
-| Allocations | 36 | 93 | 89 | 41 |
-| **Filter, sort, limit** | 541 µs | 537 µs | 544 µs | 528 µs |
-| Memory | 3.5 kB | 9.9 kB | 9.7 kB | 9.2 kB |
-| Allocations | 98 | 178 | 219 | 124 |
-| **Insert one row** | 2.80 ms | 2.90 ms | 2.91 ms | 3.47 ms |
-| Memory | 1.3 kB | 3.2 kB | 7.1 kB | 6.6 kB |
-| Allocations | 22 | 76 | 76 | 39 |
-| **Update one column** | 2.86 ms | 2.96 ms | 2.94 ms | 2.96 ms |
-| Memory | 0.4 kB | 2.9 kB | 5.7 kB | 5.2 kB |
-| Allocations | 8 | 47 | 58 | 14 |
+[`tools/compare`](https://github.com/skudra-go/ant/tree/main/tools/compare) runs the same operations in each library against PostgreSQL 17, on one machine: a Ryzen 5 3600, with the database in Docker on WSL2.
 
-### Rows are where a mapper's cost shows
+- Each number is the median of 10 runs. A run repeats the operation for a second, hundreds to thousands of times, and averages it.
+- Every number includes the round trip to the database, which is most of the time on small queries.
+- Commits don't wait for the disk (`synchronous_commit=off`), so disk speed doesn't drown out the libraries on writes.
+- Plain SQL is the baseline: a hand-written query and `Scan`, which is what sqlc generates.
+- ant runs with change tracking (its default) and with `NoTracking`.
 
-ant reads a row with a compiled list of field pointers, so reading 1000 rows costs about what hand-written `Scan` calls do, and half what GORM does.
+Green is the best library in each row.
 
-### A single row is mostly a network round trip
+## Time
 
-Every library spends nearly all its time waiting, so the four are within 5% of each other, and one fewer query matters far more. ant allocates more than Bun or plain SQL here, which shows up in a garbage collector's work under load, not in this table.
+<BenchTable metric="time" />
 
-### Writes wait for the disk
+## Memory
 
-The insert and update figures are dominated by the commit.
+<BenchTable metric="memory" />
+
+## Allocations
+
+<BenchTable metric="allocs" />
+
+## What the numbers say
+
+- Small queries cost about the same in every library.
+- ant keeps a copy of each loaded row so [`SaveChanges`](/tracking/save-changes) can find changes. That makes 1000 rows 1.7 times slower and 3 times the memory. With [`NoTracking`](/queries/reading-rows#skip-the-tracker), ant reads them fastest.
+- Bun puts insert values into the SQL text, so the driver prepares every insert as a new statement. `default_query_exec_mode=simple_protocol` in the DSN brings it to 452 µs.
+- ent's update reads the row back in a transaction, so load, edit and save takes four statements instead of two.
 
 ## Building queries
 
@@ -43,16 +43,18 @@ The insert and update figures are dominated by the commit.
 
 | Operation | Time | Allocations |
 | --- | --- | --- |
-| Resolving a field probe | 20 ns | 0 |
+| Resolving a field pointer | 22 ns | 0 |
 | Building and rendering a query with two conditions, an order, and a limit | 7.3 µs | 78 |
 
-Budgets in `tests/benchmarks/allocs_test.go` fail a test if these grow by accident.
+Budgets in `tests/benchmarks/allocs_test.go` fail a test if these grow.
 
 Rendering takes a few microseconds, against a few hundred for the round trip, which is why ant doesn't cache rendered SQL: a cache key would cost about what it saves, and pgx already caches prepared statements per connection.
 
 ## Run them yourself
 
-```bash
-make db-up DATABASES=postgres
-cd tools/compare && go test -run '^$' -bench . -benchmem -benchtime 2s
+```sh
+make db-up DATABASES=postgres   # from the ant repo root
+cd tools/compare
+go test -run '^$' -bench . -benchmem -count 10 | tee new.txt
+go run golang.org/x/perf/cmd/benchstat@latest new.txt
 ```

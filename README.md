@@ -74,7 +74,7 @@ The compiler sees a string.
 <Ant>
 
 ```go marks title="ant"
-db.Users.Where(ant.Lte(⟦+:&U.Age⟧, 18))
+db.Users.Where(ant.Lte(⟦+:&Users.Age⟧, 18))
 ```
 
 - A typo does not build.

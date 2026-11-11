@@ -3,7 +3,7 @@ title: Auditing
 description: Four ways to record what happened, and which one fits.
 ---
 
-ant has four places to record a change. Which one fits depends on what you need to know afterwards.
+ant has four places to record a change.
 
 {/*
 ```go
@@ -64,8 +64,6 @@ func (a *AuditTrail) SavingChanges(ctx context.Context, changes []ant.Change) er
 // spot-end
 ```
 
-Register it when you open the context:
-
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithInterceptor(&AuditTrail{logger}))
 ```
@@ -78,7 +76,7 @@ UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 
 ### Record the old values
 
-The interceptor sees which fields changed, not what they were. Take the entity's entry and read the value as it was loaded:
+The interceptor sees which fields changed, not their old values. `ant.Original` reads the value as loaded:
 
 ```go
 func logAge(ctx context.Context, db *AppDB, user *User) error {
@@ -87,7 +85,7 @@ func logAge(ctx context.Context, db *AppDB, user *User) error {
 		return err
 	}
 
-	was, err := ant.Original(entry, &U.Age)
+	was, err := ant.Original(entry, &Users.Age)
 	if err != nil {
 		return err
 	}
@@ -98,11 +96,11 @@ func logAge(ctx context.Context, db *AppDB, user *User) error {
 }
 ```
 
-`Entry` takes a context and returns an error. Pass the context you were given: inside a hook or interceptor it shares that operation's claim on the tracker, and a context from elsewhere is refused with `ErrConcurrentUse` while another operation holds it. `Original` returns `ErrNotTracked` for an entity with no loaded values.
+Pass `Entry` the context you were given: inside a hook or interceptor it shares that operation's claim on the tracker, and a context from elsewhere gets `ErrConcurrentUse` while another operation holds it. `Original` returns `ErrNotTracked` for an entity with no loaded values.
 
 ## Write an audit row in the same transaction
 
-For a record that can never disagree with the data, write it in the same transaction as the change. Either both commit or neither does.
+To keep the record consistent with the data, write it in the same transaction as the change.
 
 ```go
 err := db.Tx(ctx, func(tx *AppDB) error {
@@ -118,11 +116,11 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 // -- $1 = 'order.created', $2 = the new order's id
 ```
 
-A hook runs inside the write too, but it only gets a `context.Context`, with no way to reach the transaction. Use hooks to check or refuse, not to write rows.
+A hook only gets a `context.Context` and cannot reach the transaction, so use hooks to check or refuse, not to write rows.
 
 ## React after the commit
 
-An [observer](/lifecycle/hooks-and-observers#observers) runs after the commit and never hears about a rollback or a failed commit. It runs in your process and is gone if the process crashes.
+An [observer](/lifecycle/hooks-and-observers#observers) runs after the commit, never for a rollback or failed commit. It runs in your process, so a crash loses it.
 
 For anything that must not be lost, write an outbox row in the transaction, as the [ledger example](https://github.com/skudra-go/ant-examples/tree/main/examples/ledger) does, and let a worker send it.
 
@@ -130,6 +128,6 @@ For anything that must not be lost, write an outbox row in the transaction, as t
 
 An [`Interceptor`](/tooling/interceptors) sees every statement, including bulk writes and raw SQL, as SQL rather than entities.
 
-Bulk `Update` and `Delete`, `InsertMany` and `Raw` don't run hooks or a `SaveInterceptor`, because they never load an entity. Only a database trigger sees everything, including someone typing into `psql`.
+Bulk `Update` and `Delete`, `InsertMany` and `Raw` don't run hooks or a `SaveInterceptor`, since they load no entity. Only a database trigger sees everything, including someone typing into `psql`.
 
 For a whole audit service, see the [audit example](https://github.com/skudra-go/ant-examples/tree/main/examples/audit).

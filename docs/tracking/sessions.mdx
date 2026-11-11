@@ -31,24 +31,22 @@ func rename(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The handler runs two statements:
-
 ```sql
 SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
 UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
-Each session saves only its own changes, and many sessions run at once. Observers registered on the root are shared. When the handler returns, the session is garbage; there is nothing to close.
+Each session saves only its own changes, and many run at once. Observers registered on the root are shared. A session needs no closing.
 
 :::warning[Close the root only]
 
-A session shares the root's pool, so closing a session closes it for everyone. Close the context you got from `Open`, and only that one.
+A session shares the root's pool, so closing a session closes it for everyone. Close only the context from `Open`.
 
 :::
 
 ## Keep the shared context out of tracking
 
-`ant.Open` gives a context that tracks. Handlers that use it directly would all share one tracker, which fails as described [below](#two-operations-at-once). Open the shared context with tracking off, and turn it on in the sessions that save:
+`ant.Open` gives a context that tracks, so handlers that use it directly share one tracker ([two operations at once](#two-operations-at-once)). Open it with tracking off and turn tracking on in the sessions that save:
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
@@ -57,14 +55,14 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
 session := ant.Session(db, ant.WithTracking(true))
 ```
 
-A session takes its settings from the root, so a session on a tracking-off root also has tracking off, and `SaveChanges` would have nothing to save. Pass `WithTracking(true)` to the sessions that write.
+A session inherits the root's settings, so on a tracking-off root it has tracking off and `SaveChanges` has nothing to save.
 
-A context with tracking off is safe to share between goroutines. Reads, bulk `Update` and `Delete`, and `Insert` don't touch a tracker, so nothing is claimed and nothing conflicts:
+Reads, bulk `Update` and `Delete`, and `Insert` don't touch a tracker, so a context with tracking off is safe to share between goroutines:
 
 ```go
 // A background job on the shared, tracking-off context.
 func purge(ctx context.Context) error {
-	_, err := db.Posts.Where(ant.Eq(&P.Published, false)).Delete(ctx)
+	_, err := db.Posts.Where(ant.Eq(&Posts.Published, false)).Delete(ctx)
 	// DELETE FROM "posts" WHERE "posts"."published" = $1
 
 	return err
@@ -75,19 +73,19 @@ One exception: `ant.Add` and `ant.Attach` fill the tracker even when tracking is
 
 ## Two operations at once
 
-Every load hands back the one instance of a row the tracker holds, and `Include` writes the related rows into it. Two requests on one tracking context would load into the same entities while both change them: each would reset Alice's posts and append its own, and both would see the posts twice.
+Every load returns the tracker's one instance of a row, and `Include` writes the related rows into it. Two requests on one tracking context would load into the same entities while both change them: each would reset Alice's posts and append its own, so both would see the posts twice.
 
-So ant refuses the second operation. While one operation uses the tracker, another gets `ant.ErrConcurrentUse` at once. It does not wait, because waiting would turn the mistake into slow requests.
+While one operation uses the tracker, another gets `ant.ErrConcurrentUse` at once instead of waiting.
 
 ```go
 // db tracks, and two requests call this at the same time.
-user, err := db.Users.Include(&U.Posts).Find(ctx, id)
+user, err := db.Users.Include(&Users.Posts).Find(ctx, id)
 if errors.Is(err, ant.ErrConcurrentUse) {
 	// the other request got the tracker first
 }
 ```
 
-The fix is a session per goroutine. Work inside one request that runs in parallel gets one each:
+Fix it with a session per goroutine, including parallel work inside one request:
 
 ```go
 var wg sync.WaitGroup
@@ -135,7 +133,7 @@ A hook runs inside the operation that called it. Its queries must use the `ctx` 
 ```go
 func (u *User) AfterLoad(ctx context.Context) error {
 	// ctx is the hook's: this query belongs to the load that called it
-	count, err := db.Posts.Where(ant.Eq(&P.UserID, u.ID)).Count(ctx)
+	count, err := db.Posts.Where(ant.Eq(&Posts.UserID, u.ID)).Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,7 +144,7 @@ func (u *User) AfterLoad(ctx context.Context) error {
 }
 ```
 
-A query inside a hook with `context.Background()` or any other context looks like a second operation, and the load fails with `ErrConcurrentUse`. Goroutines you start inside an operation with its context share the claim, so they must not use the tracker at the same time. See [hooks](/lifecycle/hooks-and-observers).
+A query in a hook with any other context, such as `context.Background()`, looks like a second operation and fails with `ErrConcurrentUse`. Goroutines you start inside an operation with its context share the claim, so they must not use the tracker at the same time. See [hooks](/lifecycle/hooks-and-observers).
 
 <Tests path="change_tracking/concurrent_use_test.go" />
 

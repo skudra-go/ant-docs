@@ -3,11 +3,11 @@ title: Several databases
 description: Use one context per database, and route requests to a database per tenant.
 ---
 
-This page is for databases that hold different data. For read replicas of a single database, see [read replicas](/transactions/connections#read-replicas).
+For read replicas of a single database, see [read replicas](/transactions/connections#read-replicas).
 
 ## Use one context per database
 
-Declare a context for each. Each has its own models, migrations and `cmd/migrate`, and its own connection pool.
+Each context has its own models, migrations, `cmd/migrate` and connection pool.
 
 ```go keep-db
 type Invoice struct {
@@ -27,9 +27,9 @@ type BillingDB struct {
 // spot-end
 ```
 
-A relation can't cross databases. Keep the key, and load the other side in a second query. Mark such a relation `.NoForeignKey()`.
+A relation can't cross databases. Keep the key and load the other side in a second query. Mark such a relation `.NoForeignKey()`.
 
-The two contexts can use different databases. `Open` each with its own dialect and DSN:
+`Open` each with its own dialect and DSN:
 
 ```go
 mainDB, err := ant.Open[MainDB](ctx, postgres.Dialect, "postgres://localhost/main")
@@ -38,9 +38,9 @@ billingDB, err := ant.Open[BillingDB](ctx, mysql.Dialect, "app:app@tcp(localhost
 
 ## Route requests to a database per tenant
 
-To give each large tenant a database of its own, keep a map of open contexts and pick one per request. Open each one once: an ant context owns a connection pool.
+Keep a map of open contexts and pick one per request. Open each once, since a context owns a connection pool.
 
-Hand each request its own session. A context tracks the entities it loads, and a tracking context serves one operation at a time, so two requests sharing one get `ErrConcurrentUse`. `ant.Session` shares the pool and gives the request a tracker of its own.
+A tracking context serves one operation at a time, so two requests sharing one get `ErrConcurrentUse`. Give each request an `ant.Session`, which shares the pool and has its own tracker.
 
 ```go
 type Router struct {
@@ -90,8 +90,6 @@ func dsnFor(tenant string) string {
 	return "postgres://localhost/" + tenant
 }
 ```
-
-Close the pools when the process stops:
 
 ```go
 func (r *Router) Close() error {

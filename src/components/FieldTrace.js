@@ -17,7 +17,7 @@ export default function FieldTrace() {
         <div className="trace__side">
           <span className="trace__label">You write</span>
           <code className="trace__code">
-            ant.Gt(<Field>&amp;U.Age</Field>, <Value>18</Value>)
+            ant.Gt(<Field>&amp;Users.Age</Field>, <Value>18</Value>)
           </code>
         </div>
         <div className="trace__arrow" aria-hidden="true" />
@@ -35,11 +35,11 @@ export default function FieldTrace() {
       <dl className="trace__key">
         <div>
           <dt>
-            <Field>&amp;U.Age</Field> becomes <Field>"users"."age"</Field>
+            <Field>&amp;Users.Age</Field> becomes <Field>"users"."age"</Field>
           </dt>
           <dd>
-            It points at the <code>Age</code> field of your <code>User</code> struct, so ant knows
-            the column. Rename the field and every query follows.
+            A field pointer to <code>User.Age</code> names the column. Renaming the field renames it
+            in every query.
           </dd>
         </div>
         <div>
@@ -47,15 +47,13 @@ export default function FieldTrace() {
             <Value>18</Value> becomes <Value>$1</Value>
           </dt>
           <dd>
-            It has to be an <code>int</code>, because <code>Age</code> is one. Write{' '}
-            <code>"18"</code> and it won't build. It's sent as a parameter, never pasted into the
-            SQL.
+            It's sent as a parameter, never pasted into the SQL.
           </dd>
         </div>
       </dl>
 
       <p className="trace__aside">
-        <code>U</code> is declared once, next to the model: <code>var U = ant.Fields[User]()</code>
+        <code>Users</code> is declared once, next to the model: <code>var Users = ant.Fields[User]()</code>
       </p>
     </figure>
   );

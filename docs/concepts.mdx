@@ -1,13 +1,11 @@
 ---
 title: Concepts
-description: The five ideas ant is built on, and the mistakes the compiler cannot catch.
+description: The ideas ant is built on, and the mistakes the compiler cannot catch.
 ---
-
-Five ideas cover most of the API. Read this page first, then the rest of the docs will make sense.
 
 ## Models are plain structs
 
-A struct maps to a table, its fields map to columns, and the field names decide the column names. There is no base type to embed, no generated code, and no schema file.
+Each struct is a table, and each field a column named after the field. There is no generated code and no schema file. Embedding `ant.Base` adds `ID`, `CreatedAt` and `UpdatedAt`, but it's optional: `Book` below declares its own `ID`.
 
 ```go
 // spot-start
@@ -28,19 +26,19 @@ type LibraryDB struct {
 
 ## A probe names a column
 
-`ant.Fields[T]()` returns a `*T` that never holds data. `&B.Pages` is then a pointer ant can recognise as the `pages` column, and the compiler sees a `*int`, so whatever you compare it with has to be an `int`.
+`ant.Fields[T]()` returns a probe: a `*T` that never holds data. `&Books.Pages` is a field pointer. ant reads it as the `pages` column. The compiler sees a `*int`, so the value compared with it must be an `int`.
 
 ```go
-var B = ant.Fields[Book]()
+var Books = ant.Fields[Book]()
 
 books, err := db.Books.
 	// spot-next-line
-	Where(ant.Gt(&B.Pages, 100)).
+	Where(ant.Gt(&Books.Pages, 100)).
 	All(ctx)
 // SELECT ... FROM "books" WHERE "books"."pages" > $1
 ```
 
-See [field probes](/models/field-probes).
+See [probes](/models/field-probes).
 
 ## The context is your database
 
@@ -57,27 +55,27 @@ type AppDB struct {
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
 ```
 
-`Open` reads every model, so a model that can't be mapped fails here, at startup.
+`Open` reads every model, so a model it can't map fails at startup rather than on first use.
 
 ## Errors arrive at the last call
 
-Builder methods such as `Where` and `OrderBy` never return an error. ant collects mistakes along the way, and the call that runs the query returns them. That call always takes a `context.Context` first.
+Builder methods such as `Where` and `OrderBy` never return an error. The call that runs the query returns any mistakes ant collected. That call takes a `context.Context` first.
 
 ```go
 query := db.Users.
-	Where(ant.Gt(&U.Age, 18)).
-	OrderBy(&U.Name)
+	Where(ant.Gt(&Users.Age, 18)).
+	OrderBy(&Users.Name)
 
 // spot-next-line
-users, err := query.All(ctx) // runs here, and fails here
+users, err := query.All(ctx) // runs here, and returns any error here
 // SELECT ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users"."name"
 ```
 
 These calls run something: `All`, `First`, `Single`, `Find`, `Count`, `Exists`, `Each`, `Insert`, `Update`, `Delete`, `Exec` and `SaveChanges`. Everything before them describes the query.
 
-## Nothing happens behind your back
+## No implicit queries
 
-Reading a field never runs a query. A relation you didn't load stays `nil`. A relation you loaded that has no rows is an empty slice, so you can tell the two apart. Loading is always requested, and always batched: one extra query per relation, however many parents.
+ant never runs a query on field access. An unloaded relation is `nil`. A loaded relation with no rows is an empty slice. `Include` adds one query per relation, however many parents.
 
 ```go
 user, err := db.Users.Find(ctx, id)
@@ -86,7 +84,7 @@ user, err := db.Users.Find(ctx, id)
 fmt.Println(user.Posts == nil) // true: not loaded, and no query ran
 
 // spot-start
-user, err = db.Users.Include(&U.Posts).Find(ctx, id)
+user, err = db.Users.Include(&Users.Posts).Find(ctx, id)
 // SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
 // SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1)
 
@@ -94,14 +92,34 @@ fmt.Println(user.Posts == nil) // false: loaded, even if there are none
 // spot-end
 ```
 
-Writing is explicit too. Changes to tracked entities are saved only when you call `SaveChanges`.
+## Saving changes
+
+Entities that `All`, `First`, `Single`, `Find` and `Include` return are tracked: ant keeps a copy of each one, and `SaveChanges` writes only the columns that differ, in one transaction. A tracker belongs to one unit of work, so a server creates an `ant.Session` per request. `NoTracking` on a query, or `ant.WithTracking(false)` on `Open`, turns tracking off for read-only work.
+
+```go
+session := ant.Session(db)
+
+user, err := session.Users.Find(ctx, id)
+if err != nil {
+	return err
+}
+
+user.Age++
+
+err = session.SaveChanges(ctx)
+// UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+See [SaveChanges](/tracking/save-changes) and [Sessions](/tracking/sessions).
 
 ## What the compiler cannot catch
 
-Generics catch most mistakes. These compile, and ant returns an error when the query runs. [antvet](/tooling/antvet) finds them before that.
+These compile, and ant returns the error when the query runs. [antvet](/tooling/antvet) reports the ones marked ✓ during `go vet`.
 
-| Mistake | Example | Error |
-| --- | --- | --- |
-| A probe from the wrong model | `db.Posts.Where(ant.Gt(&U.Age, 18))` | `ant.ErrWrongModel` |
-| A pointer that isn't a probe | `ant.Gt(&age, 18)` | `ant.ErrNotProbe` |
-| A key of the wrong type | `db.Users.Find(ctx, "1")` | `ant.ErrKeyType` |
+| Mistake | Example | Error | antvet |
+| --- | --- | --- | :---: |
+| A field pointer from another model's probe | `db.Posts.Where(ant.Gt(&Users.Age, 18))` | `ant.ErrWrongModel` | ✓ |
+| A pointer not taken from a probe | `ant.Gt(&age, 18)` | `ant.ErrNotProbe` | ✓ |
+| A key of the wrong type | `db.Users.Find(ctx, "1")` | `ant.ErrKeyType` | ✓ |
+| A relation used as a column | `db.Posts.Where(ant.IsNull(&Posts.User))` | `ant.ErrNotColumn` | – |
+| A column used as a relation | `db.Users.IncludeOne(&Users.Bio)` | `ant.ErrNotRelation` | – |

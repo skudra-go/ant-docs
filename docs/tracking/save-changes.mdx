@@ -3,7 +3,7 @@ title: SaveChanges
 description: Change what you loaded, and SaveChanges writes only the differences, in one transaction.
 ---
 
-ant takes a snapshot of each entity it loads. `SaveChanges` compares every tracked entity with its snapshot and writes the differences: one `UPDATE` per changed entity, with only the changed columns, plus any inserts and deletes.
+ant snapshots each entity it loads. `SaveChanges` compares every tracked entity with its snapshot and writes the differences: one `UPDATE` per changed entity, with only the changed columns, plus any inserts and deletes.
 
 ## Update what you loaded
 
@@ -21,9 +21,9 @@ err = db.SaveChanges(ctx)
 // UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
-Only the changed column goes out, so a value someone else changed in the meantime isn't overwritten with your stale copy. If nothing changed, no statement is sent at all.
+Only the changed column is written, so a value someone else changed meanwhile isn't overwritten by your stale copy. With no changes, no statement is sent.
 
-A zero value is a change like any other, because the comparison is against what was loaded:
+A zero value is a change like any other:
 
 ```go
 // spot-start
@@ -39,7 +39,7 @@ A write through a pointer counts too.
 
 ## What counts as a change
 
-Comparison follows `reflect.DeepEqual`, with a few adjustments so that values which are the same in the database don't produce an `UPDATE`:
+Comparison is `reflect.DeepEqual` with adjustments, so values that are equal in the database don't produce an `UPDATE`:
 
 - A float `NaN` equals `NaN`.
 - Times are equal when they are the same instant, in any zone and at any depth, such as inside an `sql.Null[time.Time]` or `ant.UnixTime`.
@@ -103,7 +103,7 @@ These aren't tracked, so changing them saves nothing:
 
 ## One transaction, all or nothing
 
-`SaveChanges` always runs in a transaction, or in a savepoint when it is called inside one, even when it writes a single statement. If any statement fails, nothing is saved.
+`SaveChanges` always runs in a transaction, or in a savepoint when it is called inside one. If any statement fails, nothing is saved.
 
 ```go
 first := &User{Name: "N1", Email: "n1@example.com"}
@@ -117,12 +117,12 @@ err = db.SaveChanges(ctx)
 // ERROR: duplicate key value violates unique constraint "users_email_key" (SQLSTATE 23505)
 ```
 
-After a failure the entities are as they were before the call, and the changes are still pending:
+After a failure the entities are as they were before the call:
 
 - Keys the save generated are cleared, so `first.ID` and `second.ID` are 0 again, not the ids of rows that were rolled back.
 - `db.HasChanges(ctx)` is still true.
 
-Fix the cause and call `SaveChanges` again. Both users are inserted by the second call, with new keys.
+Fix the cause and call `SaveChanges` again to insert both users with new keys.
 
 ```go
 first := &User{Name: "N1", Email: "n1@example.com"}
@@ -139,7 +139,7 @@ second.Email = "n2@example.com"
 err = db.SaveChanges(ctx) // inserts both
 ```
 
-If a deadlock or serialization conflict failed the save, it can run again by itself. See [retries](/transactions/retries).
+A save that failed on a deadlock or serialization conflict can [run again](/transactions/retries) by itself.
 
 When `SaveChanges` runs inside a [transaction](/transactions#savechanges-in-a-transaction) that later rolls back, the tracker takes the save back too.
 
@@ -147,7 +147,7 @@ When `SaveChanges` runs inside a [transaction](/transactions#savechanges-in-a-tr
 
 ## Changed or removed since it was loaded
 
-An `UPDATE` or `DELETE` that finds no row means someone else removed it, or, with a [version column](/lifecycle/optimistic-concurrency), changed it. `SaveChanges` returns `ant.ErrConcurrency` and writes nothing, instead of writing to a row that is gone.
+An `UPDATE` or `DELETE` that finds no row means someone else removed the row or, with a [version column](/lifecycle/optimistic-concurrency), changed it. `SaveChanges` returns `ant.ErrConcurrency` and writes nothing.
 
 ```go
 session := ant.Session(db)
@@ -166,7 +166,7 @@ if errors.Is(err, ant.ErrConcurrency) {
 }
 ```
 
-Changing a primary key on a tracked entity returns `ant.ErrKeyChanged`, because the key says which row the entity is. Add a new entity instead, and remove the old one.
+Changing a primary key on a tracked entity returns `ant.ErrKeyChanged`. Add a new entity and remove the old one.
 
 ## Is anything pending?
 
@@ -179,11 +179,11 @@ has, err := db.HasChanges(ctx)
 // has is true
 ```
 
-Because it plans the real save, it also sees a post appended to, removed from, or moved between loaded relations, which a look at the entities alone would miss. See [changing relations](/tracking/changing-relations).
+It also sees a post appended to, removed from, or moved between loaded relations. See [changing relations](/tracking/changing-relations).
 
 ## Preview a save
 
-`ant.DryRun` runs a function in a transaction and rolls it back, and returns every statement it ran. Use it to check what a piece of code will write.
+`ant.DryRun` runs a function in a transaction, rolls it back, and returns every statement it ran.
 
 ```go
 statements, err := ant.DryRun(ctx, ant.Session(db), func(tx *AppDB) error {
@@ -206,7 +206,7 @@ for _, s := range statements {
 // RELEASE SAVEPOINT ant_sp_1
 ```
 
-The entities loaded inside stay in the tracker with their edits, so pass a session you throw away afterwards.
+Entities loaded inside stay in the tracker with their edits, so pass a throwaway session.
 
 ## One instance per row
 
@@ -217,7 +217,7 @@ first, err := db.Users.Find(ctx, id)
 
 first.Age = 70
 
-again, err := db.Users.Where(ant.Eq(&U.ID, id)).Single(ctx)
+again, err := db.Users.Where(ant.Eq(&Users.ID, id)).Single(ctx)
 
 // spot-next-line
 fmt.Println(first == again, again.Age) // true 70
@@ -237,11 +237,11 @@ session := ant.Session(db, ant.WithTracking(true))
 // spot-end
 ```
 
-The shared context never grows and is safe to use from many goroutines. Tracking lives in the [sessions](/tracking/sessions) that save.
+A context with tracking off never grows and is safe to share between goroutines. Tracking lives in the [sessions](/tracking/sessions) that save.
 
 ## Custom comparers
 
-`b.Comparer` replaces deep equality for one field, for a value where that is wrong, such as a list whose order means nothing.
+`b.Comparer` replaces deep equality for one field, such as a list whose order means nothing.
 
 ```go
 type Tagged struct {
@@ -251,14 +251,14 @@ type Tagged struct {
 
 func (Tagged) Configure(b *ant.ModelBuilder[Tagged]) {
 	// spot-next-line
-	b.Comparer(&TG.Items, sameItems)
+	b.Comparer(&Taggeds.Items, sameItems)
 }
 
 func sameItems(a, b ant.JSON[[]string]) bool {
 	return slices.Equal(slices.Sorted(slices.Values(a.V)), slices.Sorted(slices.Values(b.V)))
 }
 
-var TG = ant.Fields[Tagged]()
+var Taggeds = ant.Fields[Tagged]()
 ```
 
 :::warning[A context remembers everything it loads]
