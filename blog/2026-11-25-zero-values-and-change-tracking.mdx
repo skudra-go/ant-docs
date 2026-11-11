@@ -1,0 +1,189 @@
+---
+slug: zero-values-and-change-tracking
+title: "Zero values, lost updates and the price of a snapshot"
+description: "Why ant diffs against what it loaded instead of asking which fields changed, what that fixes, and what it costs in memory and time on large reads."
+authors: [borderss]
+tags: [go, orm, design]
+image: /img/blog/change-tracking.png
+draft: true
+keywords: [go orm, gorm zero value, gorm updates zero, bun omitzero, change tracking, unit of work, optimistic concurrency, golang]
+---
+
+Every Go ORM has to answer one question on update: which columns do I write? Go can't tell an `Age` you set to `0` from an `Age` you never touched, because both are `0`. Most libraries answer by skipping zero values, or by writing every column, or by making you list the columns. Each answer loses something: zeros, concurrent edits, or the convenience of not keeping a list.
+
+ant answers differently. It keeps a copy of every row it loads, and on save it writes the columns whose values differ from that copy. A zero is then a change like any other. This post covers what that fixes, the cases that turned out to be harder than "diff two structs", and the memory and time it costs, with numbers.
+
+{/* truncate */}
+
+## The problem, with SQL
+
+{/*
+```go
+type User struct {
+	ant.Base
+	Name   string
+	Email  string `ant:"unique"`
+	Age    int
+	Active bool
+	Bio    *string
+	Posts  []Post
+}
+```
+*/}
+
+GORM's `Updates` with a struct [only writes non-zero fields](https://gorm.io/docs/update.html). GORM documents this clearly, so it isn't a bug, but it surprises people once:
+
+```go no-check
+db.Model(&user).Updates(User{
+	Name:   "Ada",
+	Age:    0,
+	Active: false,
+})
+```
+
+```sql
+UPDATE "users" SET "updated_at"='…',"name"='Ada' WHERE "id" = 1
+-- no age, no active
+```
+
+The fixes are `Select("Age", "Active")` or a `map[string]any`, which brings column names back as strings. Bun is the other way round: its update writes every column unless you opt into [`OmitZero`](https://bun.uptrace.dev/guide/query-update.html), and with `OmitZero` it skips zeros the same way.
+
+Writing every column has its own cost. GORM's `Save` does it too. Two requests load the same user. One changes the name, the other changes the age. Both save every column, so whichever saves second puts the other's field back to the old value. Neither request did anything wrong.
+
+## What ant does instead
+
+You change the loaded value and call `SaveChanges`:
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+user.Age = 0
+user.Active = false
+
+err = db.SaveChanges(ctx)
+```
+
+```sql
+UPDATE "users" SET "age" = $1, "active" = $2, "updated_at" = $3
+WHERE "users"."id" = $4
+```
+
+Nothing passes along which fields changed. Code can edit the struct in a helper three calls deep and the save still sees it. If nothing changed, no statement is sent.
+
+The lost update from the previous section also goes away for different fields. The name request writes `name`, the age request writes `age`, and both edits survive. If both change the same field, the last write wins. For rows where that matters, an `ant:"version"` field makes the save conditional:
+
+```go
+type Page struct {
+	ID      int64
+	Title   string
+	Slug    string `ant:"unique"`
+	Version int64  `ant:"version"`
+}
+```
+
+```sql
+UPDATE "pages" SET "title" = $1, "version" = $2
+WHERE "pages"."id" = $3 AND "pages"."version" = $4
+```
+
+If no row matches, the save returns `ant.ErrConcurrency`, writes nothing, and the handler can answer with a 409.
+
+## "Diff two structs" is the easy part
+
+The obvious implementation is `reflect.DeepEqual` against the snapshot. It gets several cases wrong, and each one shows up as either a missed change or a pointless `UPDATE`.
+
+- **Times.** A `time.Time` read back from the database can carry a different location from the one you assigned, even when it's the same instant. `DeepEqual` calls those different, so every save would rewrite every timestamp. ant compares times as instants, at any depth, including inside `sql.Null[time.Time]`.
+- **NaN.** `NaN != NaN`, so a float column holding NaN was always dirty. ant treats two NaNs as equal.
+- **JSON.** A field decoded from a JSON column into `map[string]any` can be edited in place. Setting one key has to count as a change, and it does.
+- **nil versus empty.** These stay different on purpose. `nil` is NULL and `""` is an empty string, and the database distinguishes them too.
+
+For a type where none of this is right, the model builder takes a custom comparer for that field.
+
+Relations were harder. `Include` loads a user's posts into a slice, and the slice is the interface:
+
+```go
+session := ant.Session(db)
+alice, err := session.Users.Include(&Users.Posts).Find(ctx, id)
+
+alice.Posts = append(alice.Posts, Post{Title: "New"})
+err = session.SaveChanges(ctx)
+```
+
+```sql
+INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title", "published")
+VALUES ($1, $2, $3, $4, $5) RETURNING "id"
+```
+
+ant compares the slice with what it held at load, by key, not by position. That makes `append`, `slices.Delete` and reordering safe. A removed child is deleted if its foreign key is required, and unlinked (the key set to NULL) if it's nullable. A child moved from one parent's slice to another's gets its foreign key updated, not a delete and an insert. And a relation you never loaded is `nil`, which means "don't know", not "empty", so saving a user you loaded without `Include` leaves their posts alone.
+
+## One tracker per unit of work
+
+Tracking means state, and state means a rule about sharing it. Every load returns the tracker's one instance of a row, so two requests on the same tracking context would load into the same structs while both change them.
+
+ant doesn't try to make that safe. It refuses. While one operation uses a tracker, another gets `ant.ErrConcurrentUse` straight away instead of waiting or corrupting anything. The fix is a session per request or per goroutine:
+
+```go
+func rename(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	session := ant.Session(db)
+
+	user, err := session.Users.Find(ctx, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	user.Name = "Alice B."
+
+	err = session.SaveChanges(ctx)
+	if err != nil {
+		http.Error(w, "could not save", http.StatusInternalServerError)
+	}
+}
+```
+
+```sql
+SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
+UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+A session shares the root's connection pool and needs no closing. If you'd rather have a shared context that can never trip this rule, open the root with `ant.WithTracking(false)` and turn tracking on only in the sessions that save. Reads, bulk updates, bulk deletes and inserts don't touch a tracker, so a tracking-off context is safe to share.
+
+## What the snapshot costs
+
+From [`tools/compare`](https://github.com/skudra-go/ant/blob/main/tools/compare/results.txt), median of 10 runs, on a Ryzen 5 3600 with Go 1.27.3 and PostgreSQL 17.11 in Docker on WSL2:
+
+| | Plain SQL | ant | ant NoTracking | GORM | Bun | ent |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Read 1000 rows, µs | 1,557 | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 |
+| Read 1000 rows, KiB | 257 | 823 | 277 | 392 | 295 | 589 |
+| 100 users and 500 posts, µs | 1,750 | 3,039 | 2,091 | 3,034 | 2,198 | 2,194 |
+| Load, edit, save, µs | 806 | 830 | – | 861 | 779 | 1,784 |
+
+On a 1000-row read, tracking takes 1.7 times the time and 3 times the memory of `NoTracking`. That's the price of a deep copy per row. With tracking off, ant is 8% over plain `database/sql` on the same read.
+
+For a request that loads one row, edits it and saves it, which is what most handlers do, the cost disappears into the round trip. ant is 3% over plain SQL there. (ent's number on that row comes from its `UpdateOne` re-reading the row in a transaction, four statements against two, not from slowness.)
+
+So the rule I follow is: tracking on for request handlers, `NoTracking` for anything that reads many rows and doesn't save them, such as exports, reports and list endpoints.
+
+```go
+users, err := db.Users.NoTracking().All(ctx)
+```
+
+## When the explicit way is better
+
+Change tracking hides state, and that is a real cost, not only a memory one. A handler with GORM's `Updates(map[string]any{...})` says exactly what it writes, and you can read the SQL off the call. With ant you have to know what was loaded and what was touched since. For code that does one targeted write without loading the row, ant has the explicit form too:
+
+```go
+_, err := db.Users.
+	Where(ant.Eq(&Users.ID, id)).
+	Update(ctx, ant.Set(&Users.Age, 0))
+```
+
+If your service is mostly bulk writes, or you want every statement visible at its call site, the explicit style of GORM, Bun or plain SQL fits better, and ant's tracker is overhead you'd turn off anyway.
+
+The full details are in the docs: [SaveChanges](/tracking/save-changes), [changing relations](/tracking/changing-relations), [sessions](/tracking/sessions) and [optimistic concurrency](/lifecycle/optimistic-concurrency).
+
+## Feedback I'm after
+
+Does refusing concurrent use with an error, instead of locking, match how you'd want this to fail? And for the relation rules, is "removed from the slice means deleted if the key is required" the behaviour you'd expect, or would you rather it always unlinked? [Issues](https://github.com/skudra-go/ant/issues) and [Discussions](https://github.com/skudra-go/ant/discussions) are open.

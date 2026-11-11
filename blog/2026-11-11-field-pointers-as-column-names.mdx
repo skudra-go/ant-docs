@@ -1,0 +1,351 @@
+---
+slug: field-pointers-as-column-names
+title: "Field pointers as column names: compile-checked Go queries without codegen"
+description: "How ant uses pointers to struct fields as column references, why the chain needed Go 1.27's generic methods, what it costs, and where it still fails."
+authors: [borderss]
+tags: [go, generics, orm, design]
+image: /img/blog/field-pointers.png
+keywords: [go orm, golang orm, generic methods, go 1.27, type-safe sql, gorm alternative, ent, sqlc]
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Go database libraries make you pick one of two trades. GORM and Bun take column names as strings, so `"agee > ?"` builds fine and fails the first time it runs. ent and sqlc check every column at build time, but they get there through a schema file or a folder of SQL, plus a generate step that has to run before your code compiles.
+
+I wanted the checking without the generator. Go 1.27 added generic methods, and that turned out to be the missing piece: a chainable query API can now take pointers to your own struct fields as column names. `ant.Gt(&Users.Age, 18)` names the `age` column, and the compiler checks both that `Age` exists and that `18` is the right type for it. Nothing is generated.
+
+This post is about how that works, what it costs at runtime, and the places where it still fails after compiling. The library is [ant](https://github.com/skudra-go/ant), which I maintain.
+
+{/* truncate */}
+
+## The same query in four libraries
+
+Users over 18 with their posts, sorted by name, 10 at a time.
+
+<Tabs>
+<TabItem value="ant" label="ant" default>
+
+```go
+var Users = ant.Fields[User]()
+
+users, err := db.Users.
+	Include(&Users.Posts).
+	Where(ant.Gt(&Users.Age, 18)).
+	OrderBy(&Users.Name).
+	Limit(10).
+	All(ctx)
+```
+
+</TabItem>
+<TabItem value="gorm" label="GORM 1.31">
+
+```go no-check
+var users []User
+
+err := db.WithContext(ctx).
+	Preload("Posts").
+	Where("age > ?", 18).
+	Order("name").
+	Limit(10).
+	Find(&users).
+	Error
+```
+
+</TabItem>
+<TabItem value="bun" label="Bun 1.3">
+
+```go no-check
+var users []User
+
+err := db.NewSelect().
+	Model(&users).
+	Relation("Posts").
+	Where("age > ?", 18).
+	Order("name").
+	Limit(10).
+	Scan(ctx)
+```
+
+</TabItem>
+<TabItem value="ent" label="ent 0.14">
+
+```go no-check
+users, err := client.User.Query().
+	WithPosts().
+	Where(user.AgeGT(18)).
+	Order(user.ByName()).
+	Limit(10).
+	All(ctx)
+```
+
+</TabItem>
+</Tabs>
+
+[`tools/compare`](https://github.com/skudra-go/ant/tree/main/tools/compare) runs all four against the same PostgreSQL database and checks that they return the same rows. Here is what each one catches at build time. I tested every cell by compiling the mistake:
+
+| Mistake | ant | GORM | Bun | ent | sqlc |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Misspelled column, `agee` | compile error | runtime | runtime | compile error | `sqlc generate` |
+| `"18"` for an `int` | compile error | runtime | runtime | compile error | compile error |
+| Misspelled relation, `Psots` | compile error | runtime | runtime | compile error | `sqlc generate` |
+| Column of another model | `antvet` | runtime | runtime | compile error | `sqlc generate` |
+| No generate step | yes | yes | yes | no | no |
+
+GORM is moving in this direction too. It has a [generics API](https://gorm.io/docs/the_generics_way.html) and an optional [CLI](https://github.com/go-gorm/cli) that generates typed field helpers. That is codegen, but it is opt-in, and if you already run GORM it is the cheapest way to get some of these checks.
+
+## What the compiler says
+
+These are from `go build` on Go 1.27.3, with only the file path trimmed.
+
+A misspelled field:
+
+```go compile-fail
+db.Users.Where(ant.Gt(&Users.Agee, 18))
+```
+
+```text
+Users.Agee undefined (type *User has no field or method Agee)
+```
+
+A value of the wrong type:
+
+```go compile-fail
+db.Users.Where(ant.Gt(&Users.Age, "18"))
+```
+
+```text
+cannot use "18" (untyped string constant) as int value in argument to ant.Gt
+```
+
+A misspelled relation:
+
+```go compile-fail
+db.Users.Include(&Users.Psots)
+```
+
+```text
+Users.Psots undefined (type *User has no field or method Psots)
+```
+
+A relation used as a value in a condition. `Eq` wants a `comparable` value, and a slice isn't one:
+
+```go compile-fail
+db.Users.Where(ant.Eq(&Users.Posts, nil))
+```
+
+```text
+[]Post does not satisfy comparable
+```
+
+None of these messages mention ant. They are ordinary Go errors about ordinary Go fields, and your editor shows them as you type. Rename `Age` with gopls and every query that uses it follows.
+
+## How &Users.Age becomes a column
+
+`ant.Fields[User]()` returns a probe: a `*User` that holds no data. Its only job is to have an address. When you write `&Users.Age`, you get a pointer into that probe at the offset of `Age`. ant turns that pointer back into a column in three steps.
+
+1. **One probe per type.** The first call to `Fields[User]()` reflects over `User` once, caches the model (columns, relations, field offsets), allocates one `User` with `new`, and records its base address in a package-level list. Later calls return the same pointer.
+2. **Find the probe.** Given a pointer, ant scans the list for the probe whose memory range, from its base to base plus `unsafe.Sizeof(User{})`, contains the address.
+3. **Match offset and type.** The address minus the base is the field's offset. ant looks for a field with that offset and with the pointer's static type, `reflect.TypeFor[V]()`.
+
+The type check in step 3 is there because offsets alone are ambiguous. A struct and its first field share an address: `&Users.Base` and `&Users.Base.ID` point at the same byte. The type parameter on `Resolve` tells them apart for free, since the compiler already knows `V`.
+
+Here is the real code, cut down. The full version is in [`internal/meta/meta.go`](https://github.com/skudra-go/ant/blob/f10b2e5766b7d34fc013dc944a37ffe91bfd625b/internal/meta/meta.go#L744-L816).
+
+```go no-check
+func Probe[T any]() *T {
+	model := Of[T]() // reflected once per type, then cached
+	// (under mu: return the existing probe for model, if there is one)
+	p := new(T)
+	probes = append(probes, probe{unsafe.Pointer(p), uintptr(unsafe.Pointer(p)), model})
+	return p
+}
+
+func Resolve[V any](ptr *V) (Ref, bool) {
+	addr := uintptr(unsafe.Pointer(ptr))
+	t := reflect.TypeFor[V]()
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, p := range probes {
+		if addr < p.base || addr >= p.base+p.model.Type.Size() {
+			continue
+		}
+		off := addr - p.base
+		for _, f := range p.model.Fields {
+			if f.Offset == off && f.Type == t {
+				return Ref{Model: p.model, Field: f}, true
+			}
+		}
+		// relations are matched the same way
+	}
+	return Ref{}, false
+}
+```
+
+Resolution costs about 21 ns and allocates nothing. That is `BenchmarkProbeResolution` in `tests/benchmarks`, run five times on a Ryzen 5 3600 with Go 1.27.3, with a handful of probes registered. The scan is linear, so an application with hundreds of models pays more per lookup, but it is still small next to a database round trip.
+
+The part people will rightly poke at: this only works because the Go runtime does not move heap objects. The probe's address has to stay put for the life of the process. Go's garbage collector doesn't compact or move objects today, and nothing in the language promises it never will. ant keeps the original `unsafe.Pointer` in the list so the probe stays reachable, and [`TestProbeSurvivesGC`](https://github.com/skudra-go/ant/blob/f10b2e5766b7d34fc013dc944a37ffe91bfd625b/internal/meta/meta_test.go#L167) forces two collections and checks that the address didn't change. If a future Go release adds a moving collector, that test is where I'll find out, and the design would need pinning or a different identity scheme.
+
+## Why this needed Go 1.27
+
+A fair objection first: `ant.Gt(&Users.Age, 18)` is a plain generic function, `func Gt[V Ordered](field *V, value V) Cond`. That has compiled since Go 1.18. Conditions were never the problem.
+
+The chain was. `OrderBy` needs to know the type of the field it's given, so it can require an orderable one. `Include` needs the element type of the relation, so the optional shaping function gets a typed `*Query[Post]`. Before 1.27, a method could not declare type parameters of its own. Try it with `go 1.26` in `go.mod` and the compiler says:
+
+```text
+generic method requires go1.27 or later
+```
+
+So the API would have had to use package-level functions, which nest inside out:
+
+```go no-check
+// before 1.27: the reader starts in the middle
+users, err := ant.OrderBy(
+	ant.Include(
+		db.Users.Where(ant.Gt(&Users.Age, 18)),
+		&Users.Posts,
+	),
+	&Users.Name,
+).Limit(10).All(ctx)
+```
+
+```go
+// 1.27: top to bottom
+users, err := db.Users.
+	Include(&Users.Posts).
+	Where(ant.Gt(&Users.Age, 18)).
+	OrderBy(&Users.Name).
+	Limit(10).
+	All(ctx)
+```
+
+I compiled the first version against stub types with `go 1.26`, so it is a real alternative, not a strawman. It works. But it reads in the opposite order to the SQL it builds, it can't be extended one line at a time, and typing `db.Users.` in an editor offers nothing useful, because the operations aren't methods. The other way out was methods that take `any`, which gives up the checks that were the point.
+
+The methods that need their own type parameters are `OrderBy`, `Include`, `IncludeOne`, `Join` and its variants, `Find`, `With`, `Column`, `Omit`, `GroupBy`, `Load`, `Tx` on the context, and most of the model builder used for configuration.
+
+## Writing back: change tracking
+
+{/*
+```go
+type User struct {
+	ant.Base
+	Name   string
+	Email  string `ant:"unique"`
+	Age    int
+	Active bool
+	Bio    *string
+	Posts  []Post
+}
+```
+*/}
+
+Field pointers cover reading and configuration. The other half of the design is how ant writes, and there it doesn't ask you which fields changed. It remembers what it loaded.
+
+GORM's `Updates` with a struct [skips zero-valued fields](https://gorm.io/docs/update.html):
+
+```go no-check
+db.Model(&user).Updates(User{
+	Name:   "Ada",
+	Age:    0,
+	Active: false,
+})
+```
+
+```sql
+UPDATE "users" SET "updated_at"='…',"name"='Ada' WHERE "id" = 1
+-- no age, no active
+```
+
+GORM documents this, and `Select("Age", "Active")` or a map writes them. In ant you change the loaded entity and call `SaveChanges`:
+
+```go
+user, err := db.Users.Find(ctx, id)
+
+user.Age = 0
+user.Active = false
+
+err = db.SaveChanges(ctx)
+```
+
+```sql
+UPDATE "users" SET "age" = $1, "active" = $2, "updated_at" = $3
+WHERE "users"."id" = $4
+```
+
+ant keeps a snapshot of every entity it loads and diffs against it, so `0`, `false`, `""` and `nil` are changes like any other value. Only changed columns are written. That also narrows the lost-update window you get with GORM's `Save`, which writes every column: two requests that edit different fields of the same row no longer overwrite each other. If both change the same field, the last write still wins, unless the model has an `ant:"version"` field, in which case the second save fails with `ErrConcurrency`.
+
+## What it costs
+
+The snapshot is not free. From [`tools/compare`](https://github.com/skudra-go/ant/blob/main/tools/compare/results.txt), time per operation in microseconds, median of 10 runs:
+
+| | Plain SQL | ant | ant NoTracking | GORM | Bun | ent |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Read 1000 rows | 1,557 | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 |
+| Find one by key | 365 | 406 | 389 | 416 | 372 | 383 |
+| Load, edit, save | 806 | 830 | – | 861 | 779 | 1,784 |
+
+Measured on a Ryzen 5 3600 with Go 1.27.3 and PostgreSQL 17.11 in Docker on WSL2, with `synchronous_commit=off`; the method is on the [benchmarks page](/reference/benchmarks).
+
+Reading 1000 rows with tracking on takes 1.7 times as long as with `NoTracking`, and 3 times the memory (823 KiB against 277 KiB). With tracking off, ant is 8% over plain `database/sql` on that read. Single-row work is within a few percent of everything else, because the round trip dominates. And ant allocates a lot: 118 allocations to find one row, against 41 for Bun and 36 for plain SQL. Only ent allocates more on some of the small queries. I haven't worked on that yet.
+
+The ent number on the last row isn't a fair picture of ent's speed. Its `UpdateOne` re-reads the row inside a transaction, so that benchmark sends four statements where the others send two.
+
+## Where it falls short
+
+This section is the longest on purpose.
+
+**Some mistakes compile.** Field pointers carry the field and its type, but a condition is not tied to a model. These all build and fail at runtime, at the terminal call (`All`, `First`, `Find` and friends), not at `Where`:
+
+- A pointer that isn't from a probe, such as `&u.Age` on a local `User`, gives `ErrNotProbe`.
+- A relation where a column belongs, like `Column(&Users.Posts)`, gives `ErrNotColumn`.
+- A slice column where a relation belongs, like `Include(&Users.Tags)` on a `[]string` field, gives `ErrNotRelation`.
+- A field of a model the query doesn't use, like `db.Users.Where(ant.Eq(&Posts.Title, "x"))`, gives `ErrWrongModel`.
+- `Find` with the wrong key type, like `Find(ctx, "42")` for an `int64` key, gives `ErrKeyType`. `Find` is generic over the key, and the compiler can't know which key type a model has.
+
+[antvet](/tooling/antvet), a `go vet` analyzer in ant's repository, catches the non-probe, wrong-model and wrong-key cases:
+
+```text
+condition on Post in a query of User
+ant.Gt needs a field of a probe from ant.Fields, not of an ordinary variable
+Find key is string, and User has a key of type int64
+```
+
+It is a separate step that you have to add to CI. ent and sqlc have none of these runtime-only cases.
+
+**The heap assumption.** As above: the design depends on the runtime not moving heap objects. That holds today and is tested, but it is not a language guarantee.
+
+**Go 1.27 or later, no exceptions.** Generic methods are the reason the API looks the way it does. There is no build tag or fallback for older toolchains.
+
+**Pre-1.0.** The API may still change. `docs/api.txt` records every exported name, and a test fails on any change to it, so changes are at least deliberate.
+
+**Migrations are PostgreSQL only.** Queries and writes work on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. Migrations and `EnsureCreated` work on PostgreSQL alone. There are no down migrations, by design: to undo a change, you write a new forward migration.
+
+**The tracker has a cost and a rule.** Besides the memory above, a tracking context serves one operation at a time. You take an `ant.Session(db)` per request or per goroutine. Use one from two goroutines and the second gets `ErrConcurrentUse`. Batch jobs that read a lot and write little should use `NoTracking`.
+
+**It's new.** GORM and ent have years of production use behind them, with the bug reports and edge cases that come with that. ant does not.
+
+When to use something else. If you want to write SQL yourself and have no runtime layer between you and `database/sql`, use [sqlc](https://docs.sqlc.dev/). If you want a graph schema, full build-time checking with no runtime-only cases, and you're fine with codegen, use [ent](https://entgo.io/docs/code-gen). If you already run GORM and want more checking, look at its generics API and CLI first.
+
+## Try it
+
+The [Quick start](/quick-start) runs a complete program on SQLite with no server:
+
+```sh
+mkdir hello && cd hello
+go mod init example.com/hello
+go get github.com/skudra-go/ant modernc.org/sqlite
+# paste main.go from the Quick start
+go run .
+```
+
+[Why ant](/why-ant) has the longer comparison with GORM, Bun, ent, sqlc, xorm and pop. The code is on [GitHub](https://github.com/skudra-go/ant), and [ant-examples](https://github.com/skudra-go/ant-examples) has complete programs. The rest of the feature set is on the [home page](/).
+
+## What I'd like to hear
+
+1. Does `&Users.Age` read naturally in real code? The probe is a package-level variable named like the table field on your context (`db.Users`), which some people will like and some will find confusing.
+2. Would you add antvet to CI, or does a check that lives outside the compiler defeat the purpose for you?
+3. If you've tried to move a codebase off GORM or Bun, what stopped you?
+
+[Open an issue](https://github.com/skudra-go/ant/issues) or start a thread in [Discussions](https://github.com/skudra-go/ant/discussions).
+
+Parts of ant were written with AI assistance. The feature tests in [`tests/features`](https://github.com/skudra-go/ant/tree/main/tests/features), the cross-library checks in [`tools/compare`](https://github.com/skudra-go/ant/tree/main/tools/compare) and the decision log in [`docs/DECISIONS.md`](https://github.com/skudra-go/ant/blob/main/docs/DECISIONS.md) are how I check it.
