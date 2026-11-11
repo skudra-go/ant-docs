@@ -3,7 +3,7 @@ title: Projections
 description: Shape results into your own types, in Go or in SQL.
 ---
 
-A projection turns rows into a struct of your own. There are two ways to do it, and the difference is where the work happens.
+A projection turns rows into a struct of your own, with `Select` or `Project`.
 
 | | `Select` | `Project` |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ A projection turns rows into a struct of your own. There are two ways to do it, 
 
 ## Shape rows in Go with Select
 
-`Select` takes a typed closure on a [join](/queries/joins). It reads naturally and can run any Go you like, because Go can't look inside a closure to turn it into SQL.
+`Select` takes a typed closure on a [join](/queries/joins). The closure runs in Go, so it can use any Go code. ant can't turn it into SQL.
 
 ```go
 type Summary struct {
@@ -22,8 +22,8 @@ type Summary struct {
 }
 
 summaries, err := db.Posts.
-	Join(&P.User).
-	Where(ant.Eq(&P.Published, true)).
+	Join(&Posts.User).
+	Where(ant.Eq(&Posts.Published, true)).
 	Select(func(p *Post, u *User) Summary {
 		return Summary{u.Name, p.Title}
 	}).
@@ -33,19 +33,19 @@ summaries, err := db.Posts.
 // WHERE "posts"."published" = $1
 ```
 
-The result has `All`, `First` and `Each`, and it is `[]Summary`, not a slice of pointers.
+The result has `All`, `First` and `Each`, and yields `[]Summary`, not a slice of pointers.
 
 ## Shape rows in SQL with Project
 
-`Project` selects only the columns you map, so it's cheaper on wide tables. Each mapping is a pair of probes: where the value goes, then where it comes from.
+`Project` selects only the columns you map, so it's cheaper on wide tables. Each mapping is a pair of field pointers: the destination, then the source.
 
 ```go
-var S = ant.Fields[Summary]()
+var Summaries = ant.Fields[Summary]()
 
 summaries, err := ant.Project[Summary](
-	db.Posts.Join(&P.User).Where(ant.Eq(&P.Published, true)),
-	ant.Into(&S.Author, &U.Name),
-	ant.Into(&S.Title, &P.Title),
+	db.Posts.Join(&Posts.User).Where(ant.Eq(&Posts.Published, true)),
+	ant.Into(&Summaries.Author, &Users.Name),
+	ant.Into(&Summaries.Title, &Posts.Title),
 ).All(ctx)
 // SELECT "users"."name" AS "author", "posts"."title" AS "title"
 // FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
@@ -56,8 +56,8 @@ summaries, err := ant.Project[Summary](
 
 ```go
 ant.Project[Summary](
-	db.Users.Where(ant.Eq(&U.Name, "Bob")),
-	ant.IntoExpr(&S.Author, ant.Upper(&U.Name)),
+	db.Users.Where(ant.Eq(&Users.Name, "Bob")),
+	ant.IntoExpr(&Summaries.Author, ant.Upper(&Users.Name)),
 )
 // SELECT UPPER("users"."name") AS "author" FROM "users" WHERE "users"."name" = $1
 ```
@@ -76,10 +76,10 @@ type Author struct {
 	PostCount int64 `ant:"computed"`
 }
 
-var A = ant.Fields[Author]()
+var Authors = ant.Fields[Author]()
 
 authors, err := db.Authors.
-	With(&A.PostCount, ant.CountRelated(&A.Posts)).
+	With(&Authors.PostCount, ant.CountRelated(&Authors.Posts)).
 	All(ctx)
 ```
 

@@ -3,7 +3,7 @@ title: Testing
 description: Isolated tests against a real database, with factories and fixtures.
 ---
 
-Test against a real database. ant has no in-memory fake, on purpose: a fake accepts SQL the real server would refuse, and hides what constraints, triggers and transactions do. PostgreSQL in a container starts in seconds.
+Test against a real database. ant has no in-memory fake: a fake accepts SQL the real server would refuse and hides what constraints, triggers and transactions do. PostgreSQL in a container starts in seconds.
 
 ## Set up a database for tests
 
@@ -33,8 +33,6 @@ func TestMain(m *testing.M) {
 
 For quick experiments, `db.EnsureCreated(ctx)` builds tables straight from the structs.
 
-A local database for the tests:
-
 ```yaml
 # docker-compose.yml
 services:
@@ -60,7 +58,7 @@ A skipped test is not a passing test. Check the skip count in CI.
 
 ## Roll each test back
 
-`anttest.Isolate` gives a test a context bound to a transaction that rolls back when the test ends, so tests can share a database and need no cleanup.
+`anttest.Isolate` gives a test a context bound to a transaction that rolls back when the test ends, so tests share a database without cleanup.
 
 ```go
 func TestSignup(t *testing.T) {
@@ -74,15 +72,15 @@ func TestSignup(t *testing.T) {
 }
 ```
 
-The test sees its own writes. Code that commits for real, such as through a second connection, doesn't see them, so a test of concurrency needs a database of its own. An isolated context is one connection, so don't share it between goroutines that run at once.
+Code that commits for real, such as through a second connection, doesn't see the test's writes, so a concurrency test needs a database of its own. An isolated context is one connection, so don't share it between goroutines.
 
 ## Make entities with factories
 
-A factory makes valid entities, so a test spells out only what it cares about. The number it passes in keeps values unique.
+A factory makes valid entities, so a test spells out only what it needs. Its number argument keeps values unique.
 
 ```go
 // spot-start
-var Users = anttest.NewFactory(func(n int) *models.User {
+var UserFactory = anttest.NewFactory(func(n int) *models.User {
 	return &models.User{
 		Name:  fmt.Sprintf("user %d", n),
 		Email: fmt.Sprintf("u%d@example.com", n),
@@ -94,24 +92,24 @@ func TestFactories(t *testing.T) {
 	db := anttest.Isolate(t, shared)
 
 	// spot-start
-	user := Users.Create(t, &db.Users)                                      // in the database
-	draft := Users.Build()                                                  // in memory
-	many := Users.CreateMany(t, &db.Users, 10)                              // several
-	young := Users.Create(t, &db.Users, func(u *models.User) { u.Age = 5 }) // one override
+	user := UserFactory.Create(t, &db.Users)                                      // in the database
+	draft := UserFactory.Build()                                                  // in memory
+	many := UserFactory.CreateMany(t, &db.Users, 10)                              // several
+	young := UserFactory.Create(t, &db.Users, func(u *models.User) { u.Age = 5 }) // one override
 	// spot-end
 }
 ```
 
 ### Name a state
 
-`With` returns a new factory with the changes applied and leaves the original alone.
+`With` returns a new factory with the changes applied.
 
 ```go
 func TestAdmin(t *testing.T) {
 	db := anttest.Isolate(t, shared)
 
 	// spot-next-line
-	admin := Users.With(func(u *models.User) { u.Admin = true })
+	admin := UserFactory.With(func(u *models.User) { u.Admin = true })
 
 	boss := admin.Create(t, &db.Users)
 }
@@ -128,7 +126,7 @@ func TestRecycle(t *testing.T) {
 	db := anttest.Isolate(t, shared)
 
 	// spot-next-line
-	author := anttest.Recycle(Users, &db.Users)
+	author := anttest.Recycle(UserFactory, &db.Users)
 
 	posts := anttest.NewFactory(func(n int) *models.Post {
 		return &models.Post{Title: fmt.Sprintf("post %d", n), UserID: author.Get(t).ID}
@@ -140,7 +138,7 @@ func TestRecycle(t *testing.T) {
 
 ## Load fixtures
 
-`anttest.Load` loads rows from JSON files named after their tables, for data that doesn't change. Each file is an array of objects keyed by column:
+`anttest.Load` loads rows from JSON files named after their tables, for data that doesn't change:
 
 ```json
 [{"id": 1, "name": "Ada", "created_at": "2026-01-01T00:00:00Z"}]
@@ -162,13 +160,13 @@ func TestWithFixtures(t *testing.T) {
 
 ## Check the SQL
 
-`q.ToSQL()` returns a query's SQL with no database, which suits a test of a query builder. For anything else, run the query: what matters is what the database returns.
+`q.ToSQL()` returns a query's SQL without a database, which suits testing a query builder. Otherwise run the query.
 
 [`ant.DryRun`](/tooling/inspecting-queries#dryrun) runs real code in a transaction and returns every statement, which shows what a unit of work decides to write. [antvet](/tooling/antvet) catches mistakes before tests run.
 
 :::warning[SQLite is not a stand-in]
 
-SQLite is tempting for speed, but it has no `FOR UPDATE`, no enum types, different date handling and looser typing, so a test can pass there and fail in production. Test on the database you deploy. Where SQLite is what you deploy, ant's dialect runs queries and writes, but migrations aren't available, so create the tables with your own SQL.
+SQLite has no `FOR UPDATE`, no enum types, different date handling and looser typing, so a test can pass there and fail in production. Test on the database you deploy. Where that is SQLite, ant's dialect runs queries and writes, but migrations aren't available, so create the tables with your own SQL.
 
 :::
 

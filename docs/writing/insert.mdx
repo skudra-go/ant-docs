@@ -3,7 +3,7 @@ title: Insert
 description: Insert one row, several, or a whole graph of related entities.
 ---
 
-`Insert` writes new entities and fills in the generated keys on your structs. Every field is written as it is, so a zero is stored as zero.
+`Insert` writes new entities and fills in generated keys. Every field is written as is, zeros included.
 
 ## Insert one row
 
@@ -29,7 +29,7 @@ fmt.Println(alice.ID) // set by the database
 
 ## Insert several rows
 
-Several entities go in as one multi-row statement inside a transaction. If one fails, every row is rolled back and the keys that were set are cleared.
+Several entities go in as one multi-row statement in a transaction. If one fails, every row is rolled back and the keys that were set are cleared.
 
 ```go
 // spot-next-line
@@ -62,7 +62,7 @@ err := db.Users.Insert(ctx, alice)
 fmt.Println(alice.Posts[1].UserID == alice.ID) // true
 ```
 
-It works from the child too. A parent that already has its key is linked, not inserted again:
+From the child, a parent that already has its key is linked, not inserted again:
 
 ```go
 // spot-next-line
@@ -74,7 +74,7 @@ err := db.Posts.Insert(ctx, post)
 
 New rows that depend on each other in a loop are refused with `ant.ErrCycle`.
 
-On a [session](/tracking/sessions), an entity inserted with its relations is tracked as if you had loaded it with them. A later `SaveChanges` doesn't write the new join rows again, and a child you remove from its slice is deleted.
+On a [session](/tracking/sessions), an entity inserted with its relations is tracked as if loaded with them. A later `SaveChanges` doesn't write the new join rows again, and a child you remove from its slice is deleted.
 
 ## Insert without relations
 
@@ -88,34 +88,34 @@ err := db.Users.InsertOnly(ctx, alice)
 
 ## Find or create
 
-`FirstOrCreate` returns the first row that matches the conditions, or inserts yours. The bool says which happened.
+`FirstOrCreate` returns the first row that matches the conditions, or inserts yours. The bool reports which.
 
 ```go
 // spot-start
 user, created, err := db.Users.FirstOrCreate(
 	ctx,
 	&User{Name: "Ada", Email: "ada@example.com"},
-	ant.Eq(&U.Email, "ada@example.com"),
+	ant.Eq(&Users.Email, "ada@example.com"),
 )
 // spot-end
 // SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2
 // INSERT INTO "users" (...) VALUES (...) RETURNING "id"
 ```
 
-If another writer inserts the row between the read and the insert, the unique constraint stops yours and you get the winner's row back. The conditions should therefore match a unique column. Inside a transaction the re-read takes a lock, so it sees the row even on MySQL's default `REPEATABLE READ`.
+If another writer inserts the row between the read and the insert, the unique constraint stops yours and you get the winner's row back. The conditions should match a unique column. Inside a transaction the re-read takes a lock, so it sees the row even on MySQL's default `REPEATABLE READ`.
 
 `FirstOrNew` does the same without saving. Its bool reports whether a row was found.
 
 ```go
 // spot-next-line
-user, found, err := db.Users.FirstOrNew(ctx, &User{Name: "Ada"}, ant.Eq(&U.Name, "Ada"))
+user, found, err := db.Users.FirstOrNew(ctx, &User{Name: "Ada"}, ant.Eq(&Users.Name, "Ada"))
 ```
 
 To update a row that exists instead of returning it, use an [upsert](/writing/upsert-and-merge).
 
 ## Copy a row
 
-`ant.Clone` copies an entity with its key and relations cleared, ready to insert as a new row. It suits templates and "duplicate this" buttons.
+`ant.Clone` copies an entity with its key and relations cleared, ready to insert as a new row.
 
 ```go
 // spot-next-line
@@ -127,7 +127,7 @@ err := db.Users.Insert(ctx, twin)
 
 ## Handle a constraint failure
 
-A constraint failure is the database's own error. The [`Is` helpers](/tooling/errors) read it the same way on every database.
+The [`Is` helpers](/tooling/errors) read a constraint failure the same way on every database.
 
 ```go
 err := db.Users.Insert(ctx, &User{Email: alice.Email})

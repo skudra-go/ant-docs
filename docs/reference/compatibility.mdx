@@ -3,11 +3,11 @@ title: Compatibility
 description: Supported Go and database versions, what counts as the API, and how to upgrade.
 ---
 
-ant hasn't reached 1.0, so anything can change between releases. Each release says what it changed in its [release notes](https://github.com/skudra-go/ant/releases), including any breaking changes.
+ant hasn't reached 1.0, so anything can change between releases. Each release's [release notes](https://github.com/skudra-go/ant/releases) list its breaking changes.
 
 ## Go
 
-ant needs Go 1.27 or later, because its API uses generic methods. Each release supports the two newest Go versions, as Go itself does.
+ant needs Go 1.27 or later, because its API uses generic methods. Each release supports the two newest Go versions.
 
 | Feature | Since | Used for |
 | --- | --- | --- |
@@ -23,9 +23,9 @@ ant needs Go 1.27 or later, because its API uses generic methods. Each release s
 | PostgreSQL 13 to 18 | Supported: the whole suite passes on each, as of 2026-11-01 |
 | MySQL 8.4, MariaDB 11.8, SQLite (modernc 1.61), SQL Server 2022 | Queries and writes: the conformance and concurrency suites pass. No migrations |
 
-`MERGE` needs PostgreSQL 15. Everything else works from 13. Version 12 and older are out of support upstream and untested here. The comments in each dialect name the oldest versions expected to work, from their documentation, but only the versions above have been run.
+`MERGE` needs PostgreSQL 15. Everything else works from 13. PostgreSQL 12 and older are out of support upstream and untested here. The comments in each dialect name the oldest versions expected to work, from their documentation, but only the versions above have been run.
 
-ant runs on the `pgx` driver through `database/sql`. Another PostgreSQL driver may work, but `pgxext` needs pgx. See [databases](/reference/databases) for what each database lacks.
+ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [databases](/reference/databases) for what each database lacks.
 
 ## Breaking changes so far
 
@@ -42,9 +42,9 @@ ant has two releases, v0.1.0 and v0.2.0. v0.2.0 made the first breaking change: 
 | `db.ClearTracked()` | `db.ClearTracked(ctx) error` |
 | `db.DebugTracked()` | `db.DebugTracked(ctx) (string, error)` |
 
-The context lets ant tell a hook that runs inside an operation from another goroutine using the same tracking context. The second gets `ErrConcurrentUse`. Pass the context your hook or handler received. A call made with an unrelated context while another operation holds the tracker is refused.
+The context lets ant tell a hook that runs inside an operation from another goroutine using the same tracking context, which gets `ErrConcurrentUse`. Pass the context your hook or handler received. A call made with an unrelated context while another operation holds the tracker is refused.
 
-`go build ./...` finds every call that needs the change.
+`go build ./...` finds every call to change.
 
 ## From 1.0
 
@@ -71,7 +71,7 @@ Migrations and snapshots stay readable. A snapshot records its format, and a new
 
 1. Read the release notes for each version you cross.
 2. Update the module: `go get github.com/skudra-go/ant@latest`.
-3. Run `go build ./...`. A renamed or changed API fails here, which is the point of a typed one.
+3. Run `go build ./...`. A renamed or changed API fails here.
 4. Run your tests against a real database.
-5. Run `go run ./cmd/migrate check`. A release can change how a model maps to a schema, and this shows it.
+5. Run `go run ./cmd/migrate check`. A release can change how a model maps to a schema; this shows it.
 6. Run `go run ./cmd/migrate drift` against a staging database.

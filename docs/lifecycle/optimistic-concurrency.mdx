@@ -3,7 +3,7 @@ title: Optimistic concurrency
 description: Detect conflicting writes with a version field instead of a lock.
 ---
 
-Two people load the same row and both save. Without a check, the second save overwrites the first. A version field makes the second save fail, so nobody overwrites work they never saw.
+Without a check, the second of two saves of the same row overwrites the first. A version field makes the second save fail.
 
 ## Add a version field
 
@@ -43,11 +43,11 @@ err = db.SaveChanges(ctx)
 // -- $1 = "first", $2 = 2, $3 = 1, $4 = 1
 ```
 
-If no row matches, the row was changed or deleted since you loaded it, and the save returns `ant.ErrConcurrency`. Nothing from that save is written.
+If no row matches, the row changed or was deleted since you loaded it. The save returns `ant.ErrConcurrency` and writes nothing.
 
 ## Detect a collision
 
-Two sessions load the same page, and the second one to save loses:
+The second of two sessions to save loses:
 
 ```go
 one, two := ant.Session(db), ant.Session(db)
@@ -65,7 +65,7 @@ err = two.SaveChanges(ctx) // ant.ErrConcurrency
 
 ## Handle a conflict
 
-The error is an `*ant.ConcurrencyError`, which names the model and key. Reload the row to see what is there now, then let the user retry.
+The error is an `*ant.ConcurrencyError`, naming the model and key. Reload the row, then let the user retry.
 
 ```go
 err := db.SaveChanges(ctx)
@@ -81,7 +81,7 @@ if errors.As(err, &conflict) {
 // spot-end
 ```
 
-In an HTTP handler, a conflict is usually a 409:
+A handler maps it to a 409:
 
 ```go
 func save(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +97,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 
 ## Every write moves the version
 
-Whatever writes a versioned row moves its version on by one, so a copy loaded before the write cannot save over it.
+Every write to a versioned row moves its version on by one, so an earlier copy cannot save over it.
 
 | Write | Version |
 | --- | --- |
@@ -105,36 +105,34 @@ Whatever writes a versioned row moves its version on by one, so a copy loaded be
 | Delete through `SaveChanges` | Checked: `DELETE ... WHERE id = $1 AND version = $2` |
 | Bulk `Update` | Moved on, not checked |
 | `Upsert`, `InsertMany` with a conflict, `Merge` | Moved on when the row exists; a new row starts at 1 |
-| Unlinking a child from a to-many relation | Moved on, as any update is |
-
-A bulk update adds one to the version in the same statement:
+| Unlinking a child from a to-many relation | Moved on |
 
 ```go
-_, err := db.Pages.Where(ant.Eq(&G.Slug, "home")).Update(ctx, ant.Set(&G.Title, "Home"))
+_, err := db.Pages.Where(ant.Eq(&Pages.Slug, "home")).Update(ctx, ant.Set(&Pages.Title, "Home"))
 // UPDATE "pages" SET "title" = $1, "version" = ("version" + $2) WHERE "pages"."slug" = $3
 ```
 
 The version belongs to ant. Naming it in a bulk `Update`, in an upsert's `DoUpdate` or `Set`, or in a `Merge` assignment is an error, returned before any SQL runs:
 
 ```go
-_, err := db.Pages.Where(ant.Eq(&G.Slug, "home")).Update(ctx, ant.Set(&G.Version, int64(1)))
+_, err := db.Pages.Where(ant.Eq(&Pages.Slug, "home")).Update(ctx, ant.Set(&Pages.Version, int64(1)))
 // ant: Page.Version is a version, which ant moves on by itself; leave it out
 ```
 
 {/*
 ```go
-var G = ant.Fields[Page]()
+var Pages = ant.Fields[Page]()
 ```
 */}
 
 ## Upsert a copy you loaded
 
-An `Upsert` of an entity with a non-zero version is a copy of a stored row, so its update applies only while the stored row still has that version. Otherwise it returns a `ConcurrencyError`. A zero version is a new entity, and nothing is checked.
+An `Upsert` of an entity with a non-zero version is treated as a copy of a stored row: its update applies only while the stored row has that version, otherwise it returns a `ConcurrencyError`. A zero version is a new entity, so the version moves on without a check.
 
 ```go
 mine := &Page{Slug: "home", Title: "mine", Version: loaded.Version}
 
-wrote, err := db.Pages.Upsert(ctx, mine, ant.OnConflict(&G.Slug))
+wrote, err := db.Pages.Upsert(ctx, mine, ant.OnConflict(&Pages.Slug))
 // INSERT INTO "pages" ("title", "slug", "version") VALUES ($1, $2, $3)
 // ON CONFLICT ("slug") DO UPDATE
 // SET "title" = "excluded"."title", "version" = ("pages"."version" + 1)
@@ -142,10 +140,8 @@ wrote, err := db.Pages.Upsert(ctx, mine, ant.OnConflict(&G.Slug))
 // RETURNING "id", "title", "slug", "version"
 ```
 
-An upsert with a zero version moves the version on without a check:
-
 ```go
-wrote, err := db.Pages.Upsert(ctx, &Page{Slug: "home", Title: "new"}, ant.OnConflict(&G.Slug))
+wrote, err := db.Pages.Upsert(ctx, &Page{Slug: "home", Title: "new"}, ant.OnConflict(&Pages.Slug))
 // INSERT INTO "pages" ("title", "slug", "version") VALUES ($1, $2, $3)
 // ON CONFLICT ("slug") DO UPDATE
 // SET "title" = "excluded"."title", "version" = ("pages"."version" + 1)
@@ -160,11 +156,11 @@ var loaded *Page
 
 `InsertMany` with a conflict moves versions on but cannot check them, because it cannot tell a row's own version from the 1 it stamps on a new row.
 
-MySQL and MariaDB have no condition on `ON DUPLICATE KEY UPDATE`. There, ant writes each assignment as `col = CASE WHEN version = ? THEN new ELSE col END`, so a stale copy changes nothing, and the zero affected rows give the same `ErrConcurrency`. This reads the affected-row count, so leave the driver's `clientFoundRows` off, which is its default. See [databases](/reference/databases).
+MySQL and MariaDB have no condition on `ON DUPLICATE KEY UPDATE`. There, ant writes each assignment as `col = CASE WHEN version = ? THEN new ELSE col END`, so a stale copy changes nothing and the zero affected rows give `ErrConcurrency`. ant reads the affected-row count, so leave the driver's `clientFoundRows` off (the default). See [databases](/reference/databases).
 
 ## Two copies of one row in one save
 
-If a save writes two instances of the same versioned row, the version carries forward from the first write to the second, so the second does not fail against the version the first just moved on.
+If a save writes two instances of the same versioned row, the version carries forward from the first write to the second, so the second does not fail.
 
 ## A token you manage
 

@@ -3,18 +3,16 @@ title: antvet
 description: A go vet analyzer that finds ant mistakes the compiler cannot see.
 ---
 
-Some ant mistakes compile and only fail when the query runs, such as a condition on the wrong model. `antvet` finds them at build time.
+`antvet` finds ant mistakes that compile but fail when the query runs, such as a condition on the wrong model.
 
 ## Run it
 
-`antvet` is a `go vet` tool. Install it once, then point `go vet` at it:
+Install it, then pass it to `go vet`:
 
 ```bash
 go install github.com/skudra-go/ant/tools/antvet/cmd/antvet@latest
 go vet -vettool=$(which antvet) ./...
 ```
-
-Each report has a file and line, like any vet finding:
 
 ```text
 main.go:31:13: ant.Gt needs a field of a probe from ant.Fields, not of an ordinary variable
@@ -23,27 +21,27 @@ main.go:33:19: OrderBy on a field of User in a query of Post
 main.go:34:21: Find key is string, and User has a key of type int64
 ```
 
-Add the vet line to your CI to fail a build on a report.
+Add the vet line to CI to fail the build on a report.
 
 ## What it reports
 
 | Check | Example |
 | --- | --- |
-| A field pointer that is not a [probe](/models/field-probes) | `ant.Gt(&age, 18)` |
-| A field of a model the query does not read | `db.Posts.Where(ant.Gt(&U.Age, 18))` |
+| A field pointer that does not come from a [probe](/models/field-probes) | `ant.Gt(&age, 18)` |
+| A field pointer from another model's probe | `db.Posts.Where(ant.Gt(&Users.Age, 18))` |
 | A `Find` key of the wrong type | `db.Users.Find(ctx, "1")` |
 
 The second check covers a query's conditions, ordering, grouping, columns, includes and updates, and aggregates such as `ant.SumOf`. The key in the third check comes from the model's `Configure` when it sets one with `Key` or `GenerateKey`, so a model with a `Code string` key is judged against `string`, not against the field named `ID`.
 
-Every field pointer that an ant function or builder method takes must be a probe's. That includes `ant.Into`, `ant.EqCol`, the relation functions and `ant.Original`. A function that takes an entity, such as `ant.Add`, takes any pointer.
+Every field pointer passed to an ant function or builder method must come from a probe, including `ant.Into`, `ant.EqCol`, the relation functions and `ant.Original`. Functions that take an entity, such as `ant.Add`, accept any pointer.
 
 ## Subqueries may name the outer model
 
-A subquery can refer to a column of the query around it, so a condition on another model is not always a mistake. `antvet` judges a query only where it runs, as in `.All(ctx)` or `ant.SumOf(ctx, q, ...)`, or inside the query it belongs to. Where it cannot tell, it stays quiet.
+A subquery can refer to a column of the outer query, so a condition on another model is not always a mistake. `antvet` judges a query only where it runs, as in `.All(ctx)` or `ant.SumOf(ctx, q, ...)`, or inside the query it belongs to. Where it cannot tell, it reports nothing.
 
 ## Silence a report
 
-Code that is wrong on purpose, such as a test of ant's error, carries `//antvet:ignore` and a reason. Put it at the end of the line, or on a line of its own above:
+Mark code that is wrong on purpose, such as a test of an ant error, with `//antvet:ignore` and a reason, at the end of the line or on the line above:
 
 ```go
 _, err := db.Users.Find(ctx, "1") //antvet:ignore the test checks ErrKeyType
@@ -54,7 +52,7 @@ _, err := db.Users.Find(ctx, "1") //antvet:ignore the test checks ErrKeyType
 _, err := db.Users.Find(ctx, "1")
 ```
 
-A comment at the end of a line covers that line only. It cannot hide a report on the next one.
+An end-of-line comment covers that line only.
 
 ## What it does not check
 

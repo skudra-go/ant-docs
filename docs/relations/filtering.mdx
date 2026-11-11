@@ -3,22 +3,22 @@ title: Filtering by relations
 description: Has, HasNone, and HasOne match rows by the rows they relate to, without loading anything.
 ---
 
-`ant.Has` and its relatives filter rows by what they're related to. Each becomes an `EXISTS` inside the same query, so it costs no extra round trip and loads no related rows. To load the related rows as well, use [`Include`](/relations/loading).
+`ant.Has` and its relatives filter rows by their related rows. Each becomes an `EXISTS` in the same query and loads nothing. To load the related rows too, use [`Include`](/relations/loading).
 
 ## Rows that have a related row
 
 ```go
 // spot-next-line
-writers, err := db.Users.Where(ant.Has(&U.Posts)).All(ctx)
+writers, err := db.Users.Where(ant.Has(&Users.Posts)).All(ctx)
 // SELECT ... FROM "users" WHERE EXISTS (
 //   SELECT 1 FROM "posts" AS "ant_related" WHERE "ant_related"."user_id" = "users"."id")
 ```
 
-Add conditions on the related row to ask for a particular kind. This finds users with an unpublished post:
+Conditions on the related row narrow the match. This finds users with an unpublished post:
 
 ```go
 // spot-next-line
-drafting, err := db.Users.Where(ant.Has(&U.Posts, ant.Eq(&P.Published, false))).All(ctx)
+drafting, err := db.Users.Where(ant.Has(&Users.Posts, ant.Eq(&Posts.Published, false))).All(ctx)
 // SELECT ... FROM "users" WHERE EXISTS (
 //   SELECT 1 FROM "posts" AS "ant_related"
 //   WHERE "ant_related"."user_id" = "users"."id" AND ("ant_related"."published" = $1))
@@ -28,16 +28,16 @@ drafting, err := db.Users.Where(ant.Has(&U.Posts, ant.Eq(&P.Published, false))).
 
 ```go
 // spot-next-line
-silent, err := db.Users.Where(ant.HasNone(&U.Posts)).All(ctx)
+silent, err := db.Users.Where(ant.HasNone(&Users.Posts)).All(ctx)
 // SELECT ... FROM "users" WHERE NOT EXISTS (
 //   SELECT 1 FROM "posts" AS "ant_related" WHERE "ant_related"."user_id" = "users"."id")
 ```
 
-With conditions, `HasNone` matches rows that have no related row meeting them. Users with no published post may still have drafts:
+With conditions, `HasNone` matches rows with no related row meeting them, so these users may still have drafts:
 
 ```go
 // spot-next-line
-unpublished, err := db.Users.Where(ant.HasNone(&U.Posts, ant.Eq(&P.Published, true))).All(ctx)
+unpublished, err := db.Users.Where(ant.HasNone(&Users.Posts, ant.Eq(&Posts.Published, true))).All(ctx)
 ```
 
 This is also how to [delete with a join](/writing/update-and-delete#delete-by-relation).
@@ -48,7 +48,7 @@ This is also how to [delete with a join](/writing/update-and-delete#delete-by-re
 
 ```go
 // spot-next-line
-byAdults, err := db.Posts.Where(ant.HasOne(&P.User, ant.Gt(&U.Age, 18))).All(ctx)
+byAdults, err := db.Posts.Where(ant.HasOne(&Posts.User, ant.Gt(&Users.Age, 18))).All(ctx)
 // SELECT ... FROM "posts" WHERE EXISTS (
 //   SELECT 1 FROM "users" AS "ant_related"
 //   WHERE "ant_related"."id" = "posts"."user_id" AND ("ant_related"."age" > $1))
@@ -56,15 +56,15 @@ byAdults, err := db.Posts.Where(ant.HasOne(&P.User, ant.Gt(&U.Age, 18))).All(ctx
 
 ## Combine with other conditions
 
-These are conditions like any other, so they go in `Where` beside the rest and inside `And`, `Or`, and `Not`.
+They go in `Where` beside other conditions and inside `And`, `Or`, and `Not`.
 
 ```go
 // spot-next-line
-young, err := db.Users.Where(ant.Has(&U.Posts), ant.Lt(&U.Age, 18)).All(ctx)
+young, err := db.Users.Where(ant.Has(&Users.Posts), ant.Lt(&Users.Age, 18)).All(ctx)
 // SELECT ... FROM "users" WHERE EXISTS (...) AND "users"."age" < $1
 
 // spot-next-line
-same, err := db.Users.Where(ant.Not(ant.Has(&U.Posts))).Count(ctx)
+same, err := db.Users.Where(ant.Not(ant.Has(&Users.Posts))).Count(ctx)
 // SELECT COUNT(*) FROM "users" WHERE NOT (EXISTS (...))
 ```
 

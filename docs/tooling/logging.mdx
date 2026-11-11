@@ -3,7 +3,7 @@ title: Logging
 description: Statements through log/slog, with values kept out by default.
 ---
 
-`ant.WithLogger` logs every statement through `log/slog`. Values stay out of the logs unless you ask for them.
+`ant.WithLogger` logs every statement through `log/slog`.
 
 ## Log statements
 
@@ -16,11 +16,11 @@ logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithLogger(logger))
 ```
 
-Each line carries the SQL, the duration and the number of arguments. Statements log at debug, slow ones at warning, and failures at error. Set the handler's level to debug to see them all.
+Each line carries the SQL, the duration and the number of arguments. Statements log at debug, slow ones at warning, and failures at error.
 
 ## Slow queries
 
-With `SlowThreshold`, statements at or over the limit log at warning. Without it, none do.
+Statements at or over `SlowThreshold` log at warning. Without it, none do.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
@@ -52,10 +52,10 @@ type Account struct {
 
 func (Account) Configure(b *ant.ModelBuilder[Account]) {
 	// spot-next-line
-	b.Column(&A.Password).Sensitive()
+	b.Column(&Accounts.Password).Sensitive()
 }
 
-var A = ant.Fields[Account]()
+var Accounts = ant.Fields[Account]()
 ```
 
 {/*

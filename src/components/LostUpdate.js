@@ -27,7 +27,7 @@ export default function LostUpdate() {
         <div className="lost__result is-wrong">
           <span>Saving the whole row</span>
           <code>name = "Ada L.", plan = "free"</code>
-          <em>The upgrade is gone, and nothing reported an error.</em>
+          <em>The upgrade is gone. No error was reported.</em>
         </div>
         <div className="lost__result is-right">
           <span>Saving what changed</span>

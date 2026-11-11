@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "go.opentelemetry.io/otel/trace"
+	_ "modernc.org/sqlite"
 
 	_ "github.com/skudra-go/ant"
 	_ "github.com/skudra-go/ant/anttest"

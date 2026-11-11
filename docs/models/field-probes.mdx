@@ -1,60 +1,62 @@
 ---
 title: Field probes
-description: How &U.Age names a column, what the compiler checks, and what it leaves to run time.
+description: How &Users.Age names a column, what the compiler checks, and what it leaves to run time.
 ---
 
-A probe names a column without a string. `&U.Age` is the `age` column of `User`, and the compiler knows it is an `int`.
+A field pointer such as `&Users.Age` names the `age` column of `User` without a string. It is a `*int`, so the compiler knows the column's type.
 
 ## Declare a probe
 
-Declare one per model, next to the model. A probe never holds data, and asking for it again returns the same one.
+Declare one probe per model, next to the model. It holds no data, and `ant.Fields` returns the same one every time.
+
+These docs name a probe after its model in the plural, the way ant names the table: `Users` for `User`, `Categories` for `Category`. Two models never get the same name, and `&Users.Age` reads like the column `users.age`. It is a convention, not a rule. Any name works.
 
 ```go
 // spot-start
 var (
-	U = ant.Fields[User]()
-	P = ant.Fields[Post]()
+	Users = ant.Fields[User]()
+	Posts = ant.Fields[Post]()
 )
 // spot-end
 
-adults, err := db.Users.Where(ant.Gt(&U.Age, 18)).All(ctx)
+adults, err := db.Users.Where(ant.Gt(&Users.Age, 18)).All(ctx)
 // SELECT ... FROM "users" WHERE "users"."age" > $1
 ```
 
 ## Type errors become compile errors
 
-`ant.Gt` is generic: `Gt[V Ordered](field *V, v V)`. `&U.Age` is a `*int`, so `V` is `int` and the value must be an `int`.
+`Gt[V Ordered](field *V, v V)` is generic, so the value must have the field's type.
 
 ```go compile-fail
 // spot-next-line
-db.Users.Where(ant.Gt(&U.Age, "18"))
+db.Users.Where(ant.Gt(&Users.Age, "18"))
 ```
 
 ```text
 cannot use "18" (untyped string constant) as int value in argument to ant.Gt
 ```
 
-A misspelled field is a compile error, and so is the wrong kind of column for an operation.
+A misspelled field or a column of the wrong kind for the operation is also a compile error.
 
 ```go compile-fail
 // spot-start
-db.Users.Where(ant.Eq(&U.Nmae, "x"))
-db.Users.Where(ant.Like(&U.Age, "1%"))
-db.Users.Include(&U.Name)
+db.Users.Where(ant.Eq(&Users.Nmae, "x"))
+db.Users.Where(ant.Like(&Users.Age, "1%"))
+db.Users.Include(&Users.Name)
 // spot-end
 ```
 
 ```text
-U.Nmae undefined (type *User has no field or method Nmae)
+Users.Nmae undefined (type *User has no field or method Nmae)
 in call to ant.Like, V (type int) does not satisfy ~string
-in call to db.Users.Include, type *string of &U.Name does not match *[]R (cannot infer R)
+in call to db.Users.Include, type *string of &Users.Name does not match *[]R (cannot infer R)
 ```
 
-A probe is an ordinary field reference, so renaming a field in your editor renames it in every query.
+Renaming a field in your editor renames it in every query.
 
 ## Nested and promoted fields
 
-Probes follow promoted fields and [embedded structs](/models/embedded-and-mixins).
+Field pointers follow promoted fields and [embedded structs](/models/embedded-and-mixins).
 
 {/*
 ```go
@@ -74,22 +76,22 @@ type AppDB struct {
 	Shops ant.Table[Shop]
 }
 
-var S = ant.Fields[Shop]()
+var Shops = ant.Fields[Shop]()
 ```
 */}
 
 ```go
-db.Users.OrderBy(&U.CreatedAt) // promoted from ant.Base
+db.Users.OrderBy(&Users.CreatedAt) // promoted from ant.Base
 // ... ORDER BY "users"."created_at"
 
 // spot-next-line
-db.Shops.Where(ant.Eq(&S.Shipping.City, "Oslo"))
+db.Shops.Where(ant.Eq(&Shops.Shipping.City, "Oslo"))
 // ... WHERE "shops"."shipping_city" = $1
 ```
 
 ## Pass columns of different types
 
-A few calls take any number of columns of different types, such as a composite key. `ant.F` turns a probe into a `FieldRef` for them.
+Calls that take columns of different types, such as a composite key, take `FieldRef`s. `ant.F` turns a field pointer into one.
 
 {/*
 ```go
@@ -98,26 +100,26 @@ type Grant struct {
 	Scope  string
 }
 
-var G = ant.Fields[Grant]()
+var Grants = ant.Fields[Grant]()
 ```
 */}
 
 ```go
 func (Grant) Configure(b *ant.ModelBuilder[Grant]) {
 	// spot-next-line
-	b.CompositeKey(ant.F(&G.UserID), ant.F(&G.Scope))
+	b.CompositeKey(ant.F(&Grants.UserID), ant.F(&Grants.Scope))
 }
 ```
 
 ## How a probe is resolved
 
-`ant.Fields[User]()` allocates one `User`, and `&U.Age` is an address inside it. ant subtracts the start of the probe to get an offset, and walks the struct with `reflect` once to learn which field lives at each offset.
+`ant.Fields[User]()` allocates one `User`, and `&Users.Age` is an address inside it. ant subtracts the probe's start address to get an offset, and walks the struct once with `reflect` to map offsets to fields.
 
-An offset alone is not unique: `&U.Base` and `&U.ID` share an address, because `ID` is the first field of `Base`. ant matches on address and type together.
+An offset is not unique: `&Users.Base` and `&Users.ID` share an address because `ID` is the first field of `Base`, so ant matches on address and type.
 
 ## Mistakes the compiler can't see
 
-A condition doesn't carry its model's type, so these compile. They fail when the query runs, and [antvet](/tooling/antvet) flags them earlier.
+A condition doesn't carry its model's type, so these compile and fail when the query runs. [antvet](/tooling/antvet) flags them earlier.
 
 ```go
 age := 18
@@ -126,10 +128,10 @@ age := 18
 _, err := db.Users.Where(ant.Gt(&age, 18)).All(ctx)
 errors.Is(err, ant.ErrNotProbe) // true: &age is not a probe
 
-_, err = db.Posts.Where(ant.Gt(&U.Age, 18)).All(ctx)
-errors.Is(err, ant.ErrWrongModel) // true: &U.Age belongs to User
+_, err = db.Posts.Where(ant.Gt(&Users.Age, 18)).All(ctx)
+errors.Is(err, ant.ErrWrongModel) // true: &Users.Age belongs to User
 
-_, err = db.Posts.Where(ant.IsNull(&P.User)).All(ctx)
+_, err = db.Posts.Where(ant.IsNull(&Posts.User)).All(ctx)
 errors.Is(err, ant.ErrNotColumn) // true: a relation is not a column
 // spot-end
 ```

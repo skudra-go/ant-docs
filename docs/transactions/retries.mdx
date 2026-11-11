@@ -3,13 +3,11 @@ title: Retries
 description: Run a transaction again after a deadlock or serialization conflict.
 ---
 
-When two transactions collide, the database cancels one, and running it again usually works. `ant.Attempts` and `ant.WithRetry` do that for you.
+`ant.Attempts` and `ant.WithRetry` rerun a transaction that the database cancelled in a collision.
 
 ## Retry one transaction
 
 `ant.Attempts` reruns a transaction that lost a serialization conflict or a deadlock. The number is the total number of runs, and ant waits a little longer between runs. An ordinary error is never retried.
-
-This transfer reads two accounts and writes both at serializable isolation. If another transfer commits first, the database cancels this one with a serialization failure, and ant runs the function again:
 
 ```go
 func transfer(ctx context.Context, db *BankDB, from, to string, amount int64) error {
@@ -19,12 +17,12 @@ func transfer(ctx context.Context, db *BankDB, from, to string, amount int64) er
 			// A tracker of its own, so every attempt reads the rows afresh.
 			tx = ant.Session(tx, ant.WithTracking(true))
 
-			source, err := tx.Accounts.Where(ant.Eq(&A.Owner, from)).Single(ctx)
+			source, err := tx.Accounts.Where(ant.Eq(&Accounts.Owner, from)).Single(ctx)
 			if err != nil {
 				return err
 			}
 
-			target, err := tx.Accounts.Where(ant.Eq(&A.Owner, to)).Single(ctx)
+			target, err := tx.Accounts.Where(ant.Eq(&Accounts.Owner, to)).Single(ctx)
 			if err != nil {
 				return err
 			}
@@ -41,7 +39,7 @@ func transfer(ctx context.Context, db *BankDB, from, to string, amount int64) er
 }
 ```
 
-When another transfer commits between the reads and the writes, the statements look like this. The first run is cancelled at its first `UPDATE`, and the second run reads the new balances:
+If another transfer commits between the reads and the writes, the first run is cancelled at its first `UPDATE` and the second reads the new balances:
 
 ```sql
 -- run 1
@@ -66,7 +64,7 @@ In v0.2.0, a rerun shares the tracker with the run that failed, so without `ant.
 
 :::
 
-The function runs from the top each time, with the same tracker. A tracked read returns the instance the tracker already holds, edits included, so a function that changes `source.Balance` on a shared tracker would subtract twice on the second run. Taking a session inside the function, as above, gives each run a clean tracker. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
+The function runs from the top each time, with the same tracker. A tracked read returns the instance the tracker already holds, edits included, so a function that changes `source.Balance` on a shared tracker subtracts twice on the second run. A session inside the function, as above, gives each run a clean tracker. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
 
 ```go
 err := db.Tx(
@@ -77,7 +75,7 @@ err := db.Tx(
 			return err
 		}
 
-		_, err = tx.Users.Where(ant.Eq(&U.ID, id)).Update(ctx, ant.Set(&U.Age, user.Age+1))
+		_, err = tx.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.Set(&Users.Age, user.Age+1))
 
 		return err
 	},
@@ -100,7 +98,7 @@ type BankDB struct {
 	Accounts ant.Table[Account]
 }
 
-var A = ant.Fields[Account]()
+var Accounts = ant.Fields[Account]()
 ```
 */}
 
@@ -116,11 +114,11 @@ var A = ant.Fields[Account]()
 | SQL Server | Deadlock |
 | SQLite | A busy database |
 
-A version conflict from [`SaveChanges`](/tracking/save-changes#changed-or-removed-since-it-was-loaded) is not in the list. `ErrConcurrency` means the data changed under you, and running the same function again with the same loaded values would fail the same way.
+`ErrConcurrency` from [`SaveChanges`](/tracking/save-changes#changed-or-removed-since-it-was-loaded) is not retryable: running the same function again with the same loaded values would fail the same way.
 
 ## Retry every transaction
 
-`ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context, for an application that wants this handled in one place. `ant.Attempts` overrides it for one call.
+`ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context. `ant.Attempts` overrides it for one call.
 
 ```go
 // spot-next-line
@@ -131,7 +129,7 @@ A `SaveChanges` outside a transaction retries its own transaction. Inside a `Tx`
 
 ## Check by hand
 
-`ant.IsRetryable` is also what you use to write your own loop, for work that doesn't fit in a `Tx` closure.
+Use `ant.IsRetryable` to write your own loop for work that doesn't fit in a `Tx` closure.
 
 ```go
 err := db.SaveChanges(ctx)

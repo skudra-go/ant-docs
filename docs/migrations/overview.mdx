@@ -4,19 +4,35 @@ sidebar_label: Overview
 description: Your structs are the source of truth, and migrations are plain SQL files that diff writes and up applies.
 ---
 
-`diff` compares your structs with a stored snapshot and writes the difference as a plain SQL file. You read the file, edit it if you need to, and `up` applies it.
+`diff` compares your structs with a stored snapshot and writes the difference as a plain SQL file. You review and edit the file, then `up` applies it.
 
 import MigrationFlow from '@site/src/components/MigrationFlow';
+import TwoPaths from '@site/src/components/TwoPaths';
 
 <MigrationFlow />
 
-Writing a migration needs no database. Every migration is ordinary SQL, so any other tool can read the files, and you can stop using ant's runner whenever you like. There are no down migrations: to undo a change, you write a new one.
+Writing a migration needs no database. Migrations are ordinary SQL, so other tools can read the files and you can stop using ant's runner at any time. There are no down migrations: to undo a change, write a new one.
 
-Migrations run on PostgreSQL. The other databases return `schema.ErrUnsupported`; see [databases](/reference/databases).
+## New or existing database
+
+<TwoPaths />
+
+### What this means for a project
+
+- **Adopting doesn't touch your tables.** `baseline` records your schema as already applied. It adds one table, `ant_migrations`.
+- **You can keep your migration tool.** `diff` and `check` don't need a database. ant can write the SQL for golang-migrate or your current tool to run.
+- **You can start with just queries.** Structs that match your tables are all you need to read and write.
+- **You can leave.** The files are ordinary SQL in a common layout. The history table is yours to drop.
+
+:::note[PostgreSQL only, for now]
+
+On MySQL, MariaDB, SQLite and SQL Server, ant reads and writes existing tables. The schema stays with your current tool.
+
+:::
 
 ## Set up
 
-Go can't load structs from another module, so the command line tool is a small program in your own module.
+The command line tool is a small program in your own module, because Go can't load structs from another module.
 
 ```go title="cmd/migrate/main.go"
 package main
@@ -54,8 +70,6 @@ Wrote migrations/versions/0001_create_tables.up.sql
   add foreign key posts_user_id_fkey on posts
 Review it, then apply it with: up
 ```
-
-The file holds what the models need:
 
 ```sql title="migrations/versions/0001_create_tables.up.sql"
 CREATE TABLE "posts" (
@@ -101,7 +115,7 @@ migrations/
 
 ## Change a model
 
-This is most days. Add a field, write the migration, read it, apply it. Here `User` gets a nullable `Bio` and a required `Age`:
+`User` gets a nullable `Bio` and a required `Age`:
 
 ```go
 type User struct {
@@ -116,7 +130,7 @@ type User struct {
 }
 ```
 
-`diff --dry-run` prints the SQL and writes nothing, which is a quick way to look before committing to a file:
+`diff --dry-run` prints the SQL and writes nothing:
 
 ```bash
 go run ./cmd/migrate diff add_bio_and_age --dry-run
@@ -130,7 +144,7 @@ ALTER TABLE "users" ADD COLUMN "age" bigint NOT NULL DEFAULT 0;
 ALTER TABLE "users" ALTER COLUMN "age" DROP DEFAULT;
 ```
 
-Run `diff` again without the flag to write `0002_add_bio_and_age.up.sql`, then `up`. [Generated SQL](/migrations/generated-sql) covers what `diff` does for each kind of change, and how to edit the result.
+Run `diff` without the flag to write `0002_add_bio_and_age.up.sql`, then `up`. [Generated SQL](/migrations/generated-sql) covers what `diff` does for each kind of change.
 
 ## See where things stand
 
@@ -160,7 +174,7 @@ No drift: the database matches the snapshot.
 
 ## Check in CI
 
-`check` fails when someone changed a struct without writing a migration. It needs no database, so it is cheap to run on every pull request.
+`check` fails when a struct changed without a migration. It needs no database.
 
 ```bash
 go run ./cmd/migrate check
@@ -172,7 +186,60 @@ Error: ant: models have changes with no migration. Run diff to write them:
   add column users.age
 ```
 
-The command exits with status 1. With nothing to write, it prints `OK: models, snapshot, and migrations agree.` and exits with 0. It also fails when the snapshot and the newest file disagree, as happens after a bad merge: see [working in a team](/migrations/teams).
+It exits with status 1. With nothing to write, it prints `OK: models, snapshot, and migrations agree.` and exits with 0. It also fails when the snapshot and the newest file disagree, as after a bad merge: see [working in a team](/migrations/teams).
+
+## Next to GORM, ent and sqlc
+
+<Compare>
+<Others>
+<Lib>
+
+```go marks no-check title="GORM"
+⟦-:db.AutoMigrate(&User{})⟧
+```
+
+Changes the live database directly, with no file to review, and [doesn't delete unused columns](https://gorm.io/docs/migration.html). For versioned migrations, GORM's docs point to Atlas.
+
+</Lib>
+<Lib>
+
+```bash no-check title="ent, with Atlas"
+atlas migrate diff add_bio \
+  --dir "file://ent/migrate/migrations" \
+  --to "ent://ent/schema" \
+  --dev-url "docker://mysql/8/ent"
+```
+
+Versioned SQL files you can review. They need ent's schema DSL and a dev database to replay the history on.
+
+</Lib>
+<Lib>
+
+```text no-check title="sqlc"
+sqlc does not perform database migrations for you.
+```
+
+From [sqlc's docs](https://docs.sqlc.dev/en/latest/howto/ddl.html). sqlc reads the files of your migration tool.
+
+</Lib>
+</Others>
+<Ant>
+
+```text title="go run ./cmd/migrate diff add_bio"
+Wrote migrations/versions/0002_add_bio.up.sql
+  add column users.bio
+Review it, then apply it with: up
+```
+
+```sql title="0002_add_bio.up.sql"
+ALTER TABLE "users" ADD COLUMN "bio" text;
+```
+
+- `diff` compares your structs with a stored snapshot.
+- Risky statements get a warning above them. Renames keep their data.
+
+</Ant>
+</Compare>
 
 ## Next
 

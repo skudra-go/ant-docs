@@ -1,57 +1,19 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useState} from 'react';
 import clsx from 'clsx';
 
 const loaded = {name: 'Ada', age: 36, active: true};
-const edited = {...loaded, age: 0};
+const edited = {...loaded, age: 0, active: false};
 const columns = ['name', 'age', 'active'];
-const countdown = [30, 22, 14, 7, 0];
 
 function show(value) {
   return JSON.stringify(value);
 }
 
 // SaveDemo edits a loaded row and shows what each library leaves in the database.
-// It plays once when it comes into view, so the point lands without a click.
+// It opens already edited, with zero values GORM skips, so the bug shows without
+// a click.
 export default function SaveDemo() {
   const [row, setRow] = useState(edited);
-  const root = useRef(null);
-  const timers = useRef([]);
-
-  const stop = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  };
-
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      return undefined;
-    }
-
-    setRow(loaded);
-
-    const watcher = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting) {
-          return;
-        }
-
-        watcher.disconnect();
-        countdown.forEach((age, i) => {
-          timers.current.push(
-            setTimeout(() => setRow((r) => ({...r, age})), 900 + i * 130),
-          );
-        });
-      },
-      {threshold: 0.5},
-    );
-
-    watcher.observe(root.current);
-
-    return () => {
-      watcher.disconnect();
-      stop();
-    };
-  }, []);
 
   const changed = columns.filter((c) => row[c] !== loaded[c]);
   const stored = Object.fromEntries(columns.map((c) => [c, row[c] || loaded[c]]));
@@ -59,13 +21,27 @@ export default function SaveDemo() {
 
   let verdict = 'Nothing to save yet.';
 
-  if (lost.length > 0) {
+  if (lost.length === 1) {
     const c = lost[0];
 
     verdict = (
       <>
         You set <code>{c}</code> to <code>{show(row[c])}</code>. GORM left it at{' '}
-        <code>{show(stored[c])}</code>, and returned no error.
+        <code>{show(stored[c])}</code> and returned no error.
+      </>
+    );
+  } else if (lost.length > 1) {
+    const set = lost.map((c, i) => (
+      <React.Fragment key={c}>
+        {i === 0 ? '' : i === lost.length - 1 ? ' and ' : ', '}
+        <code>{c}</code> to <code>{show(row[c])}</code>
+      </React.Fragment>
+    ));
+
+    verdict = (
+      <>
+        You set {set}. GORM wrote {lost.length === 2 ? 'neither' : 'none of them'}, and returned no
+        error.
       </>
     );
   } else if (changed.length > 0) {
@@ -74,10 +50,7 @@ export default function SaveDemo() {
 
   return (
     <figure
-      ref={root}
       className="save-demo"
-      onPointerDown={stop}
-      onFocus={stop}
       aria-label="What each library stores after a zero-value update">
       <div className="save-demo__fields">
         <label className={clsx(row.name !== loaded.name && 'is-changed')}>

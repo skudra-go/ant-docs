@@ -3,11 +3,11 @@ title: Validation
 description: Check entities before they are inserted or updated.
 ---
 
-Validation runs before every insert and update, and a failure stops the write. It runs at the same point as [hooks](/lifecycle/hooks-and-observers), so bulk writes skip it, and so does `ant.WithoutHooks`.
+Validation runs before every insert and update. A failure stops the write. It runs with [hooks](/lifecycle/hooks-and-observers), so bulk writes and `ant.WithoutHooks` skip it.
 
 ## Add a rule to a field
 
-`b.Validate` attaches a rule to one field. The rule is typed to the field, and the `validate` package has the common ones.
+`b.Validate` attaches a rule typed to one field. The `validate` package has common rules.
 
 ```go
 type Signup struct {
@@ -19,13 +19,13 @@ type Signup struct {
 
 func (Signup) Configure(b *ant.ModelBuilder[Signup]) {
 	// spot-start
-	b.Validate(&S.Name, validate.All(validate.Required[string](), validate.MaxLength(50)))
-	b.Validate(&S.Email, validate.Email)
-	b.Validate(&S.Age, validate.Range(0, 150))
+	b.Validate(&Signups.Name, validate.All(validate.Required[string](), validate.MaxLength(50)))
+	b.Validate(&Signups.Email, validate.Email)
+	b.Validate(&Signups.Age, validate.Range(0, 150))
 	// spot-end
 }
 
-var S = ant.Fields[Signup]()
+var Signups = ant.Fields[Signup]()
 ```
 
 | Rule | Checks |
@@ -38,7 +38,7 @@ var S = ant.Fields[Signup]()
 | `validate.Matches(pattern)` | Matches a `*regexp.Regexp` |
 | `validate.All(rules...)` | All of them |
 
-A rule is a `func(V) error`, so a rule of your own is a plain function:
+A rule is a `func(V) error`:
 
 ```go
 func noSpaces(s string) error {
@@ -52,7 +52,7 @@ func noSpaces(s string) error {
 
 ## Check rules that span fields
 
-For a rule that reads several fields, give the model a `Validate` method. It runs on insert and on update.
+A rule across several fields goes in a `Validate` method on the model. It runs on insert and update.
 
 ```go
 // spot-start
@@ -68,7 +68,7 @@ func (s *Signup) Validate(ctx context.Context) error {
 
 ## Read the error
 
-A failed field rule comes back as an `*ant.ValidationError` that names the model and field. The rule's own error is inside it, so `errors.Is` works with `validate.ErrRequired` and your own errors.
+A failed field rule returns an `*ant.ValidationError` naming the model and field. It wraps the rule's error, so `errors.Is` works with `validate.ErrRequired` and your own errors.
 
 ```go
 err := db.Signups.Insert(ctx, &Signup{Email: "a@example.com"})
@@ -95,7 +95,7 @@ An error from a `Validate` method is returned as it is, not wrapped.
 
 ## Return validation errors to an API client
 
-Turn a `ValidationError` into a 422 that names the field, and let any other error through as a server error:
+Map a `ValidationError` to a 422 that names the field:
 
 ```go
 func create(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +116,6 @@ func create(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Rules run inside the write, so they cannot replace a database constraint. A rule can pass while another request inserts the same value, and the unique constraint is what catches it.
+Rules cannot replace a database constraint: a rule can pass while another request inserts the same value, and only the unique constraint catches it.
 
 <Tests path="lifecycle/validate_test.go" />

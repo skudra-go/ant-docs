@@ -3,7 +3,7 @@ title: Timestamps
 description: CreatedAt and UpdatedAt are set by ant on any model that has them.
 ---
 
-A model with fields named `CreatedAt` and `UpdatedAt` gets them filled in on every write, whether they come from `ant.Base` or are declared on the model. You never set them yourself.
+ant fills fields named `CreatedAt` and `UpdatedAt` on every write, whether they come from `ant.Base` or are declared on the model.
 
 ## Add the fields
 
@@ -30,8 +30,6 @@ type Note struct {
 | Unlinking a child from a to-many relation | | Moved |
 | Bulk `Update` | | Moved |
 
-An update writes `updated_at` next to the columns you changed:
-
 ```go
 user.Name = "Carol"
 err := db.SaveChanges(ctx)
@@ -39,20 +37,20 @@ err := db.SaveChanges(ctx)
 ```
 
 ```go
-_, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Update(ctx, ant.Set(&U.Age, 31))
+_, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Update(ctx, ant.Set(&Users.Age, 31))
 // UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."name" = $3
 ```
 
 Times are stored at the database's precision, so the value on your struct matches what is in the table.
 
-Unlinking a child sets its foreign key to `NULL` with an `UPDATE`, which is a write like any other. It moves `UpdatedAt` and, on a versioned model, the [version](/lifecycle/optimistic-concurrency). `Merge` fills in the same columns as `Insert` and `Update` do, unless one of its assignments gives the column a value.
+Unlinking a child sets its foreign key to `NULL` with an `UPDATE`. It moves `UpdatedAt` and, on a versioned model, the [version](/lifecycle/optimistic-concurrency). `Merge` fills the same columns as `Insert` and `Update`, unless one of its assignments gives the column a value.
 
 ## Set a time yourself
 
-A `CreatedAt` you set is kept on insert. An `UpdatedAt` that the write gives wins over ant's, so you can backfill or import without ant overwriting it:
+A `CreatedAt` you set is kept on insert. An `UpdatedAt` the write sets wins over ant's, so imports and backfills keep their times:
 
 ```go
-_, err := db.Users.Where(ant.Eq(&U.Name, "Alice")).Update(ctx, ant.Set(&U.UpdatedAt, imported))
+_, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Update(ctx, ant.Set(&Users.UpdatedAt, imported))
 // UPDATE "users" SET "updated_at" = $1 WHERE "users"."name" = $2
 ```
 
@@ -77,7 +75,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, clock)
 
 ## Store Unix seconds
 
-`ant.UnixTime` stores a time as an integer. It is maintained the same way.
+`ant.UnixTime` stores a time as an integer and is maintained the same way.
 
 ```go
 type Stamped struct {

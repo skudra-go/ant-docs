@@ -3,17 +3,15 @@ title: Loading relations
 description: Load related rows with Include, shape what loads, load later, and count related rows.
 ---
 
-Loading is explicit and batched. Reading a field never runs a query, so what a page costs is written in the code that builds it.
-
 ## Load a relation with Include
 
-`Include` loads a `[]T` relation, and `IncludeOne` loads a `*T` one. Each adds one query, however many parents there are, so a list of 100 users with their posts is two queries, not 101.
+`Include` loads a `[]T` relation, and `IncludeOne` loads a `*T` one. Each adds one query however many parents there are.
 
 ```go
 users, err := db.Users.
-	OrderBy(&U.Name).
+	OrderBy(&Users.Name).
 	// spot-next-line
-	Include(&U.Posts).
+	Include(&Users.Posts).
 	All(ctx)
 // SELECT ... FROM "users" ORDER BY "users"."name"
 // SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, $3)
@@ -22,7 +20,7 @@ fmt.Println(users[0].Posts[0].Title)
 
 posts, err := db.Posts.
 	// spot-next-line
-	IncludeOne(&P.User).
+	IncludeOne(&Posts.User).
 	All(ctx)
 // SELECT ... FROM "posts"
 // SELECT ... FROM "users" WHERE "users"."id" IN ($1, $2)
@@ -32,7 +30,7 @@ fmt.Println(posts[0].User.Name)
 
 `Include` works with `All`, `First`, `Single`, `Find`, and `Chunk`. `Each` streams rows, so it can't batch a second query and returns `ant.ErrIncludeInEach`. When no parent comes back, the second query doesn't run. Posts with the same author share one `*User`.
 
-Use `IncludeOne` when each row has one related row, such as a post's author. Use `Include` when each row has many, such as a user's posts. Call it once per relation to load several.
+Call it once per relation to load several.
 
 ## Tell "not loaded" from "none"
 
@@ -42,7 +40,7 @@ user, err := db.Users.Find(ctx, id)
 // spot-next-line
 fmt.Println(user.Posts == nil) // true: not loaded
 
-loaded, err := db.Users.Include(&U.Posts).Find(ctx, id)
+loaded, err := db.Users.Include(&Users.Posts).Find(ctx, id)
 
 // spot-next-line
 fmt.Println(loaded.Posts != nil) // true: loaded, and maybe empty
@@ -50,13 +48,13 @@ fmt.Println(loaded.Posts != nil) // true: loaded, and maybe empty
 
 ## Filter and order what loads
 
-The optional function shapes the related query, with the same methods as any other query. This loads only published posts, newest first:
+The optional function shapes the related query with the usual query methods.
 
 ```go
 users, err := db.Users.
 	// spot-start
-	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
-		return q.Where(ant.Eq(&P.Published, true)).OrderByDesc(&P.CreatedAt)
+	Include(&Users.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Where(ant.Eq(&Posts.Published, true)).OrderByDesc(&Posts.CreatedAt)
 	}).
 	// spot-end
 	All(ctx)
@@ -67,13 +65,13 @@ users, err := db.Users.
 
 ### The latest three of each
 
-`Limit` and `Offset` apply per parent. This gives each user their three newest posts, not three posts in total, which is the shape of a feed or a "recent activity" panel:
+`Limit` and `Offset` apply per parent: each user gets their three newest posts.
 
 ```go
 users, err := db.Users.
 	// spot-start
-	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
-		return q.OrderByDesc(&P.CreatedAt).Limit(3)
+	Include(&Users.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.OrderByDesc(&Posts.CreatedAt).Limit(3)
 	}).
 	// spot-end
 	All(ctx)
@@ -85,17 +83,15 @@ users, err := db.Users.
 // ORDER BY "ant_partition"."ant_row"
 ```
 
-It is still one query for all the parents.
-
 ### Pick columns
 
-`Column` picks columns, and the foreign key is always kept so ant can match rows to parents.
+`Column` picks columns. The foreign key is always kept so ant can match rows to parents.
 
 ```go
 users, err := db.Users.
 	// spot-start
-	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
-		return q.Column(&P.Title)
+	Include(&Users.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Column(&Posts.Title)
 	}).
 	// spot-end
 	All(ctx)
@@ -106,7 +102,7 @@ users, err := db.Users.
 
 ## Load several levels
 
-`Include` inside the function loads the next level, down or up.
+`Include` inside the function loads the next level, down or up. Each level is one query.
 
 {/*
 ```go
@@ -130,8 +126,8 @@ type Post struct {
 ```go
 users, err := db.Users.
 	// spot-start
-	Include(&U.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
-		return q.Include(&P.Comments)
+	Include(&Users.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Include(&Posts.Comments)
 	}).
 	// spot-end
 	All(ctx)
@@ -140,84 +136,80 @@ users, err := db.Users.
 // SELECT ... FROM "comments" WHERE "comments"."post_id" IN ($1, $2, ...)
 ```
 
-Each level is one query.
-
 ## Load a parent in the same statement
 
-`IncludeJoined` reads a parent through a `LEFT JOIN`, so the posts and their authors arrive in one query instead of the two `IncludeOne` runs. A parent it doesn't find stays `nil`, and the row survives.
+`IncludeJoined` reads a parent through a `LEFT JOIN`, in one query instead of the two `IncludeOne` runs. A missing parent stays `nil` and the row is kept.
 
 ```go
 // spot-next-line
-posts, err := db.Posts.IncludeJoined(&P.User).OrderBy(&P.Title).All(ctx)
+posts, err := db.Posts.IncludeJoined(&Posts.User).OrderBy(&Posts.Title).All(ctx)
 // SELECT "posts"."id", ..., "ant_joined0"."id", "ant_joined0"."name", ...
 // FROM "posts" LEFT JOIN "users" AS "ant_joined0" ON "posts"."user_id" = "ant_joined0"."id"
 // ORDER BY "posts"."title"
 ```
 
-It suits a list where every row needs its parent. For a filter or an order on the parent, use a [join](/queries/joins).
+To filter or order on the parent, use a [join](/queries/joins).
 
 ## Include and tracked entities
 
-On a [session](/tracking/sessions), `Include` reads each parent's relation afresh, as `Load` does, and replaces what the parent held. The elements it replaces are let go of, so the slice shows what a save would write.
+On a [session](/tracking/sessions), `Include` reads each parent's relation afresh, as `Load` does, and replaces what the parent held. The replaced elements are released, so the slice shows what a save would write.
 
-Changes you made to a relation and haven't saved are not kept through a query. Save first:
+Unsaved changes to a relation are replaced by the query. Save first:
 
 ```go
 session := ant.Session(db)
 
-alice, err := session.Users.Include(&U.Posts).Find(ctx, id)
+alice, err := session.Users.Include(&Users.Posts).Find(ctx, id)
 
 alice.Posts = append(alice.Posts, Post{Title: "Draft"})
 
 // spot-start
 err = session.SaveChanges(ctx) // write the new post first
 
-users, err := session.Users.Include(&U.Posts).All(ctx) // then read
+users, err := session.Users.Include(&Users.Posts).All(ctx) // then read
 // spot-end
 ```
 
-Without the save, the second query would have replaced `alice.Posts` with the stored rows and dropped the draft. An entity that was inserted with its relations starts out tracked as if loaded with them. See [changing relations](/tracking/changing-relations).
+Without the save, the second query replaces `alice.Posts` with the stored rows and drops the draft. An entity that was inserted with its relations starts out tracked as if loaded with them. See [changing relations](/tracking/changing-relations).
 
-Include builds each parent's relation separately and sets it in one write, so a parent never shows half its rows. A parent that appears twice is filled once.
+`Include` sets each parent's relation in one write, so a parent never shows half its rows. A parent that appears twice is filled once.
 
 ## Load relations later
 
-`Load` fills relations on entities you already have, in one query. Use it when the decision to load comes after the first query.
+`Load` fills relations on entities you already have, in one query.
 
 ```go
-users, err := db.Users.OrderBy(&U.Name).All(ctx)
+users, err := db.Users.OrderBy(&Users.Name).All(ctx)
 
 // spot-start
-err = db.Users.Load(ctx, &U.Posts, users...)
-err = db.Posts.LoadOne(ctx, &P.User, post)
+err = db.Users.Load(ctx, &Users.Posts, users...)
+err = db.Posts.LoadOne(ctx, &Posts.User, post)
 // spot-end
 // SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2)
 // SELECT ... FROM "users" WHERE "users"."id" IN ($1)
 ```
 
-Loading again replaces the rows already there. Passing the same entity twice loads it once.
-
-`LoadMissing` skips entities whose relation is already loaded. `ant.Pointers` adapts a `[]T`, as from `ant.Raw`.
+Loading again replaces the rows already there. Passing the same entity twice loads it once. `LoadMissing` skips entities whose relation is already loaded. `ant.Pointers` adapts a `[]T`, as from `ant.Raw`.
 
 ```go
 rows, err := ant.Raw[User](db, `SELECT * FROM users`).All(ctx)
 
 // spot-next-line
-err = db.Users.LoadMissing(ctx, &U.Posts, ant.Pointers(rows)...)
+err = db.Users.LoadMissing(ctx, &Users.Posts, ant.Pointers(rows)...)
 ```
 
 ## Query one entity's related rows
 
-`ant.Related` starts a query from one entity's relation, which you can refine, count, or delete. `ant.RelatedOne` does it for a `*T` relation. Neither fills the entity's field.
+`ant.Related` starts a query from one entity's relation, which you can refine, count, or delete. `ant.RelatedOne` does the same for a `*T` relation. Neither fills the entity's field.
 
 ```go
 // spot-start
-drafts, err := ant.Related(db, alice, &U.Posts).
-	Where(ant.Eq(&P.Published, false)).
-	OrderBy(&P.Title).
+drafts, err := ant.Related(db, alice, &Users.Posts).
+	Where(ant.Eq(&Posts.Published, false)).
+	OrderBy(&Posts.Title).
 	All(ctx)
 
-author, err := ant.RelatedOne(db, post, &P.User).Single(ctx)
+author, err := ant.RelatedOne(db, post, &Posts.User).Single(ctx)
 // spot-end
 // SELECT ... FROM "posts" WHERE "posts"."user_id" = $1 AND "posts"."published" = $2 ORDER BY "posts"."title"
 // SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
@@ -225,7 +217,7 @@ author, err := ant.RelatedOne(db, post, &P.User).Single(ctx)
 
 ## Counts and sums
 
-Fill a [`computed`](/models/field-roles#computed) field with an aggregate of a relation. The aggregate is a subquery in the same statement, so no related rows are loaded.
+Fill a [`computed`](/models/field-roles#computed) field with an aggregate of a relation. The aggregate is a subquery in the same statement.
 
 ```go
 type Writer struct {
@@ -246,15 +238,15 @@ type Article struct {
 }
 
 var (
-	W = ant.Fields[Writer]()
-	A = ant.Fields[Article]()
+	Writers  = ant.Fields[Writer]()
+	Articles = ant.Fields[Article]()
 )
 
 writers, err := db.Writers.
 	// spot-start
-	With(&W.ArticleCount, ant.CountRelated(&W.Articles, ant.Eq(&A.Live, true))).
-	With(&W.TotalViews, ant.SumRelated(&W.Articles, &A.Views)).
-	With(&W.AverageViews, ant.AvgRelated(&W.Articles, &A.Views)).
+	With(&Writers.ArticleCount, ant.CountRelated(&Writers.Articles, ant.Eq(&Articles.Live, true))).
+	With(&Writers.TotalViews, ant.SumRelated(&Writers.Articles, &Articles.Views)).
+	With(&Writers.AverageViews, ant.AvgRelated(&Writers.Articles, &Articles.Views)).
 	// spot-end
 	All(ctx)
 // SELECT "writers"."id",

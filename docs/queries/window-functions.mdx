@@ -3,7 +3,7 @@ title: Window functions
 description: Compute over related rows without collapsing them.
 ---
 
-A window function computes across a set of rows and keeps every row, where `GROUP BY` would collapse them. The results come back through [`Project`](/queries/projections). The call has two parts: a function such as `ant.RowNumber()`, and a window from `Over` that says which rows it looks at and in what order.
+A window function computes across a set of rows and keeps every row. Results come back through [`Project`](/queries/projections). A function such as `ant.RowNumber()` takes a window from `Over`, which sets the rows it sees and their order.
 
 ## Number the rows
 
@@ -15,33 +15,33 @@ type Ranked struct {
 	Position int64
 }
 
-var R = ant.Fields[Ranked]()
+var Rankeds = ant.Fields[Ranked]()
 
-byAge := ant.OrderedBy(ant.Col(&U.Age).Asc(), ant.Col(&U.Name).Asc())
+byAge := ant.OrderedBy(ant.Col(&Users.Age).Asc(), ant.Col(&Users.Name).Asc())
 
 rows, err := ant.Project[Ranked](
-	db.Users.OrderBy(&U.Name),
-	ant.Into(&R.Name, &U.Name),
-	ant.IntoExpr(&R.Position, ant.RowNumber().Over(byAge)),
+	db.Users.OrderBy(&Users.Name),
+	ant.Into(&Rankeds.Name, &Users.Name),
+	ant.IntoExpr(&Rankeds.Position, ant.RowNumber().Over(byAge)),
 ).All(ctx)
 // SELECT "users"."name" AS "name",
 //   ROW_NUMBER() OVER (ORDER BY "users"."age", "users"."name") AS "position"
 // FROM "users" ORDER BY "users"."name"
 ```
 
-The window's order and the query's `OrderBy` are separate. Here the rows come back by name and are numbered by age.
+The window's order is separate from the query's `OrderBy`. Here rows come back by name and are numbered by age.
 
 ## Rank within a group
 
-`ant.PartitionBy` restarts the numbering for each value of a column. This ranks users by name inside each age:
+`ant.PartitionBy` restarts the numbering for each value of a column. This ranks users by name within each age:
 
 ```go
-perAge := ant.PartitionBy(&U.Age).OrderBy(ant.Col(&U.Name).Asc())
+perAge := ant.PartitionBy(&Users.Age).OrderBy(ant.Col(&Users.Name).Asc())
 
 rows, err := ant.Project[Ranked](
 	db.Users.Where(),
-	ant.Into(&R.Name, &U.Name),
-	ant.IntoExpr(&R.Position, ant.Rank().Over(perAge)),
+	ant.Into(&Rankeds.Name, &Users.Name),
+	ant.IntoExpr(&Rankeds.Position, ant.Rank().Over(perAge)),
 ).All(ctx)
 // SELECT "users"."name" AS "name",
 //   RANK() OVER (PARTITION BY "users"."age" ORDER BY "users"."name") AS "position"
@@ -50,15 +50,15 @@ rows, err := ant.Project[Ranked](
 
 ## Build a leaderboard
 
-Ties are where `Rank` and `DenseRank` differ. With ages 30, 25, 25 and 20, a descending `Rank` gives 1, 2, 2, 4 and `DenseRank` gives 1, 2, 2, 3.
+With ages 30, 25, 25 and 20, a descending `Rank` gives 1, 2, 2, 4 and `DenseRank` gives 1, 2, 2, 3.
 
 ```go
-board := ant.OrderedBy(ant.Col(&U.Age).Desc())
+board := ant.OrderedBy(ant.Col(&Users.Age).Desc())
 
 rows, err := ant.Project[Ranked](
 	db.Users.Where(),
-	ant.Into(&R.Name, &U.Name),
-	ant.IntoExpr(&R.Position, ant.DenseRank().Over(board)),
+	ant.Into(&Rankeds.Name, &Users.Name),
+	ant.IntoExpr(&Rankeds.Position, ant.DenseRank().Over(board)),
 ).All(ctx)
 // SELECT "users"."name" AS "name", DENSE_RANK() OVER (ORDER BY "users"."age" DESC) AS "position"
 // FROM "users"
@@ -71,12 +71,12 @@ rows, err := ant.Project[Ranked](
 | `ant.RowNumber()` | 1, 2, 3, 4 |
 | `ant.Rank()` | 1, 2, 2, 4: gaps after ties |
 | `ant.DenseRank()` | 1, 2, 2, 3: no gaps |
-| `ant.Lag(&U.Age)` | the previous row's value, `NULL` for the first |
-| `ant.Lead(&U.Age)` | the next row's value, `NULL` for the last |
+| `ant.Lag(&Users.Age)` | the previous row's value, `NULL` for the first |
+| `ant.Lead(&Users.Age)` | the next row's value, `NULL` for the last |
 
 ## Running totals and neighbours
 
-Any aggregate works as a window too, which is how you get a running total. `Lag` and `Lead` read the row before or after, for a change since the last row.
+Any aggregate works as a window, which gives a running total. `Lag` and `Lead` read the row before or after.
 
 ```go
 type Running struct {
@@ -84,23 +84,23 @@ type Running struct {
 	Previous sql.Null[int]
 }
 
-var T = ant.Fields[Running]()
+var Runnings = ant.Fields[Running]()
 
 rows, err := ant.Project[Running](
-	db.Users.OrderBy(&U.Name),
-	ant.IntoExpr(&T.Total, ant.Sum(&U.Age).Over(byAge)),
-	ant.IntoExpr(&T.Previous, ant.Lag(&U.Age).Over(byAge)),
+	db.Users.OrderBy(&Users.Name),
+	ant.IntoExpr(&Runnings.Total, ant.Sum(&Users.Age).Over(byAge)),
+	ant.IntoExpr(&Runnings.Previous, ant.Lag(&Users.Age).Over(byAge)),
 ).All(ctx)
 // SELECT SUM("users"."age") OVER (ORDER BY "users"."age", "users"."name") AS "total",
 //   LAG("users"."age") OVER (ORDER BY "users"."age", "users"."name") AS "previous"
 // FROM "users" ORDER BY "users"."name"
 ```
 
-`Over` needs a function: `ant.Col(&U.Age).Over(w)` is an error.
+`Over` needs a function: `ant.Col(&Users.Age).Over(w)` is an error.
 
 {/*
 ```go
-var byAge = ant.OrderedBy(ant.Col(&U.Age).Asc())
+var byAge = ant.OrderedBy(ant.Col(&Users.Age).Asc())
 ```
 */}
 

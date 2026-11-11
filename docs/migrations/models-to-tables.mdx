@@ -3,8 +3,6 @@ title: Models to tables
 description: How Go types, relations, and configuration become a schema.
 ---
 
-The Go type decides the column, so the common cases need no configuration at all.
-
 ## Column types
 
 | Go type | PostgreSQL column |
@@ -25,7 +23,7 @@ A column is `NOT NULL` unless its Go type can hold nothing: a pointer, `sql.Null
 
 ## When there is no obvious column
 
-If a type has no obvious column, `diff` stops and tells you which field. Set the type in [`Configure`](/models/configure#columns), or have the type declare its own column, which works well for a library type.
+If a type has no obvious column, `diff` stops and names the field. Set the type in [`Configure`](/models/configure#columns), or have the type declare its own column, which suits a library type.
 
 ```go
 type Money struct {
@@ -41,7 +39,7 @@ func (Money) ColumnType(dialect string) string {
 
 ## Indexes
 
-`b.Index` takes the columns, and chained calls set the rest. `NullsFirst()` and `NullsLast()` say where NULLs sort when that isn't the direction's default.
+`b.Index` takes the columns, and chained calls set the rest. `NullsFirst()` and `NullsLast()` set where NULLs sort when that isn't the direction's default.
 
 ```go
 type Ticket struct {
@@ -51,12 +49,12 @@ type Ticket struct {
 	Views     *int64
 }
 
-var T = ant.Fields[Ticket]()
+var Tickets = ant.Fields[Ticket]()
 
 func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
 	// spot-start
-	b.Index(&T.Views).Desc().NullsLast()
-	b.Index(&T.AuthorID).And(&T.CreatedAt).Desc()
+	b.Index(&Tickets.Views).Desc().NullsLast()
+	b.Index(&Tickets.AuthorID).And(&Tickets.CreatedAt).Desc()
 	// spot-end
 }
 ```
@@ -69,13 +67,13 @@ See [models configuration](/models/configure#add-an-index) for the rest of the i
 
 ## Relations
 
-Relations become foreign keys. The two sides of `User.Posts` and `Post.User` are one key, and either side can configure it.
+Relations become foreign keys. `User.Posts` and `Post.User` are one key, and either side can configure it.
 
-- Delete behavior is `NO ACTION` unless you set it, so nothing is deleted that you didn't ask for.
+- Delete behavior is `NO ACTION` unless you set it.
 - A many-to-many relation creates its join table, once.
 - Foreign keys get an index, unless another index already starts with that column.
 - `.NoForeignKey()` skips the constraint, and `.NoIndex()` skips the index.
-- `.Morph` relations have no foreign key, since one column can't point at several tables.
+- `.Morph` relations have no foreign key, because one column can't point at several tables.
 
 ## Enums and sequences
 
@@ -88,12 +86,12 @@ type Ticket struct {
 	Number int64
 }
 
-var T = ant.Fields[Ticket]()
+var Tickets = ant.Fields[Ticket]()
 
 func (Ticket) Configure(b *ant.ModelBuilder[Ticket]) {
 	// spot-start
-	b.Column(&T.Status).Enum("ticket_status", "open", "closed")
-	b.Column(&T.Number).Sequence("org_numbers", ant.StartAt(1000))
+	b.Column(&Tickets.Status).Enum("ticket_status", "open", "closed")
+	b.Column(&Tickets.Number).Sequence("org_numbers", ant.StartAt(1000))
 	// spot-end
 }
 ```
@@ -103,8 +101,6 @@ CREATE TYPE "ticket_status" AS ENUM ('open', 'closed');
 
 CREATE SEQUENCE "org_numbers" START WITH 1000;
 ```
-
-What happens when they change:
 
 - A new enum value is one `ALTER TYPE ... ADD VALUE`, placed `BEFORE` the value after it in the models. A file that adds a value and also uses it runs without a transaction.
 - Removing a value, or reordering the existing ones, needs a person. `diff` writes a warning and no statement.
@@ -130,15 +126,15 @@ type Order struct {
 
 func (Line) Configure(b *ant.ModelBuilder[Line]) {
 	// spot-start
-	b.ForeignKey(ant.F(&L.OrderID), ant.F(&L.Region)).
-		References(ant.F(&O.ID), ant.F(&O.Region)).
+	b.ForeignKey(ant.F(&Lines.OrderID), ant.F(&Lines.Region)).
+		References(ant.F(&Orders.ID), ant.F(&Orders.Region)).
 		OnDelete(ant.Cascade)
 		// spot-end
 }
 
 var (
-	L = ant.Fields[Line]()
-	O = ant.Fields[Order]()
+	Lines  = ant.Fields[Line]()
+	Orders = ant.Fields[Order]()
 )
 ```
 
@@ -154,6 +150,6 @@ Models on one table merge into one table definition, which is how `b.Discriminat
 
 ## Long names
 
-PostgreSQL keeps 63 bytes of a name and cuts the rest, so two long names can become one. `diff` refuses a name over that limit and says which one. The names ant makes up itself, such as index and constraint names, are shortened with a hash.
+PostgreSQL cuts a name after 63 bytes, so two long names can become one. `diff` refuses a name over that limit and says which one. The index and constraint names ant generates are shortened with a hash.
 
 <Tests path="migrations/models_test.go" />

@@ -14,9 +14,11 @@ import Hero, {Routes, Route} from '@site/src/components/Hero';
 
 ## Overview
 
-Columns are field pointers, not strings. `ant.Gt(&U.Age, 18)` is checked by the compiler, column and value both, and renaming a field updates every query that uses it.
+Columns are field pointers, not strings, so the compiler checks them. Renaming a field renames it in every query.
 
-```go title="main.go"
+<CollapsibleCode title="models.go" note="User, Post, AppDB">
+
+```go
 type User struct {
 	ant.Base // ID, CreatedAt, UpdatedAt
 	Name     string
@@ -35,15 +37,19 @@ type AppDB struct {
 	Users ant.Table[User]
 	Posts ant.Table[Post]
 }
+```
 
-var U = ant.Fields[User]()
+</CollapsibleCode>
+
+```go title="main.go"
+var Users = ant.Fields[User]() // the probe: &Users.Age names the age column
 
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
 
 // spot-start
 adults, err := db.Users.
-	Where(ant.Gt(&U.Age, 18)). // ant.Gt(&U.Age, "18") won't compile
-	Include(&U.Posts).         // one query for all the posts
+	Where(ant.Gt(&Users.Age, 18)). // ant.Gt(&Users.Age, "18") won't compile
+	Include(&Users.Posts).         // one query for all the posts
 	All(ctx)
 // SELECT ... FROM "users" WHERE "users"."age" > $1
 // SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1, $2, ...)
@@ -55,20 +61,32 @@ err = db.SaveChanges(ctx)
 // spot-end
 ```
 
+```text title="go build, with &Users.Agee"
+Users.Agee undefined (type *User has no field or method Agee)
+```
+
+## Next to GORM, Bun and ent
+
+What the compiler catches in the [query on Why ant](/why-ant#one-query-four-libraries).
+
+<CatchTable short />
+
+Single-row queries cost about the same in every library. Change tracking makes large reads slower, and `NoTracking` turns it off for read-only queries. [Benchmarks](/reference/benchmarks) has the numbers.
+
 ## Features
 
 <Routes>
-  <Route to="/queries/conditions" title="Typed queries">Conditions, joins, projections, aggregates, subqueries, CTEs and window functions, all checked by the compiler.</Route>
-  <Route to="/models/defining-models" title="Plain structs">Your types are the models. Conventions cover the common case, and `Configure` covers the rest.</Route>
-  <Route to="/relations/loading" title="Relations">One-to-one, one-to-many and many-to-many, loaded with `Include` in batches. Nothing loads behind your back.</Route>
-  <Route to="/tracking/save-changes" title="Change tracking">Load, change fields, call `SaveChanges`. Only the columns that changed are written.</Route>
-  <Route to="/writing/upsert-and-merge" title="Writes">Inserts, updates, deletes, upserts, `MERGE` and bulk writes, with a guard against unfiltered updates.</Route>
+  <Route to="/queries/conditions" title="Typed queries">Conditions, joins, projections, aggregates, subqueries, CTEs and window functions.</Route>
+  <Route to="/models/defining-models" title="Plain structs">Conventions cover the common case. `Configure` covers the rest.</Route>
+  <Route to="/relations/loading" title="Relations">One-to-one, one-to-many and many-to-many, loaded in batches with `Include`. An unloaded relation is `nil`.</Route>
+  <Route to="/tracking/save-changes" title="Change tracking">`SaveChanges` writes only the columns that changed.</Route>
+  <Route to="/writing/upsert-and-merge" title="Writes">Upserts, `MERGE`, bulk writes and a guard against unfiltered updates.</Route>
   <Route to="/transactions" title="Transactions">Savepoints, isolation levels, retries on deadlocks and serialization failures, and read replicas.</Route>
   <Route to="/lifecycle/soft-deletes" title="Lifecycle">Soft deletes, timestamps, global filters, hooks, validation and optimistic concurrency.</Route>
-  <Route to="/migrations/overview" title="Migrations">Plain SQL generated from your structs, reviewed before it runs, with drift checks. PostgreSQL.</Route>
-  <Route to="/queries/raw-sql" title="Raw SQL">Raw queries scan into structs, and raw fragments fit inside typed queries.</Route>
+  <Route to="/migrations/overview" title="Migrations">Plain SQL generated from your structs, reviewed before it runs, with drift checks.</Route>
+  <Route to="/queries/raw-sql" title="Raw SQL">Raw queries scan into structs. Raw fragments fit inside typed queries.</Route>
   <Route to="/tooling/metrics-and-tracing" title="OpenTelemetry and metrics">A span per statement with `contrib/otel`, Prometheus metrics, and logging through `log/slog`.</Route>
-  <Route to="/tooling/antvet" title="antvet">A `go vet` analyzer that catches field pointers from the wrong model and `Find` keys of the wrong type.</Route>
+  <Route to="/tooling/antvet" title="antvet">A `go vet` analyzer for field pointers from the wrong model and `Find` keys of the wrong type.</Route>
   <Route to="/testing" title="Testing">`anttest` gives each test a rolled-back transaction, plus fixtures and factories.</Route>
 </Routes>
 
@@ -79,7 +97,7 @@ go get github.com/skudra-go/ant
 go get github.com/jackc/pgx/v5/stdlib  # or the driver for your database
 ```
 
-ant needs Go 1.27 or later, because it uses generic methods. It hasn't reached 1.0, so the API can still change between releases; each [release](https://github.com/skudra-go/ant/releases) lists its breaking changes.
+ant needs Go 1.27 or later, because it uses generic methods. It is pre-1.0, so the API can still change; each [release](https://github.com/skudra-go/ant/releases) lists its breaking changes.
 
 ## Databases
 
@@ -88,14 +106,16 @@ ant needs Go 1.27 or later, because it uses generic methods. It hasn't reached 1
 | Queries, writes, relations, tracking, transactions | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Migrations | ✓ |  |  |  |  |
 
-PostgreSQL gets every feature first. [Databases](/reference/databases) lists what each one lacks and how ant works around the differences.
+PostgreSQL gets every feature first. [Databases](/reference/databases) lists the gaps and how ant handles them.
+
+## Feedback
+
+ant is pre-1.0, and the API is still open to change. If something reads awkwardly, is missing, or doesn't work with your database, [open an issue](https://github.com/skudra-go/ant/issues/new/choose). Questions and ideas go in [Discussions](https://github.com/skudra-go/ant/discussions).
 
 ## Next
 
 <Routes>
-  <Route to="/quick-start" title="Quick start">A program that saves and queries a user, in five minutes.</Route>
-  <Route to="/concepts" title="Concepts">The few ideas everything else builds on.</Route>
-  <Route to="/why-ant" title="Why ant">The problems ant fixes, next to GORM, Bun and ent.</Route>
+  <Route to="/quick-start" title="Quick start">A program that saves and queries a user.</Route>
+  <Route to="/concepts" title="Concepts">Models, probes, the context, errors and loading.</Route>
+  <Route to="/why-ant" title="Why ant">What ant fixes, what it costs, and its limits.</Route>
 </Routes>
-
-The [API reference on pkg.go.dev](https://pkg.go.dev/github.com/skudra-go/ant) has every exported name. On these pages, the first mention of a name such as `ant.Open` links there, and hovering it shows the declaration.

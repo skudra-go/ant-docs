@@ -3,7 +3,7 @@ title: Diagnostics
 description: Warnings about N+1 patterns, slow requests, and row explosions.
 ---
 
-Diagnostics warn about patterns that no single query shows: the same statement run in a loop, a request that spends too long in the database, a join that multiplies rows. They count within a scope, usually one web request, and cost a little per statement.
+Diagnostics warn about patterns no single query shows: a statement repeated in a loop, a request that spends too long in the database, a join that multiplies rows. They count per scope, usually one web request, and add a small cost per statement.
 
 ## Turn it on
 
@@ -25,7 +25,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 
 ## Start a scope for each request
 
-`ant.Watch` returns a context that starts counting. Without a scope, repeats and budgets are not counted. Wrap each request in middleware:
+`ant.Watch` returns a context that starts a scope. Without one, repeats and budgets are not counted. Wrap each request in middleware:
 
 ```go
 func middleware(next http.Handler) http.Handler {
@@ -40,8 +40,8 @@ func middleware(next http.Handler) http.Handler {
 
 | `Kind` | Means |
 | --- | --- |
-| `repeated` | One statement ran more than `RepeatLimit` times in a scope, which is what an N+1 loop looks like |
+| `repeated` | One statement ran more than `RepeatLimit` times in a scope |
 | `budget` | Statements together took longer than `Budget`, which a slow-query log misses when each one is fast |
-| `cartesian` | A query joined two to-many relations, which multiplies rows. This reports with or without a scope |
+| `cartesian` | A query joined two to-many relations. This reports with or without a scope |
 
 <Tests path="developer_tooling/diagnostics_test.go" />

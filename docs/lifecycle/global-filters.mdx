@@ -7,7 +7,7 @@ A global filter adds a condition to every query of a model. It follows the model
 
 ## Declare a filter
 
-`b.Filter` takes a name and a function from the context to a condition. This model is filtered by tenant, and hides secret documents:
+`b.Filter` takes a name and a function from the context to a condition. This model filters by tenant and hides secret documents:
 
 ```go
 type Doc struct {
@@ -25,18 +25,18 @@ func (Doc) Configure(b *ant.ModelBuilder[Doc]) {
 			return ant.FailedCond(errors.New("no tenant in context"))
 		}
 
-		return ant.Eq(&D.TenantID, tenant)
+		return ant.Eq(&Docs.TenantID, tenant)
 	})
 
 	b.Filter("public", func(context.Context) ant.Cond {
-		return ant.Eq(&D.Secret, false)
+		return ant.Eq(&Docs.Secret, false)
 	})
 	// spot-end
 }
 
 type tenantKey struct{}
 
-var D = ant.Fields[Doc]()
+var Docs = ant.Fields[Doc]()
 ```
 
 {/*
@@ -50,22 +50,18 @@ var one context.Context
 ```
 */}
 
-`ant.FailedCond` makes the query fail with your error. Use it when the context has no tenant. A filter that returned no condition would show every tenant's rows.
+`ant.FailedCond` fails the query with your error. Use it when the context has no tenant, since a filter that returned no condition would show every tenant's rows.
 
 ## Query as a tenant
-
-Queries need no change. The context decides which rows come back:
 
 ```go
 one := context.WithValue(ctx, tenantKey{}, int64(1))
 
-docs, err := db.Docs.Where(ant.Like(&D.Title, "A%")).All(one)
+docs, err := db.Docs.Where(ant.Like(&Docs.Title, "A%")).All(one)
 // SELECT ... FROM "docs"
 // WHERE "docs"."title" LIKE $1 AND "docs"."tenant_id" = $2 AND "docs"."secret" = $3
 // -- $1 = "A%", $2 = 1, $3 = false
 ```
-
-A tenant middleware puts the value into the request's context once:
 
 ```go
 func tenantMiddleware(next http.Handler) http.Handler {
@@ -85,10 +81,10 @@ func tenantOf(r *http.Request) int64 { return 0 }
 
 ## Filters apply to writes
 
-Bulk updates and deletes get the same conditions, so one tenant cannot change another's rows:
+Bulk updates and deletes get the same conditions:
 
 ```go
-n, err := db.Docs.Where(ant.Eq(&D.Title, "x")).Delete(one)
+n, err := db.Docs.Where(ant.Eq(&Docs.Title, "x")).Delete(one)
 // DELETE FROM "docs"
 // WHERE "docs"."title" = $1 AND "docs"."tenant_id" = $2 AND "docs"."secret" = $3
 ```
@@ -105,7 +101,7 @@ everything, err := db.Docs.IgnoreFilters().All(ctx)
 // SELECT ... FROM "docs"
 ```
 
-Search for `IgnoreFilters` in code review. It is how a bug leaks one tenant's rows to another.
+Search for `IgnoreFilters` in code review: it is how rows leak across tenants.
 
 :::danger[A convenience, not a security boundary]
 

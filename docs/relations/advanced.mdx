@@ -3,11 +3,9 @@ title: Advanced relations
 description: Through relations, polymorphic relations, scoped relations, latest-of-many, inverses, and touching a parent.
 ---
 
-These are the less common shapes a relation can take. Each is configured in a line or two.
-
 ## Reach across a table in the middle
 
-`HasManyThrough` reaches across a table in the middle: a country's articles, by way of its members. `HasOneThrough` does the same for one row. They load like any other relation, but they're never written, since those rows belong to the models in the middle.
+`HasManyThrough` reaches across a table in the middle: a country's articles, by way of its members. `HasOneThrough` does the same for one row. They load like any other relation but are never written, because those rows belong to the models in the middle.
 
 ```go
 type Country struct {
@@ -19,8 +17,8 @@ type Country struct {
 
 func (Country) Configure(b *ant.ModelBuilder[Country]) {
 	// spot-start
-	b.HasManyThrough(&Cn.Articles, &Mb.CountryID, &Ar.MemberID)
-	b.HasOneThrough(&Cn.Top, &Mb.CountryID, &Ar.MemberID)
+	b.HasManyThrough(&Countries.Articles, &Members.CountryID, &Articles.MemberID)
+	b.HasOneThrough(&Countries.Top, &Members.CountryID, &Articles.MemberID)
 	// spot-end
 }
 
@@ -36,12 +34,12 @@ type Article struct {
 }
 
 var (
-	Cn = ant.Fields[Country]()
-	Mb = ant.Fields[Member]()
-	Ar = ant.Fields[Article]()
+	Countries = ant.Fields[Country]()
+	Members = ant.Fields[Member]()
+	Articles = ant.Fields[Article]()
 )
 
-countries, err := db.Countries.Include(&Cn.Articles).All(ctx)
+countries, err := db.Countries.Include(&Countries.Articles).All(ctx)
 // SELECT ... FROM "countries"
 // SELECT "country_id", "id" FROM "members" WHERE "country_id" IN ($1)
 // SELECT ... FROM "articles" WHERE "articles"."member_id" IN ($1)
@@ -51,7 +49,7 @@ countries, err := db.Countries.Include(&Cn.Articles).All(ctx)
 
 ```go
 // spot-next-line
-withArticles, err := db.Countries.Where(ant.Has(&Cn.Articles)).All(ctx)
+withArticles, err := db.Countries.Where(ant.Has(&Countries.Articles)).All(ctx)
 // SELECT ... FROM "countries" WHERE EXISTS (
 //   SELECT 1 FROM "articles" AS "ant_related"
 //   JOIN "members" AS "ant_related_pivot" ON "ant_related_pivot"."id" = "ant_related"."member_id"
@@ -73,7 +71,7 @@ type PageDB struct {
 
 ## Share a table between several owners
 
-A polymorphic relation uses one foreign key for several tables, plus a second column saying which table. Use it for comments, tags, or attachments that can belong to an essay or a video. Essay 1 and Video 1 can share a key, and each still sees only its own comments. Saving through the relation sets the type column for you.
+A polymorphic relation uses one foreign key for several tables, plus a second column saying which table, as for comments that can belong to an essay or a video. Essay 1 and Video 1 can share a key and each sees only its own comments. Saving through the relation sets the type column.
 
 ```go
 type Comment struct {
@@ -87,8 +85,8 @@ type Comment struct {
 
 func (Comment) Configure(b *ant.ModelBuilder[Comment]) {
 	// spot-start
-	b.BelongsTo(&Cm.Essay).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "essay")
-	b.BelongsTo(&Cm.Video).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "video")
+	b.BelongsTo(&Comments.Essay).ForeignKey(&Comments.OwnerID).Morph(&Comments.OwnerType, "essay")
+	b.BelongsTo(&Comments.Video).ForeignKey(&Comments.OwnerID).Morph(&Comments.OwnerType, "video")
 	// spot-end
 }
 
@@ -99,7 +97,7 @@ type Essay struct {
 
 func (Essay) Configure(b *ant.ModelBuilder[Essay]) {
 	// spot-next-line
-	b.HasMany(&Es.Comments).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "essay")
+	b.HasMany(&Essays.Comments).ForeignKey(&Comments.OwnerID).Morph(&Comments.OwnerType, "essay")
 }
 
 type Video struct {
@@ -109,30 +107,30 @@ type Video struct {
 
 func (Video) Configure(b *ant.ModelBuilder[Video]) {
 	// spot-next-line
-	b.HasMany(&Vd.Comments).ForeignKey(&Cm.OwnerID).Morph(&Cm.OwnerType, "video")
+	b.HasMany(&Videos.Comments).ForeignKey(&Comments.OwnerID).Morph(&Comments.OwnerType, "video")
 }
 
 var (
-	Cm = ant.Fields[Comment]()
-	Es = ant.Fields[Essay]()
-	Vd = ant.Fields[Video]()
+	Comments = ant.Fields[Comment]()
+	Essays   = ant.Fields[Essay]()
+	Videos   = ant.Fields[Video]()
 )
 ```
 
-Both sides of each relation need the same `.Morph`, or the relation is read with the wrong type. The query filters on the type:
+Both sides of each relation need the same `.Morph`, or the relation is read with the wrong type.
 
 ```go
-essays, err := db.Essays.Include(&Es.Comments).All(ctx)
+essays, err := db.Essays.Include(&Essays.Comments).All(ctx)
 // SELECT ... FROM "essays"
 // SELECT ... FROM "comments" WHERE "comments"."owner_type" = $1 AND "comments"."owner_id" IN ($2)
 // $1 = 'essay'
 ```
 
-What's stored is the value you give `.Morph`, so renaming a Go type can't change your data. Migrations write no foreign key here, since one column can't point at several tables.
+The stored value is the one you give `.Morph`, so renaming a Go type doesn't change data. Migrations write no foreign key here, because one column can't point at several tables.
 
 ## Scoped relations and latest of many
 
-A relation can carry a condition, or pick one row per parent. `Live` below is a "published novels" relation. `Newest` is the single most recent novel, which is how to show "last order" or "current address" next to a list.
+A relation can carry a condition or pick one row per parent. `Live` is a "published novels" relation. `Newest` is the single most recent novel.
 
 ```go
 type Novelist struct {
@@ -144,8 +142,8 @@ type Novelist struct {
 
 func (Novelist) Configure(b *ant.ModelBuilder[Novelist]) {
 	// spot-start
-	b.HasMany(&Nv.Live).ForeignKey(&Nl.NovelistID).Where(ant.Eq(&Nl.Published, true))
-	b.HasOne(&Nv.Newest).ForeignKey(&Nl.NovelistID).Latest(&Nl.Year)
+	b.HasMany(&Novelists.Live).ForeignKey(&Novels.NovelistID).Where(ant.Eq(&Novels.Published, true))
+	b.HasOne(&Novelists.Newest).ForeignKey(&Novels.NovelistID).Latest(&Novels.Year)
 	// spot-end
 }
 
@@ -158,13 +156,13 @@ type Novel struct {
 }
 
 var (
-	Nv = ant.Fields[Novelist]()
-	Nl = ant.Fields[Novel]()
+	Novelists = ant.Fields[Novelist]()
+	Novels    = ant.Fields[Novel]()
 )
 ```
 
 ```go
-novelists, err := db.Novelists.Include(&Nv.Live).IncludeOne(&Nv.Newest).All(ctx)
+novelists, err := db.Novelists.Include(&Novelists.Live).IncludeOne(&Novelists.Newest).All(ctx)
 // SELECT ... FROM "novelists"
 // SELECT ... FROM "novels" WHERE "novels"."published" = $1 AND "novels"."novelist_id" IN ($2)
 // SELECT * FROM (
@@ -182,15 +180,15 @@ Counts, `Has` and joins follow the scope. `.Oldest` is the opposite of `.Latest`
 ```go
 func (Novelist) Configure(b *ant.ModelBuilder[Novelist]) {
 	// spot-next-line
-	b.HasMany(&Nv.Novels).ForeignKey(&Nl.NovelistID).Inverse(&Nl.Novelist)
+	b.HasMany(&Novelists.Novels).ForeignKey(&Novels.NovelistID).Inverse(&Novels.Novelist)
 }
 ```
 
-After `Include(&Nv.Novels)`, `novels[0].Novelist` is the same instance as its parent.
+After `Include(&Novelists.Novels)`, `novels[0].Novelist` is the same instance as its parent.
 
 ## Touching the parent
 
-`Touch` moves a parent's `UpdatedAt` when a child is written. Use it when a cache or a "last activity" list reads the parent's timestamp.
+`Touch` moves a parent's `UpdatedAt` when a child is written.
 
 ```go
 type Answer struct {
@@ -201,7 +199,7 @@ type Answer struct {
 
 func (Answer) Configure(b *ant.ModelBuilder[Answer]) {
 	// spot-next-line
-	b.BelongsTo(&An.Discussion).Touch()
+	b.BelongsTo(&Answers.Discussion).Touch()
 }
 
 type Discussion struct {
@@ -209,7 +207,7 @@ type Discussion struct {
 	UpdatedAt time.Time
 }
 
-var An = ant.Fields[Answer]()
+var Answers = ant.Fields[Answer]()
 ```
 
 Saving an answer then also runs:

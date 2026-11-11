@@ -15,7 +15,7 @@ type Note struct {
 	DeletedAt ant.DeletedAt
 }
 
-var N = ant.Fields[Note]()
+var Notes = ant.Fields[Note]()
 ```
 
 {/*
@@ -34,7 +34,7 @@ The column is a nullable timestamp. `NULL` means the row is live.
 `Delete`, `DeleteByID` and `ant.Remove` on a model with `DeletedAt` mark the row instead of removing it:
 
 ```go
-n, err := db.Notes.Where(ant.Eq(&N.Text, "draft")).Delete(ctx)
+n, err := db.Notes.Where(ant.Eq(&Notes.Text, "draft")).Delete(ctx)
 // UPDATE "notes" SET "deleted_at" = $1
 // WHERE "notes"."text" = $2 AND "notes"."deleted_at" IS NULL
 ```
@@ -45,7 +45,7 @@ err := db.Notes.DeleteByID(ctx, id)
 // WHERE "notes"."id" = $2 AND "notes"."deleted_at" IS NULL
 ```
 
-Deleting a row that is already marked changes nothing, and keeps the first timestamp. The delete does not touch `UpdatedAt`.
+Deleting an already marked row keeps the first timestamp. The delete does not touch `UpdatedAt`.
 
 ## Read live rows
 
@@ -58,7 +58,7 @@ all, err := db.Notes.All(ctx)
 
 ## Read deleted rows
 
-`WithDeleted` includes both, and `OnlyDeleted` returns the marked rows alone. A trash view is `OnlyDeleted`.
+`WithDeleted` includes marked rows. `OnlyDeleted` returns only those.
 
 ```go
 every, err := db.Notes.WithDeleted().All(ctx)
@@ -73,7 +73,7 @@ gone, err := db.Notes.OnlyDeleted().All(ctx)
 `Restore` clears the mark and returns how many rows it changed.
 
 ```go
-n, err := db.Notes.Where(ant.Eq(&N.Text, "draft")).Restore(ctx)
+n, err := db.Notes.Where(ant.Eq(&Notes.Text, "draft")).Restore(ctx)
 // UPDATE "notes" SET "deleted_at" = $1
 // WHERE "notes"."text" = $2 AND "notes"."deleted_at" IS NOT NULL
 // -- $1 = NULL
@@ -86,32 +86,30 @@ On a model without a `DeletedAt` field, `Restore` returns `ant.ErrNotSoftDeleted
 `ForceDelete` removes rows for real. Add `WithDeleted` to reach rows that are already marked.
 
 ```go
-n, err := db.Notes.WithDeleted().Where(ant.Eq(&N.Text, "draft")).ForceDelete(ctx)
+n, err := db.Notes.WithDeleted().Where(ant.Eq(&Notes.Text, "draft")).ForceDelete(ctx)
 // DELETE FROM "notes" WHERE "notes"."text" = $1
 ```
 
 ## Empty the trash
 
-`Prune` removes matching rows for good, marked or not, in batches of 1,000, so it never holds one long transaction open. Run it from a scheduled job to purge rows deleted more than 30 days ago:
+`Prune` removes matching rows for good, marked or not, in batches of 1,000, so no single transaction runs long. This purges rows deleted more than 30 days ago:
 
 ```go
 cutoff := time.Now().AddDate(0, 0, -30)
 
-removed, err := db.Notes.Prune(ctx, ant.Lt(&N.DeletedAt.V, cutoff))
+removed, err := db.Notes.Prune(ctx, ant.Lt(&Notes.DeletedAt.V, cutoff))
 // DELETE FROM "notes" WHERE "notes"."id" IN (
 //   SELECT "notes"."id" FROM "notes" WHERE "notes"."deleted_at" < $1 LIMIT $2
 // )
 // -- $2 = 1000
 ```
 
-A live row has a `NULL` timestamp, so `Lt` never matches it.
-
 ## Filter by when a row was deleted
 
-`&N.DeletedAt.V` names the column as a time.
+`&Notes.DeletedAt.V` names the column as a time.
 
 ```go
-stale, err := db.Notes.OnlyDeleted().Where(ant.Lt(&N.DeletedAt.V, cutoff)).Count(ctx)
+stale, err := db.Notes.OnlyDeleted().Where(ant.Lt(&Notes.DeletedAt.V, cutoff)).Count(ctx)
 // SELECT COUNT(*) FROM "notes"
 // WHERE "notes"."deleted_at" IS NOT NULL AND "notes"."deleted_at" < $1
 ```
@@ -122,16 +120,16 @@ var cutoff time.Time
 ```
 */}
 
-ant binds `DeletedAt`, like every other time, in UTC on SQLite and SQL Server, whose columns keep no time zone. A `DeletedAt` stored from a server in another zone compares correctly. See [databases](/reference/databases).
+ant binds times in UTC on SQLite and SQL Server, whose columns keep no time zone, so `DeletedAt` compares correctly across server zones. See [databases](/reference/databases).
 
 ## Reuse a unique value
 
-A marked row still holds its values, so a plain unique constraint stops anyone from reusing its email. Index only the live rows:
+A plain unique constraint also covers marked rows, so their emails can't be reused. Index only live rows:
 
 ```go
 func (User) Configure(b *ant.ModelBuilder[User]) {
 	// spot-next-line
-	b.Index(&U.Email).Unique().Where("deleted_at IS NULL")
+	b.Index(&Users.Email).Unique().Where("deleted_at IS NULL")
 }
 ```
 

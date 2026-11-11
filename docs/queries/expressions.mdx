@@ -3,12 +3,12 @@ title: Expressions
 description: Compute values in SQL, with their Go type checked.
 ---
 
-An `ant.Expr[V]` computes a value in SQL and knows its Go type. You can compare it, order by it, select it, or write it to a column.
+An `ant.Expr[V]` computes a value in SQL and has a Go type. You can compare it, order by it, select it, or write it to a column.
 
 ## Use an expression in a query
 
 ```go
-lower := ant.Lower(&U.Name)
+lower := ant.Lower(&Users.Name)
 
 users, err := db.Users.
 	Where(lower.Eq("bob")).
@@ -19,10 +19,10 @@ users, err := db.Users.
 
 ## Columns and arithmetic
 
-`ant.Col` turns a probe into an expression, and arithmetic stays typed.
+`ant.Col` turns a field pointer into an expression. Arithmetic stays typed.
 
 ```go
-nextYear := ant.Col(&U.Age).Plus(1)
+nextYear := ant.Col(&Users.Age).Plus(1)
 
 users, err := db.Users.Where(nextYear.Eq(18)).All(ctx)
 // SELECT ... FROM "users" WHERE ("users"."age" + $1) = $2
@@ -41,36 +41,36 @@ users, err := db.Users.Where(nextYear.Eq(18)).All(ctx)
 ## Built-in functions
 
 ```go
-lower := ant.Lower(&U.Name)
-upper := ant.Upper(&U.Name)
-length := ant.Length(&U.Name)
-fallback := ant.Coalesce(&U.Bio, new("none"))
-sorted := ant.Collate(&U.Name, "C")
+lower := ant.Lower(&Users.Name)
+upper := ant.Upper(&Users.Name)
+length := ant.Length(&Users.Name)
+fallback := ant.Coalesce(&Users.Bio, new("none"))
+sorted := ant.Collate(&Users.Name, "C")
 
 users, err := db.Users.Where(length.Gte(5)).Order(sorted.Asc()).All(ctx)
 // SELECT ... FROM "users" WHERE LENGTH("users"."name") >= $1 ORDER BY "users"."name" COLLATE "C"
 ```
 
-`Coalesce` takes the first value that isn't `NULL`. Order by it to sort rows with no bio as if they held a default:
+`Coalesce` takes the first value that isn't `NULL`. Ordering by it sorts rows with no bio as if they held a default:
 
 ```go
-users, err := db.Users.Order(ant.Coalesce(&U.Bio, new("none")).Asc()).All(ctx)
+users, err := db.Users.Order(ant.Coalesce(&Users.Bio, new("none")).Asc()).All(ctx)
 // SELECT ... FROM "users" ORDER BY COALESCE("users"."bio", $1)
 ```
 
 ## CASE
 
-`ant.Case` picks a value by condition. It is how you turn a number into a label inside the query.
+`ant.Case` picks a value by condition.
 
 ```go
 kind := ant.Case[string]().
-	When(ant.Lt(&U.Age, 18), "minor").
-	When(ant.Gt(&U.Age, 65), "senior").
+	When(ant.Lt(&Users.Age, 18), "minor").
+	When(ant.Gt(&Users.Age, 65), "senior").
 	Else("adult")
 // CASE WHEN "users"."age" < $1 THEN $2 WHEN "users"."age" > $3 THEN $4 ELSE $5 END
 ```
 
-`Else` returns the finished `Expr[string]`. `End` leaves it open, as `Expr[sql.Null[string]]`, since a row that matches nothing is `NULL`. `WhenExpr` and `ElseExpr` take columns or other expressions as results.
+`Else` returns an `Expr[string]`. `End` returns `Expr[sql.Null[string]]`, since a row that matches nothing is `NULL`. `WhenExpr` and `ElseExpr` take columns or other expressions as results.
 
 To read the label, map it into a struct with [`Project`](/queries/projections):
 
@@ -80,17 +80,17 @@ type Labeled struct {
 	Kind string
 }
 
-var L = ant.Fields[Labeled]()
+var Labeleds = ant.Fields[Labeled]()
 
 kind := ant.Case[string]().
-	When(ant.Lt(&U.Age, 18), "minor").
-	When(ant.Gt(&U.Age, 65), "senior").
+	When(ant.Lt(&Users.Age, 18), "minor").
+	When(ant.Gt(&Users.Age, 65), "senior").
 	Else("adult")
 
 rows, err := ant.Project[Labeled](
 	db.Users.Where(),
-	ant.Into(&L.Name, &U.Name),
-	ant.IntoExpr(&L.Kind, kind),
+	ant.Into(&Labeleds.Name, &Users.Name),
+	ant.IntoExpr(&Labeleds.Kind, kind),
 ).All(ctx)
 // SELECT "users"."name" AS "name",
 //   CASE WHEN "users"."age" < $1 THEN $2 WHEN "users"."age" > $3 THEN $4 ELSE $5 END AS "kind"
@@ -99,22 +99,22 @@ rows, err := ant.Project[Labeled](
 
 ## Call any database function
 
-`ant.Func` calls a function by name, with the result type you state. Columns go in as expressions, and other values are bound.
+`ant.Func` calls a function by name with the result type you state. Columns go in as expressions. Other values are bound.
 
 ```go
-fixed := ant.Func[string]("REPLACE", ant.Col(&U.Name), "o", "0")
+fixed := ant.Func[string]("REPLACE", ant.Col(&Users.Name), "o", "0")
 // REPLACE("users"."name", $1, $2)
 ```
 
 ## A SQL fragment
 
-`ant.SQL` lets you write the expression yourself. Each `?` takes a column or a bound value, so a value never becomes part of the statement text. `ant.SQLCond` is the same, as a condition.
+`ant.SQL` takes your own expression. Each `?` takes a column or a bound value, so values never enter the statement text. `ant.SQLCond` is the same, returning a condition.
 
 ```go
-label := ant.SQL[string]("? || ?", ant.Col(&U.Name), "/x")
+label := ant.SQL[string]("? || ?", ant.Col(&Users.Name), "/x")
 // "users"."name" || $1
 
-even := ant.SQLCond("? % ? = 0", ant.Col(&U.Age), 2)
+even := ant.SQLCond("? % ? = 0", ant.Col(&Users.Age), 2)
 
 users, err := db.Users.Where(even).All(ctx)
 // SELECT ... FROM "users" WHERE ("users"."age" % $1 = 0)
@@ -124,7 +124,7 @@ The wrong number of arguments is an error.
 
 :::danger[Never build the text from input]
 
-The string is SQL, by design. Pass values as arguments, and keep the text a constant.
+The string is SQL. Pass values as arguments and keep the text constant.
 
 :::
 

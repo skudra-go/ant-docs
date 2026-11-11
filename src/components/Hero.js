@@ -39,7 +39,7 @@ export default function Hero() {
         <AntMark watch size={96} />
       </div>
       <p className="hero-ant__status">
-        <Link to={reference}>{release}</Link> · pre-1.0, so the API can still change
+        <Link to={reference}>{release}</Link> · pre-1.0 · Go 1.27+
       </p>
       <h1 className="hero-ant__title">A typed ORM for Go.</h1>
       <p className="hero-ant__lede">
@@ -51,8 +51,8 @@ export default function Hero() {
         <Link className="ant-button ant-button--solid" to="/quick-start">
           Quick start
         </Link>
-        <Link className="ant-button" to={reference}>
-          API reference
+        <Link className="ant-button" to="/why-ant">
+          Why ant
         </Link>
         <Link className="ant-button" to={repo}>
           GitHub

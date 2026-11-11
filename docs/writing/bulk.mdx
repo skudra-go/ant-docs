@@ -3,11 +3,11 @@ title: Bulk writes
 description: InsertMany, UpdateMany, InsertFrom, Truncate, and PostgreSQL's COPY and batches.
 ---
 
-These calls skip the model layer for speed. They run no hooks, track nothing, and write relations only when you do it yourself.
+These calls skip the model layer. They run no hooks, track nothing, and write relations only when you do it yourself.
 
 ## Insert many rows
 
-`InsertMany` writes rows in multi-row statements inside one transaction and returns how many went in. Use it for batch loads, such as an import file or a seed. Generated keys are copied back onto your structs.
+`InsertMany` writes rows in multi-row statements inside one transaction and returns how many went in. Generated keys are copied back onto your structs.
 
 ```go
 // spot-next-line
@@ -15,23 +15,23 @@ n, err := db.Users.InsertMany(ctx, users, ant.BatchSize(500))
 // INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...), ... RETURNING "id"
 ```
 
-A batch holds 1,000 rows unless you set `ant.BatchSize`. ant also splits a batch to fit the database's [parameter limit](/reference/databases), so a size larger than one statement can take still works. The whole call is all or nothing, and the keys are cleared if it fails.
+A batch holds 1,000 rows unless you set `ant.BatchSize`. ant also splits a batch to fit the database's [parameter limit](/reference/databases), so a size larger than one statement can take still works. The keys are cleared if it fails.
 
 `InsertMany` ignores relation fields. To save a graph, use [`Insert`](/writing/insert#insert-a-whole-graph).
 
 ### Skip rows that already exist
 
-`ant.WithConflict` applies a [conflict clause](/writing/upsert-and-merge) to every row. With `DoNothing`, a re-run of the same import inserts only the rows that are new:
+`ant.WithConflict` applies a [conflict clause](/writing/upsert-and-merge) to every row. With `DoNothing`, rerunning an import inserts only the new rows:
 
 ```go
 // spot-next-line
-n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&U.Email).DoNothing()))
+n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&Users.Email).DoNothing()))
 // INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...) ON CONFLICT ("email") DO NOTHING
 ```
 
 `n` counts the rows written. Skipped rows may leave their structs without a key, so keys are not copied back when a conflict clause is set.
 
-With `DoUpdate` or `Set`, existing rows are updated instead. A model with a version moves the version on for each row it updates, and `InsertMany` doesn't check it. See [upsert](/writing/upsert-and-merge#versioned-rows).
+With `DoUpdate` or `Set`, existing rows are updated instead. A model with a version increments it for each row updated, and `InsertMany` doesn't check it. See [upsert](/writing/upsert-and-merge#versioned-rows).
 
 On MySQL and MariaDB, rows with generated keys go in one statement each, since the key comes from `LastInsertId`. See [databases](/reference/databases).
 
@@ -43,11 +43,11 @@ On MySQL and MariaDB, rows with generated keys go in one statement each, since t
 alice.Age, bob.Age = 31, 18
 
 // spot-next-line
-n, err := db.Users.UpdateMany(ctx, []*User{alice, bob}, ant.F(&U.Age))
+n, err := db.Users.UpdateMany(ctx, []*User{alice, bob}, ant.F(&Users.Age))
 // UPDATE "users" SET "age" = $1 WHERE "users"."id" = $2  -- once per row
 ```
 
-Use it for values that come from your code, such as prices from a feed. When every row gets the same value or an expression, a [bulk `Update`](/writing/update-and-delete#update) is one statement.
+When every row gets the same value or an expression, a [bulk `Update`](/writing/update-and-delete#update) is one statement.
 
 Tracked entities keep their snapshots, so use `SaveChanges` for them.
 
@@ -62,13 +62,13 @@ type Archive struct {
 	Tag   string
 }
 
-var A = ant.Fields[Archive]()
+var Archives = ant.Fields[Archive]()
 
 // spot-start
 n, err := db.Archives.InsertFrom(ctx, ant.Project[Archive](
-	db.Posts.Where(ant.Eq(&P.Published, true)),
-	ant.Into(&A.Title, &P.Title),
-	ant.IntoExpr(&A.Tag, ant.SQL[string]("'archived'")),
+	db.Posts.Where(ant.Eq(&Posts.Published, true)),
+	ant.Into(&Archives.Title, &Posts.Title),
+	ant.IntoExpr(&Archives.Tag, ant.SQL[string]("'archived'")),
 ))
 // spot-end
 // INSERT INTO "archives" ("title", "tag")
@@ -116,8 +116,8 @@ n, err := pgxext.Copy(ctx, db, users)
 var batch pgxext.Batch
 
 // spot-start
-batch.Add(db.Users.Where(ant.Eq(&U.ID, alice.ID)).UpdateSQL(ctx, ant.Set(&U.Age, 41)))
-batch.Add(db.Users.Where(ant.Eq(&U.ID, bob.ID)).DeleteSQL(ctx))
+batch.Add(db.Users.Where(ant.Eq(&Users.ID, alice.ID)).UpdateSQL(ctx, ant.Set(&Users.Age, 41)))
+batch.Add(db.Users.Where(ant.Eq(&Users.ID, bob.ID)).DeleteSQL(ctx))
 batch.Exec("UPDATE users SET age = age + 1 WHERE id = $1", alice.ID)
 
 affected, err := batch.Send(ctx, db)

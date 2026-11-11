@@ -3,11 +3,9 @@ title: Shared tables and views
 description: Single-table inheritance, table splitting, views, and schemas.
 ---
 
-A model usually has a table to itself. These are the cases where it doesn't.
-
 ## Several models in one table
 
-Go has no inheritance, so each type is its own plain struct, and a discriminator column says which rows belong to which. Insert sets the discriminator for you, and each model's queries see only its own rows.
+Each type is a plain struct, and a discriminator column says which rows belong to which. Insert sets the discriminator, and each model's queries see only its own rows.
 
 ```go
 type Dog struct {
@@ -20,7 +18,7 @@ type Dog struct {
 func (Dog) Configure(b *ant.ModelBuilder[Dog]) {
 	// spot-start
 	b.Table("animals")
-	b.Discriminator(&DG.Kind, "dog")
+	b.Discriminator(&Dogs.Kind, "dog")
 	// spot-end
 }
 
@@ -34,13 +32,13 @@ type Cat struct {
 func (Cat) Configure(b *ant.ModelBuilder[Cat]) {
 	// spot-start
 	b.Table("animals")
-	b.Discriminator(&CT.Kind, "cat")
+	b.Discriminator(&Cats.Kind, "cat")
 	// spot-end
 }
 
 var (
-	DG = ant.Fields[Dog]()
-	CT = ant.Fields[Cat]()
+	Dogs = ant.Fields[Dog]()
+	Cats = ant.Fields[Cat]()
 )
 ```
 
@@ -48,10 +46,10 @@ var (
 err := db.Dogs.Insert(ctx, &Dog{Name: "Rex"})
 // INSERT INTO "animals" ("kind", "name") VALUES ($1, $2) RETURNING "id" -- $1 = dog
 
-dogs, err := db.Dogs.Where(ant.Eq(&DG.Name, "Rex")).All(ctx)
+dogs, err := db.Dogs.Where(ant.Eq(&Dogs.Name, "Rex")).All(ctx)
 // SELECT ... FROM "animals" WHERE "animals"."name" = $1 AND "animals"."kind" = $2 -- $2 = dog
 
-cats, err := db.Cats.Where(ant.Eq(&CT.Name, "Rex")).All(ctx)
+cats, err := db.Cats.Where(ant.Eq(&Cats.Name, "Rex")).All(ctx)
 // SELECT ... FROM "animals" WHERE "animals"."name" = $1 AND "animals"."kind" = $2 -- $2 = cat
 ```
 
@@ -70,7 +68,7 @@ type AnimalsDB struct {
 
 ## Split one table into several models
 
-Models can share a table with no discriminator. This is table splitting: a small model for the common read, and a full one for the rest.
+Models can share a table without a discriminator, such as a small model for the common read and a full one for the rest.
 
 ```go
 type UserName struct {
@@ -84,11 +82,11 @@ func (UserName) Configure(b *ant.ModelBuilder[UserName]) {
 }
 ```
 
-To keep a separate table per type, embed a shared struct in each model. That is plain Go.
+To keep a separate table per type, embed a shared struct in each model.
 
 ## Map a model to a view
 
-`b.View` maps a model to a database view. It reads like a table and refuses every write with `ant.ErrReadOnly`. Create the view itself in [`migrations/code`](/migrations/hand-written#views-and-functions).
+`b.View` maps a model to a database view. It refuses every write with `ant.ErrReadOnly`. Create the view itself in [`migrations/code`](/migrations/hand-written#views-and-functions).
 
 ```go
 type ActiveUser struct {
