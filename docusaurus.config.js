@@ -59,7 +59,29 @@ const config = {
           remarkPlugins: [apiLinks],
           editUrl: 'https://github.com/skudra-go/ant-docs/edit/main/',
         },
-        blog: false,
+        blog: {
+          routeBasePath: 'blog',
+          path: 'blog',
+          blogTitle: 'ant blog',
+          blogDescription: 'Design notes and releases for ant, a typed ORM for Go.',
+          blogSidebarTitle: 'All posts',
+          blogSidebarCount: 'ALL',
+          postsPerPage: 10,
+          showReadingTime: true,
+          editUrl: 'https://github.com/skudra-go/ant-docs/edit/main/',
+          authorsMapPath: 'authors.yml',
+          tags: 'tags.yml',
+          onInlineAuthors: 'throw',
+          onInlineTags: 'throw',
+          onUntruncatedBlogPosts: 'throw',
+          feedOptions: {
+            type: ['rss', 'atom'],
+            xslt: true,
+            title: 'ant blog',
+            description: 'Design notes and releases for ant, a typed ORM for Go.',
+            copyright: `Copyright © ${new Date().getFullYear()} the ant authors`,
+          },
+        },
         pages: false,
         theme: {
           customCss: './src/css/custom.css',
@@ -88,6 +110,8 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      // The social card shown when any page is shared. Blog posts set their own.
+      image: 'img/blog/field-pointers.png',
       metadata: [
         {
           name: 'description',
@@ -118,6 +142,7 @@ const config = {
           {to: '/why-ant', label: 'Why ant', position: 'left'},
           {to: '/queries/conditions', label: 'Queries', position: 'left'},
           {to: '/migrations/overview', label: 'Migrations', position: 'left'},
+          {to: '/blog', label: 'Blog', position: 'right'},
           {href: reference, label: 'API', position: 'right'},
           {href: 'https://github.com/skudra-go/ant-examples', label: 'Examples', position: 'right'},
           {href: repo, label: 'GitHub', position: 'right'},
@@ -125,6 +150,10 @@ const config = {
       },
       footer: {
         style: 'light',
+        links: [
+          {label: 'Blog', to: '/blog'},
+          {label: 'RSS', href: 'pathname:///blog/rss.xml'},
+        ],
         copyright: 'ant is open source under the MIT License.',
       },
       tableOfContents: {

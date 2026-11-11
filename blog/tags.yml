@@ -1,0 +1,15 @@
+go:
+  label: Go
+  description: Posts about the Go language and toolchain.
+generics:
+  label: Generics
+  description: How ant uses Go's type parameters and generic methods.
+orm:
+  label: ORM
+  description: Object-relational mapping in Go, and how ant compares.
+design:
+  label: Design
+  description: Why ant works the way it does, and the trade-offs.
+release:
+  label: Release
+  description: What changed in each ant release.
