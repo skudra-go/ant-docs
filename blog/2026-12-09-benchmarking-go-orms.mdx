@@ -80,25 +80,25 @@ Ryzen 5 3600, Go 1.27.3, PostgreSQL 17.11 in Docker on WSL2, from [`results.txt`
 
 Time per operation, µs (lower is better):
 
-| | Plain SQL | ant | ant NoTracking | GORM | Bun | ent |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Read1000 | 1,557 | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 |
-| FindOne | 365 | 406 | 389 | 416 | 372 | 383 |
-| FilteredQuery | 518 | 574 | 552 | 561 | 584 | 635 |
-| Include100 | 1,750 | 3,039 | 2,091 | 3,034 | 2,198 | 2,194 |
-| Insert | 400 | 431 | – | 442 | 1,164 | 441 |
-| UpdateOneColumn | 396 | 413 | – | 444 | 444 | 412 |
-| LoadEditSave | 806 | 830 | – | 861 | 779 | 1,784 |
+| | ant | ant NoTracking | GORM | Bun | ent | | Plain SQL (baseline) |
+| --- | ---: | ---: | ---: | ---: | ---: | - | ---: |
+| Read1000 | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 | | 1,557 |
+| FindOne | 406 | 389 | 416 | 372 | 383 | | 365 |
+| FilteredQuery | 574 | 552 | 561 | 584 | 635 | | 518 |
+| Include100 | 3,039 | 2,091 | 3,034 | 2,198 | 2,194 | | 1,750 |
+| Insert | 431 | – | 442 | 1,164 | 441 | | 400 |
+| UpdateOneColumn | 413 | – | 444 | 444 | 412 | | 396 |
+| LoadEditSave | 830 | – | 861 | 779 | 1,784 | | 806 |
 
 Allocations per operation:
 
-| | Plain SQL | ant | ant NoTracking | GORM | Bun | ent |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Read1000 | 7,772 | 19,370 | 6,831 | 14,810 | 8,790 | 15,840 |
-| FindOne | 36 | 118 | 94 | 89 | 41 | 126 |
-| FilteredQuery | 99 | 306 | 176 | 219 | 124 | 305 |
-| Insert | 23 | 107 | – | 79 | 54 | 86 |
-| LoadEditSave | 44 | 202 | – | 146 | 52 | 269 |
+| | ant | ant NoTracking | GORM | Bun | ent | | Plain SQL (baseline) |
+| --- | ---: | ---: | ---: | ---: | ---: | - | ---: |
+| Read1000 | 19,370 | 6,831 | 14,810 | 8,790 | 15,840 | | 7,772 |
+| FindOne | 118 | 94 | 89 | 41 | 126 | | 36 |
+| FilteredQuery | 306 | 176 | 219 | 124 | 305 | | 99 |
+| Insert | 107 | – | 79 | 54 | 86 | | 23 |
+| LoadEditSave | 202 | – | 146 | 52 | 269 | | 44 |
 
 The memory table is on the [benchmarks page](/reference/benchmarks).
 

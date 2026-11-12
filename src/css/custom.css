@@ -1999,6 +1999,14 @@ html[data-theme='dark'] {
   color: var(--ant-ink-faint);
 }
 
+/* The baseline is a reference, not a competitor: it sits last, behind a rule and a
+   gap, so it doesn't read as one more library. */
+.markdown .verdict__table--bench th.verdict__baseline,
+.markdown .verdict__table--bench td.verdict__baseline {
+  border-left: 1px dashed var(--ant-ink-faint);
+  padding-left: 0.9rem;
+}
+
 .verdict__none .verdict__fill {
   text-align: center;
 }

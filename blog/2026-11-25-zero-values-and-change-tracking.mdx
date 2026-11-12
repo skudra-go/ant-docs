@@ -153,12 +153,12 @@ A session shares the root's connection pool and needs no closing. If you'd rathe
 
 From [`tools/compare`](https://github.com/skudra-go/ant/blob/main/tools/compare/results.txt), median of 10 runs, on a Ryzen 5 3600 with Go 1.27.3 and PostgreSQL 17.11 in Docker on WSL2:
 
-| | Plain SQL | ant | ant NoTracking | GORM | Bun | ent |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Read 1000 rows, µs | 1,557 | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 |
-| Read 1000 rows, KiB | 257 | 823 | 277 | 392 | 295 | 589 |
-| 100 users and 500 posts, µs | 1,750 | 3,039 | 2,091 | 3,034 | 2,198 | 2,194 |
-| Load, edit, save, µs | 806 | 830 | – | 861 | 779 | 1,784 |
+| | ant | ant NoTracking | GORM | Bun | ent | | Plain SQL (baseline) |
+| --- | ---: | ---: | ---: | ---: | ---: | - | ---: |
+| Read 1000 rows, µs | 2,799 | 1,688 | 3,285 | 2,259 | 2,226 | | 1,557 |
+| Read 1000 rows, KiB | 823 | 277 | 392 | 295 | 589 | | 257 |
+| 100 users and 500 posts, µs | 3,039 | 2,091 | 3,034 | 2,198 | 2,194 | | 1,750 |
+| Load, edit, save, µs | 830 | – | 861 | 779 | 1,784 | | 806 |
 
 On a 1000-row read, tracking takes 1.7 times the time and 3 times the memory of `NoTracking`. That's the price of a deep copy per row. With tracking off, ant is 8% over plain `database/sql` on the same read.
 
