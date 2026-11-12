@@ -3,14 +3,15 @@ import React from 'react';
 // BenchTable shows one metric from ant's tools/compare benchmarks: medians of 10
 // runs on PostgreSQL 17, from tools/compare/results.txt in the ant repo. The best
 // library in each row is worked out here, so the colours can't disagree with the
-// numbers. database/sql is the baseline and never wins.
+// numbers. database/sql is the baseline and never wins, so it sits last, set apart
+// from the libraries it doesn't compete with.
 const columns = [
   {key: 'ant', name: 'ant'},
   {key: 'antNT', name: 'ant', sub: 'NoTracking'},
-  {key: 'sql', name: 'Plain SQL', sub: 'baseline', baseline: true},
   {key: 'gorm', name: 'GORM'},
   {key: 'bun', name: 'Bun'},
   {key: 'ent', name: 'ent'},
+  {key: 'sql', name: 'Plain SQL', sub: 'baseline', baseline: true},
 ];
 
 const data = {
@@ -60,7 +61,10 @@ export default function BenchTable({metric}) {
         <colgroup>
           <col className="verdict__label" />
           {columns.map((c) => (
-            <col key={c.key} />
+            <col
+              key={c.key}
+              className={c.baseline ? 'verdict__baseline' : undefined}
+            />
           ))}
         </colgroup>
         <thead>
