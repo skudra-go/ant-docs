@@ -11,11 +11,11 @@ keywords: [go orm, golang orm, generic methods, go 1.27, type-safe sql, gorm alt
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-Go database libraries make you pick one of two trades. GORM and Bun take column names as strings, so `"agee > ?"` builds fine and fails the first time it runs. ent and sqlc check every column at build time, but they get there through a schema file or a folder of SQL, plus a generate step that has to run before your code compiles.
+Go database libraries make you pick between two tradeoffs. GORM and Bun take column names as strings, so a typo like `"agee"` only fails at runtime; ent and sqlc check every column at build time, but they require a schema file or a folder of SQL and a generate step before your code compiles.
 
-I wanted the checking without the generator. Go 1.27 added generic methods, and that turned out to be the missing piece: a chainable query API can now take pointers to your own struct fields as column names. `ant.Gt(&Users.Age, 18)` names the `age` column, and the compiler checks both that `Age` exists and that `18` is the right type for it. Nothing is generated.
+I wanted to have compile-time checking without having to run a code generator and maintain schema files. In Go 1.27, generic methods made this possible. A chainable query API can now take pointers to your own struct fields as column names. `ant.Gt(&Users.Age, 18)` names the `age` column, and the compiler checks both that `Age` exists and that `18` is the right type for it, without generation.
 
-This post is about how that works, what it costs at runtime, and the places where it still fails after compiling. The library is [ant](https://github.com/skudra-go/ant), which I maintain.
+This post is about how that became possible, what it costs at runtime, and the places where it still fails after compiling. The library is [ant](https://github.com/skudra-go/ant), which I maintain.
 
 {/* truncate */}
 
@@ -142,15 +142,15 @@ None of these messages mention ant. They are ordinary Go errors about ordinary G
 
 ## How &Users.Age becomes a column
 
-`ant.Fields[User]()` returns a probe: a `*User` that holds no data. Its only job is to have an address. When you write `&Users.Age`, you get a pointer into that probe at the offset of `Age`. ant turns that pointer back into a column in three steps.
+`ant.Fields[User]()` returns a probe; a `*User` that holds no data. Its only job is to have an address. When you write `&Users.Age`, you get a pointer into that probe at the offset of `Age`. ant turns that pointer back into a column in three steps
 
-1. **One probe per type.** The first call to `Fields[User]()` reflects over `User` once, caches the model (columns, relations, field offsets), allocates one `User` with `new`, and records its base address in a package-level list. Later calls return the same pointer.
-2. **Find the probe.** Given a pointer, ant scans the list for the probe whose memory range, from its base to base plus `unsafe.Sizeof(User{})`, contains the address.
-3. **Match offset and type.** The address minus the base is the field's offset. ant looks for a field with that offset and with the pointer's static type, `reflect.TypeFor[V]()`.
+1. **One probe per type:** The first call to `Fields[User]()` reflects over `User` once, caches the model (columns, relations, field offsets), allocates one `User` with `new` and records its base address in a package-level list, so later calls can return the same pointer.
+2. **Find the probe:** Given a pointer, ant scans the list for the probe whose memory range, from its base to base + `unsafe.Sizeof(User{})`, contains the address.
+3. **Match offset and type:** The address minus the base is the field's offset; ant looks for a field with that offset and with the pointer's static type, `reflect.TypeFor[V]()`.
 
-The type check in step 3 is there because offsets alone are ambiguous. A struct and its first field share an address: `&Users.Base` and `&Users.Base.ID` point at the same byte. The type parameter on `Resolve` tells them apart for free, since the compiler already knows `V`.
+The type check in step 3 is there because offsets alone are ambiguous. A struct and its first field share an address: `&Users.Base` and `&Users.Base.ID` point at the same byte. The type parameter on `Resolve` tells them apart for free since the compiler already knows `V`.
 
-Here is the real code, cut down. The full version is in [`internal/meta/meta.go`](https://github.com/skudra-go/ant/blob/f10b2e5766b7d34fc013dc944a37ffe91bfd625b/internal/meta/meta.go#L744-L816).
+Here is the actual code. The full version is in [`internal/meta/meta.go`](https://github.com/skudra-go/ant/blob/f10b2e5766b7d34fc013dc944a37ffe91bfd625b/internal/meta/meta.go#L744-L816).
 
 ```go no-check
 func Probe[T any]() *T {
@@ -182,15 +182,15 @@ func Resolve[V any](ptr *V) (Ref, bool) {
 }
 ```
 
-Resolution costs about 21 ns and allocates nothing. That is `BenchmarkProbeResolution` in `tests/benchmarks`, run five times on a Ryzen 5 3600 with Go 1.27.3, with a handful of probes registered. The scan is linear, so an application with hundreds of models pays more per lookup, but it is still small next to a database round trip.
+Resolution costs about 21 ns and allocate nothing. That is `BenchmarkProbeResolution` in `tests/benchmarks`. I ran it five times on Ryzen 5 3600 with Go 1.27.3, with a handful of probes registered. The scan is linear, so an application with hundreds of models pays more per lookup, but it is still small next to a database round trip.
 
-The part people will rightly poke at: this only works because the Go runtime does not move heap objects. The probe's address has to stay put for the life of the process. Go's garbage collector doesn't compact or move objects today, and nothing in the language promises it never will. ant keeps the original `unsafe.Pointer` in the list so the probe stays reachable, and [`TestProbeSurvivesGC`](https://github.com/skudra-go/ant/blob/f10b2e5766b7d34fc013dc944a37ffe91bfd625b/internal/meta/meta_test.go#L167) forces two collections and checks that the address didn't change. If a future Go release adds a moving collector, that test is where I'll find out, and the design would need pinning or a different identity scheme.
+I presume some might have already noticed, but this only works because the Go runtime does not move heap objects. The probe's address has to stay put for the life of the process. Go's garbage collector doesn't compact or move objects today, and nothing in the language promises it never will. Regardless, a change is planned to pin the probe using the [`runtime.Pinner.Pin`](https://pkg.go.dev/runtime#Pinner.Pin) API, so this should be safe if the GC later introduces a moving collector.
 
 ## Why this needed Go 1.27
 
-A fair objection first: `ant.Gt(&Users.Age, 18)` is a plain generic function, `func Gt[V Ordered](field *V, value V) Cond`. That has compiled since Go 1.18. Conditions were never the problem.
+A fair objection first: `ant.Gt(&Users.Age, 18)` is a plain generic function, `func Gt[V Ordered](field *V, value V) Cond`. That has compiled since Go 1.18. So why did ant need Go 1.27 for the rest of the API?
 
-The chain was. `OrderBy` needs to know the type of the field it's given, so it can require an orderable one. `Include` needs the element type of the relation, so the optional shaping function gets a typed `*Query[Post]`. Before 1.27, a method could not declare type parameters of its own. Try it with `go 1.26` in `go.mod` and the compiler says:
+The chain was the problem. `OrderBy` needs to know the type of the field it's given, so it can require an orderable one. `Include` needs the element type of the relation, so the optional shaping function gets a typed `*Query[Post]`. Before 1.27, a method could not declare type parameters of its own. Trying it with `go 1.26` gets an error, and the compiler says:
 
 ```text
 generic method requires go1.27 or later
@@ -219,7 +219,7 @@ users, err := db.Users.
 	All(ctx)
 ```
 
-I compiled the first version against stub types with `go 1.26`, so it is a real alternative, not a strawman. It works. But it reads in the opposite order to the SQL it builds, it can't be extended one line at a time, and typing `db.Users.` in an editor offers nothing useful, because the operations aren't methods. The other way out was methods that take `any`, which gives up the checks that were the point.
+I compiled the first version against stub types with `go 1.26`, so it is a real alternative. It does work, but it reads in the opposite order to the SQL it builds, it can't be extended one line at a time, and typing `db.Users.` in an editor offers nothing useful, because the operations aren't methods. The other way out was methods that take `any`, which gives up the checks that were the point. In essence, DX suffers without generic methods.
 
 The methods that need their own type parameters are `OrderBy`, `Include`, `IncludeOne`, `Join` and its variants, `Find`, `With`, `Column`, `Omit`, `GroupBy`, `Load`, `Tx` on the context, and most of the model builder used for configuration.
 
@@ -294,7 +294,7 @@ The ent number on the last row isn't a fair picture of ent's speed. Its `UpdateO
 
 This section is the longest on purpose.
 
-**Some mistakes compile.** Field pointers carry the field and its type, but a condition is not tied to a model. These all build and fail at runtime, at the terminal call (`All`, `First`, `Find` and friends), not at `Where`:
+**Some mistakes compile!!!** Field pointers carry the field and its type, but a condition is not tied to a model. These all build and fail at runtime, at the terminal call (`All`, `First`, `Find`, etc...), not at `Where`:
 
 - A pointer that isn't from a probe, such as `&u.Age` on a local `User`, gives `ErrNotProbe`.
 - A relation where a column belongs, like `Column(&Users.Posts)`, gives `ErrNotColumn`.
@@ -312,19 +312,17 @@ Find key is string, and User has a key of type int64
 
 It is a separate step that you have to add to CI. ent and sqlc have none of these runtime-only cases.
 
-**The heap assumption.** As above: the design depends on the runtime not moving heap objects. That holds today and is tested, but it is not a language guarantee.
+**Only Go 1.27 or later:** Generic methods are the reason the API looks the way it does. There is no build tag or fallback for older toolchains (sadly).
 
-**Go 1.27 or later, no exceptions.** Generic methods are the reason the API looks the way it does. There is no build tag or fallback for older toolchains.
+**Pre 1.0:** The API may still change. `docs/api.txt` records every exported name, so an api change is tracked, and is deliberate.
 
-**Pre-1.0.** The API may still change. `docs/api.txt` records every exported name, and a test fails on any change to it, so changes are at least deliberate.
+**Migrations are PostgreSQL only:** Queries and writes work on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. Migrations and `EnsureCreated` work on PostgreSQL alone (technically, simple plain SQL migrations work too). There are no down migrations by design; to undo a change, you write a new forward migration.
 
-**Migrations are PostgreSQL only.** Queries and writes work on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. Migrations and `EnsureCreated` work on PostgreSQL alone. There are no down migrations, by design: to undo a change, you write a new forward migration.
+**The tracker has a cost:** Besides the memory, a tracking context serves one operation at a time. You take an `ant.Session(db)` per request or per goroutine. Trying to use the same session concurrently gives `ErrConcurrentUse`. Batch jobs that read a lot and write little should use `NoTracking`, which disables tracking for the duration of the operation.
 
-**The tracker has a cost and a rule.** Besides the memory above, a tracking context serves one operation at a time. You take an `ant.Session(db)` per request or per goroutine. Use one from two goroutines and the second gets `ErrConcurrentUse`. Batch jobs that read a lot and write little should use `NoTracking`.
+**It's new:** GORM and ent have years of production use behind them, with the bug reports and edge cases that come with that; ant does not.
 
-**It's new.** GORM and ent have years of production use behind them, with the bug reports and edge cases that come with that. ant does not.
-
-When to use something else. If you want to write SQL yourself and have no runtime layer between you and `database/sql`, use [sqlc](https://docs.sqlc.dev/). If you want a graph schema, full build-time checking with no runtime-only cases, and you're fine with codegen, use [ent](https://entgo.io/docs/code-gen). If you already run GORM and want more checking, look at its generics API and CLI first.
+When to use something else? If you want to write SQL yourself and have no runtime layer between you and `database/sql`, use [sqlc](https://docs.sqlc.dev/) (Though, it is a viable option to use ant mixed with stored procedures). If you want a graph schema, full build-time checking with no runtime-only cases, and you're fine with codegen, use [ent](https://entgo.io/docs/code-gen). If you already run GORM and want more checking, look at its generics API and CLI first.
 
 ## Try it
 
