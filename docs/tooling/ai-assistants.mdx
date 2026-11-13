@@ -1,0 +1,53 @@
+---
+title: AI assistants
+description: Give a coding assistant the ant docs and skill, so it writes ant instead of guessing from GORM.
+---
+
+ant is newer than most LLM models training data. An assistant that hasn't seen it writes what it knows from other ORMs, such as `db.Where("age > ?", 18)` or `Preload("Posts")`, and none of that exists in ant. Give it the docs.
+
+## Install the skill
+
+The skill is a short guide to ant for coding agents: the rules an assistant gets wrong when it guesses, and where to look up the rest. The agent loads it whenever a task touches ant.
+
+In Claude Code:
+
+```text
+/plugin marketplace add skudra-go/ant
+/plugin install ant@ant
+```
+
+In Codex, Cursor, GitHub Copilot, Gemini CLI and the other agents that read skills:
+
+```bash
+npx skills add skudra-go/ant
+```
+
+Both install [`skills/ant/SKILL.md`](https://github.com/skudra-go/ant/blob/main/skills/ant/SKILL.md) from ant's `main` branch. From the release after v0.2.0, the module carries it too, matching the version in your `go.mod`:
+
+```bash
+cat "$(go list -m -f '{{.Dir}}' github.com/skudra-go/ant)/skills/ant/SKILL.md"
+```
+
+## Point it at the docs
+
+Every page of these docs is also plain Markdown, in the [llms.txt](https://llmstxt.org) format:
+
+| File | Holds |
+| --- | --- |
+| [`/llms.txt`](pathname:///llms.txt) | What ant is, the rules that matter most, and a link to every page |
+| [`/llms-full.txt`](pathname:///llms-full.txt) | Every page in one file, about 370 KB |
+| `/<page>.md` | One page, such as [`/queries/conditions.md`](pathname:///queries/conditions.md) |
+
+An assistant that can fetch URLs can start from `https://skudra.net/llms.txt` and read the pages it needs. To make every assistant on a project use them, add a line to the project's `AGENTS.md` or `CLAUDE.md`:
+
+```md
+This project uses the ant ORM (github.com/skudra-go/ant), not GORM. Before writing ant code, read https://skudra.net/llms.txt.
+```
+
+## Check what it wrote
+
+The compiler catches most mistakes, since columns are field pointers. [antvet](/tooling/antvet) catches the ones it can't, such as a condition on another model's field, so run it in the assistant's loop or in CI:
+
+```bash
+go vet -vettool=$(which antvet) ./...
+```

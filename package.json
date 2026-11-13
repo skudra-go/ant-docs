@@ -11,7 +11,8 @@
     "check:samples": "cd tools/doccheck && go run ./cmd/doccheck ../../docs && go run ./cmd/doccheck ../../blog",
     "fix:samples": "cd tools/doccheck && go run ./cmd/doccheck -fix ../../docs && go run ./cmd/doccheck -fix ../../blog",
     "api": "cd tools/doccheck && go run ./cmd/apiindex ../../src/remark/api.json",
-    "check": "npm run check:samples && npm run build",
+    "check": "npm run check:samples && npm test && npm run build",
+    "test": "node --test src/plugins/*.test.js",
     "deploy": "npm run build && wrangler deploy",
     "preview": "npm run build && wrangler dev"
   },
