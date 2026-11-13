@@ -96,6 +96,12 @@ A mention like `ant.Foo` of a name that doesn't exist fails the build.
 
 The names come from `src/remark/api.json`, which `npm run api` writes from the release's source.
 
+### Markdown for AI assistants
+
+A build also writes the docs as Markdown, in the [llms.txt](https://llmstxt.org) format: `/llms.txt` is an index in sidebar order, `/llms-full.txt` holds every page, and each page has a `.md` copy beside its HTML. `src/plugins/llms.js` makes them from the MDX source, and `src/plugins/llms-intro.md` is the text both files open with: the rules an assistant gets wrong when it guesses from other ORMs. Keep it in step with ant's skill, `skills/ant/SKILL.md` in the ant repo.
+
+A component the plugin doesn't know fails the build. Add a new one to `llms.js`: a widget that only illustrates the prose goes in `widgets`, and a wrapper whose content should stay goes in `wrappers`. `npm test` runs the plugin's tests.
+
 ## How samples are checked
 
 `npm run check:samples` type-checks every Go fence against the ant release, and fails on anything that does not compile or is not gofmt-formatted. `npm run fix:samples` formats them first, keeping the spot comments. It lives in `tools/doccheck`.
@@ -133,6 +139,7 @@ Flags go in the fence's info string:
 1. `cd tools/doccheck && go get github.com/skudra-go/ant@vX.Y.Z && go mod tidy`
 2. `npm run api`, so links and hover cards match it. The build refuses to run while `api.json` is for another version.
 3. `npm run check`, and fix what the release changed.
+4. Check that ant's skill still holds: `go run ./cmd/doccheck "$(go list -m -f '{{.Dir}}' github.com/skudra-go/ant)/skills"` from `tools/doccheck`, for a release that carries one.
 
 To check the docs against ant changes that aren't released yet, point doccheck at a local copy with a workspace, which git ignores:
 

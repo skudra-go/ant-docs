@@ -90,6 +90,16 @@ const config = {
     ],
   ],
 
+  plugins: [
+    [
+      './src/plugins/llms',
+      {
+        summary:
+          'ant is a Go ORM. Models are plain structs, columns are field pointers that the compiler checks, and there is no code generation.',
+      },
+    ],
+  ],
+
   themes: [
     [
       require.resolve('@easyops-cn/docusaurus-search-local'),
@@ -153,6 +163,7 @@ const config = {
         links: [
           {label: 'Blog', to: '/blog'},
           {label: 'RSS', href: 'pathname:///blog/rss.xml'},
+          {label: 'llms.txt', href: 'pathname:///llms.txt'},
         ],
         copyright: 'ant is open source under the MIT License.',
       },

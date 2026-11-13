@@ -101,6 +101,7 @@ const sidebars = {
       'tooling/errors',
       'tooling/metrics-and-tracing',
       'tooling/antvet',
+      'tooling/ai-assistants',
     ]),
     page('testing', 'flask'),
 
