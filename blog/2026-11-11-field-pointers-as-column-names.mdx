@@ -191,9 +191,9 @@ A lookup takes about 21 ns without allocations. Measured in `tests/benchmarks` o
 
 The scan is linear, so an application with hundreds of models pays more per lookup, though still far less than a database round trip. <i style={{fontSize: '0.85em', color: 'var(--ifm-color-emphasis-600)'}}>I can smell an optimization here... please give suggestions...</i>
 
-The catch is that this only works because Go doesn't move heap objects. The probe's address has to stay fixed for the life of the process. Go's garbage collector doesn't move objects, but there hasn't been a promise that it never will.
+The catch is that the probe's address has to stay fixed for the life of the process. Go's garbage collector doesn't move objects today, but there hasn't been a promise that it never will.
 
-Bjorn <i style={{fontSize: '0.85em', color: 'var(--ifm-color-emphasis-600)'}}>(huge thanks ❤️)</i> on Gophers Slack pushed on exactly this point. Turns out, [`runtime.Pinner`](https://pkg.go.dev/runtime#Pinner) can pin each probe when it's created, which keeps it in place even under a future moving collector, so this will be fixed.
+Bjorn <i style={{fontSize: '0.85em', color: 'var(--ifm-color-emphasis-600)'}}>(huge thanks ❤️)</i> on Gophers Slack pushed on exactly this point. Turns out, [`runtime.Pinner`](https://pkg.go.dev/runtime#Pinner) can pin each probe when it's created, which keeps it in place even under a future moving collector, and also tells today's collector about the pointer arithmetic on it. ant now does exactly that: every probe is pinned when it's allocated, and lookups are as fast as before.
 
 ## Why this needed Go 1.27
 
