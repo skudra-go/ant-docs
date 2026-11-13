@@ -1,4 +1,4 @@
-// Run with `node --test src/plugins`, which `npm run check` does.
+// Run with `npm test`, which `npm run check` does.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
