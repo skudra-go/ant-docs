@@ -460,4 +460,3 @@ Single-row reads and writes cost about the same in every library, because the ro
 - **No down migrations.** To undo a change, write a new migration.
 - **Tracking holds memory.** A tracker grows until it's discarded and serves one unit of work at a time, so use an `ant.Session` per request.
 - **The last write wins** when two requests change the same field. Add an `ant:"version"` field to make the second save fail instead.
-- **Probes are found by address.** ant pins each probe with `runtime.Pinner`, so its address stays fixed even if Go's collector ever moves objects.
