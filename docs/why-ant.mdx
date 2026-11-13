@@ -93,7 +93,7 @@ Each cell was tested by compiling the mistake, or for sqlc by running `sqlc gene
 
 `ant.Fields[User]()` allocates one empty `User` per model type and records its address. `&Users.Age` is an address inside that value, so ant subtracts the start address to get the field's offset, then matches the offset and the pointer's type against the fields it read from `User` by reflection. It checks the type too, because a struct and its first field share an address. Resolving a field pointer takes about 20 ns and allocates nothing.
 
-This relies on the Go runtime not moving heap objects, which it does not do today. A test in ant, `TestProbeSurvivesGC`, guards it.
+This needs the probe's address to stay fixed, so ant pins each probe with [`runtime.Pinner`](https://pkg.go.dev/runtime#Pinner) when it allocates it. The address then holds even under a moving collector, which Go does not have today. A test in ant, `TestProbeSurvivesGC`, guards it.
 
 <CollapsibleCode title="internal/meta/meta.go" note="Resolve, simplified">
 
@@ -460,4 +460,4 @@ Single-row reads and writes cost about the same in every library, because the ro
 - **No down migrations.** To undo a change, write a new migration.
 - **Tracking holds memory.** A tracker grows until it's discarded and serves one unit of work at a time, so use an `ant.Session` per request.
 - **The last write wins** when two requests change the same field. Add an `ant:"version"` field to make the second save fail instead.
-- **Probes rely on heap objects not moving**, which Go does not do today.
+- **Probes are found by address.** ant pins each probe with `runtime.Pinner`, so its address stays fixed even if Go's collector ever moves objects.
