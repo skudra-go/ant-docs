@@ -84,7 +84,11 @@ func main() {
 
 Pass the request's context to every ant call: the span is a child of the request's span only if the context carries it. With `otelhttp`, a request's trace then shows each statement.
 
-In v0.2.0 the tracer sets `db.system` to `postgresql` for every database, so on MySQL, SQLite or SQL Server, relabel that attribute in your collector. The next release adds a `WithDialect` option to `otel.New`, which names the database ([#61](https://github.com/skudra-go/ant/issues/61)).
+Spans set `db.system` to `postgresql` unless told otherwise. On another database, name it with `WithDialect`, which uses OpenTelemetry's spelling (`mysql`, `mariadb`, `sqlite`, `mssql`), or set any value with `WithSystem`:
+
+```go
+tracer := otel.New(provider.Tracer("ant"), otel.WithDialect(mysql.Dialect))
+```
 
 ## Metrics
 

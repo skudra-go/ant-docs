@@ -41,12 +41,12 @@ wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&Users.Email))
 // INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
 // VALUES ($1, $2, $3, $4, $5, $6)
 // ON CONFLICT ("email") DO UPDATE SET
-//   "updated_at" = "excluded"."updated_at", "name" = "excluded"."name",
-//   "age" = "excluded"."age", "bio" = "excluded"."bio"
+//   "name" = "excluded"."name", "age" = "excluded"."age", "bio" = "excluded"."bio",
+//   "updated_at" = $7
 // RETURNING "id", "created_at", "updated_at", "name", "email", "age", "bio"
 ```
 
-`OnConflict` names the unique column. By default every column except the key and the constraint's own is overwritten, and your struct receives the stored row, key included. A zero value overwrites too.
+`OnConflict` names the unique column. By default every column except the key, the constraint's own and `CreatedAt` is overwritten, and your struct receives the stored row, key included. A zero value overwrites too. `UpdatedAt` takes the current time on the update branch of every upsert, unless the clause assigns it.
 
 Running it twice leaves one row, so a feed can be reapplied after a crash and changed rows are updated.
 
@@ -57,7 +57,7 @@ onEmail := ant.OnConflict(&Users.Email)
 
 // spot-next-line
 wrote, err := db.Users.Upsert(ctx, user, onEmail.DoUpdate(ant.F(&Users.Age)))
-// ... ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age"
+// ... ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age", "updated_at" = $7
 ```
 
 `Set` assigns values, including ones based on the existing row. Here the first call inserts the row at 1 and later calls add 1.
@@ -113,7 +113,7 @@ conflict := ant.OnConflict(&Users.Email).And(ant.F(&Users.Name))
 // spot-next-line
 n, err := db.Users.InsertMany(ctx, users, ant.WithConflict(ant.OnConflict(&Users.Email).DoUpdate(ant.F(&Users.Age))))
 // INSERT INTO "users" (...) VALUES ($1, ...), ($7, ...)
-// ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age"
+// ON CONFLICT ("email") DO UPDATE SET "age" = "excluded"."age", "updated_at" = $13
 ```
 
 Rows that conflict may be skipped, so `InsertMany` doesn't copy keys back when it has a conflict clause.

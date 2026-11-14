@@ -55,13 +55,7 @@ err = db.SaveChanges(ctx)
 
 ## Write every column
 
-`ant.MarkModified` is for a struct with no known earlier values, such as a request body. The next save writes every column the struct holds, `updated_at` included.
-
-:::warning[UpdatedAt is written as the struct holds it]
-
-In v0.2.0, a save after `MarkModified`, or after `TrackGraph` decides `Modified`, writes the struct's own `UpdatedAt` instead of the current time, so a struct decoded from a request body stores the zero time. Set `UpdatedAt` before saving. The next release stamps it as any update does ([#60](https://github.com/skudra-go/ant/issues/60)).
-
-:::
+`ant.MarkModified` is for a struct with no known earlier values, such as a request body. The next save writes every column the struct holds, and stamps `updated_at` with the current time, as any update does, so a body that left it out doesn't store the zero time. The same goes for an entity `TrackGraph` decides is `Modified`.
 
 ```go
 err := ant.MarkModified(ctx, db, disconnect)

@@ -58,13 +58,13 @@ UPDATE "accounts" SET ... WHERE "accounts"."id" = $4 AND "accounts"."version" = 
 RELEASE SAVEPOINT ant_sp_1
 ```
 
-:::note[Why the function takes a session]
+:::note[What a rerun sees]
 
-In v0.2.0, a rerun shares the tracker with the run that failed, so without `ant.Session` its tracked reads get the instances the failed run changed, and an entity it added is inserted twice. The next release forgets what a failed run loaded or added before rerunning ([#63](https://github.com/skudra-go/ant/issues/63)). Entities tracked before the transaction stay as they were, so load what the function changes inside it.
+Before a rerun, the tracker forgets what the failed run loaded or added, so the next run reads its rows afresh and inserts an added entity once. Entities tracked before the transaction stay, with any change the failed run made to them, so load what the function changes inside it.
 
 :::
 
-The function runs from the top each time, with the same tracker. A tracked read returns the instance the tracker already holds, edits included, so a function that changes `source.Balance` on a shared tracker subtracts twice on the second run. A session inside the function, as above, gives each run a clean tracker. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
+The function runs from the top each time. If it changes an entity tracked before the transaction, a tracked read returns that same instance, edits included, so a function that changes `source.Balance` subtracts twice on the second run. A session inside the function, as above, gives each run a clean tracker of its own. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
 
 ```go
 err := db.Tx(

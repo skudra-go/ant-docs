@@ -81,7 +81,7 @@ account.CreatedBy = "someone else"
 changed, err := db.HasChanges(ctx) // false
 ```
 
-In v0.2.0 the tag guards `SaveChanges` only, and an explicit `db.Accounts.Where(...).Update(ctx, ant.Set(&Accounts.CreatedBy, "x"))` still writes the column. From the next release, a bulk `Update`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it ([#62](https://github.com/skudra-go/ant/issues/62)).
+Explicit writes keep the same rule: a bulk `Update` such as `db.Accounts.Where(...).Update(ctx, ant.Set(&Accounts.CreatedBy, "x"))`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it.
 
 {/*
 ```go
