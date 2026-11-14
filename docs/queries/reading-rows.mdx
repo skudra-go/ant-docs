@@ -134,7 +134,7 @@ Results are tracked by default so `SaveChanges` can see your changes. `NoTrackin
 users, err := db.Users.NoTracking().Where(ant.Gt(&Users.Age, 18)).All(ctx)
 ```
 
-On 1000 rows that's 1.7 times faster and a third of the memory ([benchmarks](/reference/benchmarks)).
+On 1000 rows that's 1.2 times faster and half the memory ([benchmarks](/reference/benchmarks)).
 
 `NoTrackingResolved` skips it too but still gives each row a single instance.
 
