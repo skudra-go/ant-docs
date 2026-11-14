@@ -1,10 +1,10 @@
 {
 	"module": "github.com/skudra-go/ant",
-	"version": "v0.2.0",
+	"version": "v0.3.1",
 	"packages": {
 		"ant": {
 			"path": "github.com/skudra-go/ant",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1",
 			"symbols": {
 				"Action": {
 					"kind": "type",
@@ -1288,12 +1288,12 @@
 				"Interceptor.After": {
 					"kind": "method",
 					"decl": "After(ctx context.Context, s *Statement, o Outcome)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Interceptor.After"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Interceptor.After"
 				},
 				"Interceptor.Before": {
 					"kind": "method",
 					"decl": "Before(ctx context.Context, s *Statement) (context.Context, error)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Interceptor.Before"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Interceptor.Before"
 				},
 				"Into": {
 					"kind": "func",
@@ -2104,12 +2104,12 @@
 				"Outcome.Duration": {
 					"kind": "field",
 					"decl": "Duration time.Duration",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Outcome.Duration"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Outcome.Duration"
 				},
 				"Outcome.Err": {
 					"kind": "field",
 					"decl": "Err error",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Outcome.Err"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Outcome.Err"
 				},
 				"Page": {
 					"kind": "type",
@@ -2651,7 +2651,7 @@
 				"RelationBuilder.Inverse": {
 					"kind": "method",
 					"decl": "func (r *RelationBuilder) Inverse[P any](back **P) *RelationBuilder",
-					"doc": "Inverse fills a pointer on each loaded child back to its parent, so a Post from Include(\u0026U.Posts) has its User without another query."
+					"doc": "Inverse fills a pointer on each loaded child back to its parent, so a Post from Include(\u0026Users.Posts) has its User without another query."
 				},
 				"RelationBuilder.Latest": {
 					"kind": "method",
@@ -2833,7 +2833,7 @@
 					"kind": "method",
 					"decl": "func (s State) String() string",
 					"doc": "String returns the state's name.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/track#State.String"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/track#State.String"
 				},
 				"Statement": {
 					"kind": "type",
@@ -2843,18 +2843,18 @@
 				"Statement.Args": {
 					"kind": "field",
 					"decl": "Args []any",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.Args"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Statement.Args"
 				},
 				"Statement.Replica": {
 					"kind": "field",
 					"decl": "Replica bool",
 					"doc": "read from a replica",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.Replica"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Statement.Replica"
 				},
 				"Statement.SQL": {
 					"kind": "field",
 					"decl": "SQL string",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/exec#Statement.SQL"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/exec#Statement.SQL"
 				},
 				"Sub": {
 					"kind": "type",
@@ -3220,19 +3220,19 @@
 					"kind": "method",
 					"decl": "func (UnixTime) ColumnType(string) string",
 					"doc": "ColumnType implements schema.Typed.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.ColumnType"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/meta#UnixTime.ColumnType"
 				},
 				"UnixTime.Scan": {
 					"kind": "method",
 					"decl": "func (t *UnixTime) Scan(src any) error",
 					"doc": "Scan implements sql.Scanner.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.Scan"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/meta#UnixTime.Scan"
 				},
 				"UnixTime.Value": {
 					"kind": "method",
 					"decl": "func (t UnixTime) Value() (driver.Value, error)",
 					"doc": "Value implements driver.Valuer.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/internal/meta#UnixTime.Value"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/internal/meta#UnixTime.Value"
 				},
 				"Unlink": {
 					"kind": "func",
@@ -3409,7 +3409,7 @@
 		},
 		"anttest": {
 			"path": "github.com/skudra-go/ant/anttest",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/anttest",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/anttest",
 			"symbols": {
 				"Factory": {
 					"kind": "type",
@@ -3485,8 +3485,39 @@
 		},
 		"dialect": {
 			"path": "github.com/skudra-go/ant/dialect",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect",
 			"symbols": {
+				"AppendNumbered": {
+					"kind": "func",
+					"decl": "func AppendNumbered(dst []byte, prefix string, n int) []byte",
+					"doc": "AppendNumbered appends what Numbered returns to dst."
+				},
+				"AppendQuoteWith": {
+					"kind": "func",
+					"decl": "func AppendQuoteWith(dst []byte, ident, open, close string) []byte",
+					"doc": "AppendQuoteWith appends what QuoteWith returns to dst."
+				},
+				"Appender": {
+					"kind": "type",
+					"decl": "type Appender interface{ … }",
+					"doc": "Appender is implemented by a dialect that can write a quoted identifier and a placeholder straight into the statement being rendered.",
+					"interface": true
+				},
+				"Appender.AppendPlaceholder": {
+					"kind": "method",
+					"decl": "AppendPlaceholder(dst []byte, n int) []byte",
+					"doc": "AppendPlaceholder appends the bind parameter for position n to dst."
+				},
+				"Appender.AppendQuote": {
+					"kind": "method",
+					"decl": "AppendQuote(dst []byte, ident string) []byte",
+					"doc": "AppendQuote appends the quoted identifier to dst."
+				},
+				"Arg": {
+					"kind": "func",
+					"decl": "func Arg(d Dialect, v any) any",
+					"doc": "Arg returns v as Render binds it for d: by pointer if only its pointer converts itself, and in UTC where d's database drops a time's zone."
+				},
 				"Bind": {
 					"kind": "func",
 					"decl": "func Bind(d Dialect, query string, args []any) (string, []any, error)",
@@ -3792,7 +3823,7 @@
 		},
 		"ids": {
 			"path": "github.com/skudra-go/ant/ids",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/ids",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/ids",
 			"symbols": {
 				"NewSnowflake": {
 					"kind": "func",
@@ -3823,7 +3854,7 @@
 		},
 		"metrics": {
 			"path": "github.com/skudra-go/ant/metrics",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/metrics",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/metrics",
 			"symbols": {
 				"Metrics": {
 					"kind": "type",
@@ -3885,7 +3916,7 @@
 		},
 		"migrate": {
 			"path": "github.com/skudra-go/ant/migrate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/migrate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/migrate",
 			"symbols": {
 				"Absorbed": {
 					"kind": "const",
@@ -4337,7 +4368,7 @@
 		},
 		"mysql": {
 			"path": "github.com/skudra-go/ant/dialect/mysql",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/mysql",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect/mysql",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -4357,8 +4388,13 @@
 			"symbols": {
 				"New": {
 					"kind": "func",
-					"decl": "func New(tracer trace.Tracer) *Tracer",
+					"decl": "func New(tracer trace.Tracer, options ...Option) *Tracer",
 					"doc": "New returns an interceptor for tracer."
+				},
+				"Option": {
+					"kind": "type",
+					"decl": "type Option func(*Tracer)",
+					"doc": "Option configures a Tracer."
 				},
 				"Tracer": {
 					"kind": "type",
@@ -4374,12 +4410,22 @@
 					"kind": "method",
 					"decl": "func (t *Tracer) Before(ctx context.Context, s *ant.Statement) (context.Context, error)",
 					"doc": "Before implements ant.Interceptor."
+				},
+				"WithDialect": {
+					"kind": "func",
+					"decl": "func WithDialect(d dialect.Dialect) Option",
+					"doc": "WithDialect sets db.system from the dialect the context uses, in OpenTelemetry's spelling: postgresql, mysql, mariadb, sqlite, or mssql."
+				},
+				"WithSystem": {
+					"kind": "func",
+					"decl": "func WithSystem(system string) Option",
+					"doc": "WithSystem sets db.system as given."
 				}
 			}
 		},
 		"pgxext": {
 			"path": "github.com/skudra-go/ant/dialect/postgres/pgxext",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/postgres/pgxext",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect/postgres/pgxext",
 			"symbols": {
 				"Batch": {
 					"kind": "type",
@@ -4430,7 +4476,7 @@
 		},
 		"postgres": {
 			"path": "github.com/skudra-go/ant/dialect/postgres",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/postgres",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect/postgres",
 			"symbols": {
 				"Array": {
 					"kind": "type",
@@ -4455,7 +4501,7 @@
 				"CosineDistance": {
 					"kind": "func",
 					"decl": "func CosineDistance(field *Vector, v Vector) ant.Expr[float64]",
-					"doc": "CosineDistance returns the distance from a vector column to v, for ordering by similarity: Order(postgres.CosineDistance(\u0026D.Embedding, query).Asc()).Limit(10)."
+					"doc": "CosineDistance returns the distance from a vector column to v, for ordering by similarity: Order(postgres.CosineDistance(\u0026Documents.Embedding, query).Asc()).Limit(10)."
 				},
 				"Database": {
 					"kind": "type",
@@ -4608,12 +4654,12 @@
 		},
 		"qb": {
 			"path": "github.com/skudra-go/ant/qb",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/qb",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/qb",
 			"symbols": {
 				"Aliased": {
 					"kind": "func",
 					"decl": "func Aliased(c Cond, table *TableRef, alias string) Cond",
-					"doc": "Aliased returns c with columns of table qualified by alias instead."
+					"doc": "Aliased returns c with columns of table qualified by alias instead, however deep they sit in its expressions."
 				},
 				"And": {
 					"kind": "type",
@@ -5185,6 +5231,11 @@
 					"kind": "field",
 					"decl": "Value any"
 				},
+				"ParamOf": {
+					"kind": "func",
+					"decl": "func ParamOf(e Expr) (Param, bool)",
+					"doc": "ParamOf returns the bound value e is, whether it is held as a Param or as a *Param."
+				},
 				"RightJoin": {
 					"kind": "const",
 					"decl": "const RightJoin JoinKind",
@@ -5450,7 +5501,7 @@
 		},
 		"schema": {
 			"path": "github.com/skudra-go/ant/schema",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/schema",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/schema",
 			"symbols": {
 				"AddCheck": {
 					"kind": "type",
@@ -6919,7 +6970,7 @@
 		},
 		"secure": {
 			"path": "github.com/skudra-go/ant/secure",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/secure",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/secure",
 			"symbols": {
 				"ErrNoKeys": {
 					"kind": "var",
@@ -6984,7 +7035,7 @@
 		},
 		"sqlite": {
 			"path": "github.com/skudra-go/ant/dialect/sqlite",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/sqlite",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect/sqlite",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -6995,7 +7046,7 @@
 		},
 		"sqlserver": {
 			"path": "github.com/skudra-go/ant/dialect/sqlserver",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/dialect/sqlserver",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/dialect/sqlserver",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -7006,7 +7057,7 @@
 		},
 		"validate": {
 			"path": "github.com/skudra-go/ant/validate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.2.0/validate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.1/validate",
 			"symbols": {
 				"All": {
 					"kind": "func",
@@ -7016,7 +7067,7 @@
 				"Email": {
 					"kind": "func",
 					"decl": "func Email(v string) error",
-					"doc": "Email rejects a string that is not an email address."
+					"doc": "Email rejects a string that is not a plain email address."
 				},
 				"ErrRequired": {
 					"kind": "var",

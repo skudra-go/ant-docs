@@ -4,8 +4,8 @@ go 1.27
 
 require (
 	github.com/jackc/pgx/v5 v5.12.0
-	github.com/skudra-go/ant v0.2.0
-	github.com/skudra-go/ant/contrib/otel v0.0.0-20261108130311-e54974fe4d60
+	github.com/skudra-go/ant v0.3.1
+	github.com/skudra-go/ant/contrib/otel v0.0.0-20261114185136-81cd820c78ca
 	go.opentelemetry.io/otel/trace v1.47.0
 	modernc.org/sqlite v1.61.1
 )

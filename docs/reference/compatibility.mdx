@@ -29,7 +29,26 @@ ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [da
 
 ## Breaking changes so far
 
-ant has two releases, v0.1.0 and v0.2.0. v0.2.0 made the first breaking change: the helpers that read or mark the change tracker now take a `context.Context`, and those that returned nothing now return an error.
+The latest release is v0.3.1. Before it came v0.1.0, v0.2.0 and v0.3.0.
+
+### v0.3.1
+
+No breaking changes. It cuts allocations and time on reads, tracking, saves and inserts, with the same API. The `dialect` and `qb` packages gain helpers for a dialect to write into ant's render buffer.
+
+### v0.3.0
+
+No exported name changed, but some behaviour did:
+
+- `ant.Col(&f).Eq(nil)` and `.Ne(nil)` render `IS NULL` and `IS NOT NULL`, as `ant.Eq` and `ant.Ne` already did. They used to bind the nil and match no rows, so a query that relied on that can now return rows.
+- A bulk `Update`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it, as `SaveChanges` always did.
+- A migration that changes a column's type no longer casts with `USING` where PostgreSQL has a cast of its own, so a value too long for the new type fails the migration instead of being cut short.
+- A `Tx` retry forgets what the failed run loaded or added, and a save after `MarkModified` stamps `UpdatedAt`.
+
+The docs and examples now name a probe after its model in the plural, `Users = ant.Fields[User]()`, instead of `U`. That is a naming convention, not an API change: old code still compiles.
+
+### v0.2.0
+
+v0.2.0 made the first breaking change: the helpers that read or mark the change tracker now take a `context.Context`, and those that returned nothing now return an error.
 
 | Before | v0.2.0 |
 | --- | --- |

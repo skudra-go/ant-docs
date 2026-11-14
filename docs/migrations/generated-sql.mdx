@@ -203,6 +203,8 @@ A table or column whose name contains a dot is matched as written. If that is am
 
 `diff` orders the statements around the default, the key and the identity, and warns that the cast can fail on your data.
 
+A change into a string type, or between two sizes of one type such as `varchar(10)` and `varchar(3)`, has no `USING`. PostgreSQL's own cast then applies, and a value that doesn't fit fails the migration instead of being cut short. Other changes cast with `USING`.
+
 A default is dropped before the type changes and set again after, because the old default may not cast to the new type:
 
 ```sql
@@ -218,10 +220,10 @@ A foreign key whose column changes type, or whose target column does, is dropped
 ALTER TABLE "members" DROP CONSTRAINT "members_org_code_fkey";
 
 -- WARNING: changing members.org_code from bigint to text may fail or lose data, depending on existing values.
-ALTER TABLE "members" ALTER COLUMN "org_code" TYPE text USING "org_code"::text;
+ALTER TABLE "members" ALTER COLUMN "org_code" TYPE text;
 
 -- WARNING: changing orgs.code from bigint to text may fail or lose data, depending on existing values.
-ALTER TABLE "orgs" ALTER COLUMN "code" TYPE text USING "code"::text;
+ALTER TABLE "orgs" ALTER COLUMN "code" TYPE text;
 
 -- WARNING: this fails if a row of members refers to a row that does not exist.
 ALTER TABLE "members" ADD CONSTRAINT "members_org_code_fkey" FOREIGN KEY ("org_code") REFERENCES "orgs" ("code");

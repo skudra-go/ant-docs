@@ -37,14 +37,14 @@ On MySQL and MariaDB, rows with generated keys go in one statement each, since t
 
 ## Update many rows
 
-`UpdateMany` writes a different value per row, for the columns you name, one `UPDATE` per row in a single transaction. Other fields are left alone. Name each column once; naming one twice returns an error before anything runs.
+`UpdateMany` writes a different value per row, for the columns you name, one `UPDATE` per row in a single transaction. Other fields are left alone. As a [bulk `Update`](/writing/update-and-delete#update) does, it stamps `UpdatedAt` unless you name it, moves a [version column](/lifecycle/optimistic-concurrency) on, and skips rows the model's filters leave out, such as soft-deleted ones. Name each column once; naming one twice returns an error before anything runs.
 
 ```go
 alice.Age, bob.Age = 31, 18
 
 // spot-next-line
 n, err := db.Users.UpdateMany(ctx, []*User{alice, bob}, ant.F(&Users.Age))
-// UPDATE "users" SET "age" = $1 WHERE "users"."id" = $2  -- once per row
+// UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3  -- once per row
 ```
 
 When every row gets the same value or an expression, a [bulk `Update`](/writing/update-and-delete#update) is one statement.

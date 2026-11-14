@@ -22,7 +22,7 @@ In Codex, Cursor, GitHub Copilot, Gemini CLI and the other agents that read skil
 npx skills add skudra-go/ant
 ```
 
-Both install [`skills/ant/SKILL.md`](https://github.com/skudra-go/ant/blob/main/skills/ant/SKILL.md) from ant's `main` branch. From the release after v0.2.0, the module carries it too, matching the version in your `go.mod`:
+Both install [`skills/ant/SKILL.md`](https://github.com/skudra-go/ant/blob/main/skills/ant/SKILL.md) from ant's `main` branch. Since v0.3.0 the module carries it too, matching the version in your `go.mod`:
 
 ```bash
 cat "$(go list -m -f '{{.Dir}}' github.com/skudra-go/ant)/skills/ant/SKILL.md"
