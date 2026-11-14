@@ -33,7 +33,8 @@ Green is the best library in each row.
 ## What the numbers say
 
 - Small queries cost about the same in every library.
-- ant keeps a copy of each loaded row so [`SaveChanges`](/tracking/save-changes) can find changes. That makes 1000 rows 1.7 times slower and 3 times the memory. With [`NoTracking`](/queries/reading-rows#skip-the-tracker), ant reads them fastest.
+- ant keeps a copy of each loaded row so [`SaveChanges`](/tracking/save-changes) can find changes. That makes 1000 rows 1.2 times slower and twice the memory. With [`NoTracking`](/queries/reading-rows#skip-the-tracker), ant reads them as fast as plain SQL.
+- ant uses the least memory of the four libraries in every row. Bun allocates the least on single-row reads and updates.
 - Bun puts insert values into the SQL text, so the driver prepares every insert as a new statement. `default_query_exec_mode=simple_protocol` in the DSN brings it to 452 µs.
 - ent's update reads the row back in a transaction, so load, edit and save takes four statements instead of two.
 
@@ -43,12 +44,12 @@ Green is the best library in each row.
 
 | Operation | Time | Allocations |
 | --- | --- | --- |
-| Resolving a field pointer | 22 ns | 0 |
-| Building and rendering a query with two conditions, an order, and a limit | 7.3 µs | 78 |
+| Resolving a field pointer | 15 ns | 0 |
+| Building and rendering a query with two conditions, an order, and a limit | 3.6 µs | 22 |
 
-Budgets in `tests/benchmarks/allocs_test.go` fail a test if these grow.
+Budgets in `tests/benchmarks/allocs_test.go` and `tests/benchmarks/budget_test.go` fail a test if these grow, or if reading, tracking, saving or inserting rows starts to allocate more for each row.
 
-Rendering takes a few microseconds, against a few hundred for the round trip, which is why ant doesn't cache rendered SQL: a cache key would cost about what it saves, and pgx already caches prepared statements per connection.
+ant keeps the SQL of the statements it runs most, by their shape: `Find`, a read with a few plain conditions, and the insert of one entity. A second run with the same shape binds its values to the kept SQL and skips building and rendering. Anything else, such as a join, an `Or` or `In`, is built and rendered each time, which takes a few microseconds against a few hundred for the round trip.
 
 ## Run them yourself
 
