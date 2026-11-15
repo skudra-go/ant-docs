@@ -77,10 +77,12 @@ func main() {
 
 | | |
 | --- | --- |
-| Name | `db.` and the statement's first word in lower case: `db.select`, `db.insert`, `db.update`, `db.delete` |
+| Name | `db.` and the statement's operation in lower case: `db.select`, `db.insert`, `db.update`, `db.delete`, `db.merge`, or a savepoint command (`db.savepoint`, `db.rollback`, `db.release`, `db.save`). Every other statement is `db.query` |
 | Kind | Client |
 | `db.query.text` | The SQL, with placeholders. Values are never recorded |
 | Status | Error, with the error recorded, when the statement fails |
+
+The operation is the statement's first word, after any comments and opening parentheses, so a `/* tag */` comment or a hint does not change it. A `WITH` statement is named after the statement its common table expressions feed: `WITH a AS (...) DELETE ...` is `db.delete`. Any statement the tracer cannot name with certainty, such as `CREATE TABLE` or `PRAGMA`, is `db.query`, so span names stay a small, fixed set.
 
 Pass the request's context to every ant call: the span is a child of the request's span only if the context carries it. With `otelhttp`, a request's trace then shows each statement.
 
@@ -108,7 +110,7 @@ var m *metrics.Metrics
 ```
 */}
 
-Each kind exports a count, an error count and a duration histogram with buckets from 1 ms to 5 s:
+The kinds are the span operations above in upper case, and `QUERY` for every other statement. Each kind exports a count, an error count and a duration histogram with buckets from 1 ms to 5 s:
 
 ```text
 ant_statements_total{kind="SELECT"} 42
