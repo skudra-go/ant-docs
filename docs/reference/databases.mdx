@@ -122,6 +122,19 @@ SQLite has one writer at a time. A second connection that writes fails at once w
 dsn := "file:app.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
 ```
 
+Without `foreign_keys(1)`, SQLite accepts a row whose foreign key points at nothing. Without `busy_timeout` and `_txlock=immediate`, concurrent requests fail with `database is locked`.
+
+An in-memory database, `:memory:`, is one per connection, so a table made on one connection is missing on the others in the pool. Keep the pool to one connection:
+
+```go
+db, err := ant.Open[AppDB](ctx, sqlite.Dialect, ":memory:?_pragma=foreign_keys(1)")
+if err != nil {
+	return err
+}
+
+db.DB().SetMaxOpenConns(1)
+```
+
 `PRAGMA journal_mode=WAL` lets readers go on while one connection writes. It stays with the file, so run it once at startup. Don't put it in the DSN, where every new connection would need the write lock to set it.
 
 ## Paging on SQL Server
