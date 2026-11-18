@@ -20,6 +20,11 @@ const sidebars = {
     page('quick-start', 'bolt'),
     page('concepts', 'bulb'),
     page('why-ant', 'layers'),
+    section('Guides', 'compass', [
+      'guides/migrating-from-gorm',
+      'guides/ant-vs-gorm-ent-sqlc',
+      'guides/type-safe-sql-in-go',
+    ]),
 
     group('Build'),
     section('Models', 'box', [

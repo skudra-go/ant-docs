@@ -13,7 +13,9 @@ const reference = api.packages.ant.url;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'ant',
+  // The suffix of every page title: "Joins | ant Go ORM". "ant" alone can't be
+  // searched for.
+  title: 'ant Go ORM',
   tagline: 'A Go ORM with plain structs, compiler-checked queries, and no code generation',
   favicon: 'img/favicon.svg',
 
@@ -83,6 +85,11 @@ const config = {
           },
         },
         pages: false,
+        // Lists of posts by tag, author or date add nothing a search needs, and
+        // carry a noindex tag (src/components/noIndex.js).
+        sitemap: {
+          ignorePatterns: ['/blog/archive', '/blog/authors', '/blog/authors/**', '/blog/tags', '/blog/tags/**'],
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -94,6 +101,7 @@ const config = {
     [
       './src/plugins/llms',
       {
+        title: 'ant',
         summary:
           'ant is a Go ORM. Models are plain structs, columns are field pointers that the compiler checks, and there is no code generation.',
       },
@@ -121,7 +129,8 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       // The social card shown when any page is shared. Blog posts set their own.
-      image: 'img/blog/field-pointers.png',
+      // static/img/social-card.svg is its source, in the blog cards' design.
+      image: 'img/social-card.png',
       metadata: [
         {
           name: 'description',
@@ -155,7 +164,7 @@ const config = {
           {to: '/blog', label: 'Blog', position: 'right'},
           {href: reference, label: 'API', position: 'right'},
           {href: 'https://github.com/skudra-go/ant-examples', label: 'Examples', position: 'right'},
-          {href: repo, label: 'GitHub', position: 'right'},
+          {type: 'custom-star', position: 'right'},
         ],
       },
       footer: {

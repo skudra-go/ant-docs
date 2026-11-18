@@ -31,6 +31,10 @@ const foreign = new Set(['Others', 'Lib']);
 // written with their package, like ant.Gt, are linked.
 const mixed = new Set(['Pain']);
 
+// A page whose front matter has `api_links: qualified` is mixed throughout, as a
+// guide that sets GORM's calls beside ant's is.
+const qualifiedPage = (file) => file.data?.frontMatter?.api_links === 'qualified';
+
 // Skipped entirely: a link can't hold another, and headings feed the table of contents.
 const skipped = new Set(['link', 'linkReference', 'heading', 'code']);
 
@@ -208,7 +212,7 @@ module.exports = function apiLinks() {
       });
     };
 
-    walk(tree, false);
+    walk(tree, qualifiedPage(file));
 
     if (unknown.length > 0) {
       throw new Error(`${file.path}: no such API in ${api.module} ${api.version}: ${unknown.join(', ')}`);

@@ -1,0 +1,117 @@
+---
+title: "Type-safe SQL in Go: the options"
+sidebar_label: Type-safe SQL in Go
+description: "Type-safe SQL in Go: code generators (sqlc, ent, jet, bob), string query builders (squirrel, GORM, Bun) and field pointers (ant), compared with examples."
+# GORM's calls sit beside ant's: link only names written with their package.
+api_links: qualified
+---
+
+A query can go wrong in three ways that a type system could catch: a column that doesn't exist, a value of the wrong type for it, and a result scanned into the wrong type. Go libraries catch these at different times, at build time, when a generator runs, or only when the query runs, and they ask for different things in return. There are three broad approaches.
+
+Each example below asks for users over 18, sorted by name, ten at a time.
+
+## Generate code from a schema or from SQL
+
+A tool reads a description of your data and writes Go code that knows every table and column. Mistakes surface when the generator runs or when the generated code is compiled. In return, the generator has to run again after each change.
+
+- **[sqlc](https://sqlc.dev)** starts from SQL. You write each query in a `.sql` file, and `sqlc generate` checks it against your schema and writes a typed Go function for it.
+- **[ent](https://entgo.io)** starts from Go. You describe the schema with ent's DSL, and `go generate` writes a query builder with a method for each field.
+- **[jet](https://github.com/go-jet/jet)** and **[bob](https://github.com/stephenafamo/bob)** start from the database. Their generators read your schema and write typed tables and columns for a query builder that mirrors SQL.
+
+```sql no-check title="sqlc: query.sql"
+-- name: AdultUsers :many
+SELECT * FROM users
+WHERE age > $1
+ORDER BY name
+LIMIT 10;
+```
+
+From this, `sqlc generate` writes an `AdultUsers` method that takes the age and returns a slice of `User` rows. A misspelled column fails `sqlc generate`.
+
+```go no-check title="ent 0.14"
+users, err := client.User.Query().
+	Where(user.AgeGT(18)).
+	Order(user.ByName()).
+	Limit(10).
+	All(ctx)
+```
+
+`user.AgeGT` exists because ent generated it from the schema, and it takes an `int`.
+
+## Build queries with strings
+
+A builder assembles the SQL, and you name columns with strings. Nothing is generated and nothing is checked before the query runs: a typo is an error from the database, found by a test or in production. Values are still passed as parameters, so this is about mistakes, not injection.
+
+```go no-check title="squirrel 1.5"
+rows, err := sq.Select("id", "name").
+	From("users").
+	Where(sq.Gt{"age": 18}).
+	OrderBy("name").
+	Limit(10).
+	PlaceholderFormat(sq.Dollar).
+	RunWith(db).
+	QueryContext(ctx)
+```
+
+```go no-check title="GORM 1.31"
+var users []User
+
+err := db.WithContext(ctx).
+	Where("age > ?", 18).
+	Order("name").
+	Limit(10).
+	Find(&users).
+	Error
+```
+
+```go no-check title="Bun 1.3"
+var users []User
+
+err := db.NewSelect().
+	Model(&users).
+	Where("age > ?", 18).
+	Order("name").
+	Limit(10).
+	Scan(ctx)
+```
+
+GORM and Bun scan rows into your own structs, but the columns in the query are strings. GORM also has a [generics API](https://gorm.io/docs/the_generics_way.html) and an optional [CLI](https://github.com/go-gorm/cli) that generates typed field helpers.
+
+## Name columns with field pointers
+
+ant takes a pointer to a field of your own struct as the column. The compiler checks that the field exists and that the value compared with it has the field's type. Nothing is generated: the struct is the schema.
+
+```go title="ant"
+var Users = ant.Fields[User]()
+
+users, err := db.Users.
+	Where(ant.Gt(&Users.Age, 18)).
+	OrderBy(&Users.Name).
+	Limit(10).
+	All(ctx)
+```
+
+```text title="go build, with &Users.Agee"
+Users.Agee undefined (type *User has no field or method Agee)
+```
+
+The approach needs Go 1.27's generic methods. A few mistakes still compile, such as a field pointer from another model, and ant reports those when the query runs, or earlier with [antvet](/tooling/antvet). [How `&Users.Age` becomes a column](/why-ant#how-usersage-becomes-a-column) shows how it works.
+
+## Side by side
+
+| | Code generation | Misspelled column | Wrong value type | You keep in step |
+| --- | --- | --- | --- | --- |
+| sqlc | `sqlc generate` | At generate time | At compile time | SQL files and the schema |
+| ent | `go generate` | At compile time | At compile time | ent's schema |
+| jet, bob | From the database | At compile time | At compile time | The generated code and the database |
+| squirrel, GORM, Bun | None | When the query runs | Not checked | Strings and the schema |
+| ant | None | At compile time | At compile time | Structs and the schema |
+
+## Which to choose
+
+- You think in SQL and want every query written out: **sqlc**.
+- You want the strongest checks and don't mind a generator: **ent**, or **jet** and **bob** if the database is the source of truth.
+- You want plain structs and no generator, and can live with strings: **GORM** or **Bun**.
+- You want plain structs, no generator, and checked columns: **ant**.
+
+[ant vs GORM, ent, Bun and sqlc](/guides/ant-vs-gorm-ent-sqlc) compares those libraries in more depth, including speed and migrations.

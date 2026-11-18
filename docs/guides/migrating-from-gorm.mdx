@@ -1,0 +1,192 @@
+---
+title: Migrating from GORM to ant
+sidebar_label: Migrating from GORM
+description: How to migrate from GORM to ant, the typed Go ORM, call by call, and how to move one model at a time while both libraries share a connection pool.
+# GORM's calls sit beside ant's: link only names written with their package.
+api_links: qualified
+---
+
+ant and GORM both sit on `database/sql`, so they can share one pool, and one struct can be a model in both. That lets you move one model and its queries at a time and ship in between. Every pairing on this page was run side by side on PostgreSQL 17 with GORM 1.31.
+
+## The calls side by side
+
+| GORM | ant | Note |
+| --- | --- | --- |
+| `db.AutoMigrate(&User{})` | `migrate diff`, then `migrate up` | A SQL file you review. [PostgreSQL only](#schema). |
+| `Where("age > ?", 18)` | `Where(ant.Gt(&Users.Age, 18))` | Checked by the compiler |
+| `Where("name = ? AND age > ?", n, 18)` | `Where(ant.Eq(&Users.Name, n), ant.Gt(&Users.Age, 18))` | Conditions in one `Where` are joined with `AND` |
+| `Preload("Posts")` | `Include(&Users.Posts)` | One query for all the parents |
+| `First(&user)` | `OrderBy(&Users.ID).First(ctx)` | [GORM orders by the key; ant doesn't](#first-has-no-order) |
+| `First(&user, id)` | `Find(ctx, id)` | |
+| `Find(&users)` | `All(ctx)` | No rows is an empty slice in both |
+| `Create(&user)` | `Insert(ctx, user)` | |
+| `Save(&user)` | Change a loaded entity, then `SaveChanges(ctx)` | [Writes only the changed columns](#save-and-updates) |
+| `Model(&user).Updates(User{...})` | `SaveChanges(ctx)`, or `Where(...).Update(ctx, ant.Set(...))` | Zero values are written |
+| `Delete(&user)` | `ant.Remove(ctx, db, user)`, then `SaveChanges(ctx)` | Runs delete hooks |
+| `Delete(&User{}, id)` | `DeleteByID(ctx, id)` | No hooks. A missing row is `ant.ErrNotFound` |
+| `Transaction(func(tx *gorm.DB) error {...})` | `Tx(ctx, func(tx *AppDB) error {...})` | |
+| `BeforeCreate(tx *gorm.DB) error` | `BeforeInsert(ctx context.Context) error` | [Hooks get a context, not a transaction](#hooks) |
+| `gorm.ErrRecordNotFound` | `ant.ErrNotFound` | |
+| `gorm.Model` | `ant.Base`, and `ant.DeletedAt` for soft deletes | [`gorm.DeletedAt` is not a soft delete in ant](#soft-deletes) |
+
+## Queries
+
+```go no-check title="GORM"
+var users []User
+
+err := db.WithContext(ctx).
+	Preload("Posts", "published = ?", true).
+	Where("age > ?", 18).
+	Order("name").
+	Find(&users).
+	Error
+```
+
+```go title="ant"
+users, err := db.Users.
+	Include(&Users.Posts, func(q *ant.Query[Post]) *ant.Query[Post] {
+		return q.Where(ant.Eq(&Posts.Published, true))
+	}).
+	Where(ant.Gt(&Users.Age, 18)).
+	OrderBy(&Users.Name).
+	All(ctx)
+```
+
+There are no string conditions. For SQL that ant has no function for, [`ant.SQLCond`](/queries/expressions#a-sql-fragment) takes a fragment with `?` placeholders, and [`ant.Raw`](/queries/raw-sql) runs a whole statement. GORM scopes become functions that take and return a query; see [composing](/queries/composing).
+
+## Writes
+
+```go no-check title="GORM"
+db.Create(&user)
+
+user.Name = "Ada L."
+db.Save(&user)
+
+db.Model(&user).Update("age", 37)
+
+db.Delete(&user)
+```
+
+```go title="ant"
+err := db.Users.Insert(ctx, user)
+
+user.Name = "Ada L."
+err = db.SaveChanges(ctx) // UPDATE "users" SET "name" = $1, "updated_at" = $2 ...
+
+n, err := db.Users.Where(ant.Eq(&Users.ID, user.ID)).Update(ctx, ant.Set(&Users.Age, 37))
+
+err = ant.Remove(ctx, db, user)
+err = db.SaveChanges(ctx)
+```
+
+`SaveChanges` saves what the context loaded or inserted, so give each request its own [session](/tracking/sessions). For lists you only read, `NoTracking()` skips the copy ant keeps of each row.
+
+## Transactions
+
+```go no-check title="GORM"
+err := db.Transaction(func(tx *gorm.DB) error {
+	return tx.Create(&User{Name: "Bob"}).Error
+})
+```
+
+```go title="ant"
+err := db.Tx(ctx, func(tx *AppDB) error {
+	return tx.Users.Insert(ctx, &User{Name: "Bob"})
+})
+```
+
+Both commit when the function returns `nil` and roll back on an error. Inside the function, use `tx`, not `db`.
+
+## What doesn't map one-to-one
+
+### `First` has no order
+
+GORM's `First` orders by the primary key. ant's `First` takes the order you give it, and without one, which row comes first is up to the database. Use `Find` for a key, or add `OrderBy`.
+
+### `Save` and `Updates` {#save-and-updates}
+
+GORM's `Save` writes every column, and `Updates` with a struct skips zero values, so `Updates(User{Age: 0})` leaves the age alone. ant writes zero values like any other, and `SaveChanges` writes only the columns that changed since the entity was loaded. Code that relied on `Updates` skipping fields should load the row, change it and call `SaveChanges`.
+
+A struct built by hand, such as a request body, isn't tracked, so `SaveChanges` has nothing to compare it with. [`ant.MarkModified`](/tracking/entity-states#write-every-column) makes the next save write every column, as GORM's `Save` does.
+
+### Hooks
+
+ant's hooks take a `context.Context`, not a transaction, so a hook can check or refuse a write but can't write rows of its own. Write those in the `Tx` function, or use an [observer](/lifecycle/hooks-and-observers#observers) after the commit. GORM's `BeforeSave` has no single counterpart: `Validate` runs before every insert and update, or use `BeforeInsert` and `BeforeUpdate`.
+
+`BeforeUpdate`, `AfterUpdate`, `BeforeDelete` and `AfterDelete` have the same names in both libraries and different signatures. A struct can only have one method of each name, and ant ignores one with GORM's signature without a warning. While a struct is a model in both, keep those hooks in one library.
+
+### Soft deletes
+
+ant reads a `gorm.DeletedAt` field as a plain column, so rows GORM soft-deleted come back in ant's queries. An [`ant.DeletedAt`](/lifecycle/soft-deletes) field uses the same `deleted_at` column and hides those rows. GORM, in turn, doesn't treat `ant.DeletedAt` as a soft delete, so switch the field when the model's last GORM query goes, or give ant its own struct for the table until then.
+
+### Schema
+
+ant has no auto-migrate. `migrate diff` writes the change as a SQL file, which you review before `migrate up` applies it. That runs on PostgreSQL only; on MySQL, MariaDB, SQLite and SQL Server, keep the tool you use now. `EnsureCreated` creates tables straight from the structs, for tests and prototypes. [Migrations](/migrations/overview#next-to-gorm-ent-and-sqlc) compares the two approaches.
+
+### Smaller differences
+
+- Associations: there is no `Association("Posts").Append`. Append to a loaded `user.Posts` and call `SaveChanges`; see [changing relations](/tracking/changing-relations).
+- `Delete` of a row that isn't there is not an error in GORM. `DeleteByID` returns `ant.ErrNotFound`.
+- ant needs Go 1.27 or later, for generic methods.
+
+## Move one model at a time
+
+### Share the pool
+
+`gormDB.DB()` returns GORM's `*sql.DB`, and `ant.Wrap` puts an ant context on it:
+
+{/*
+```go
+var sqlDB *sql.DB
+```
+*/}
+
+```go
+// sqlDB, err := gormDB.DB()
+db, err := ant.Wrap[AppDB](postgres.Dialect, sqlDB)
+```
+
+Close the pool once, through either library: ant's `Close` closes it too.
+
+### Use the same structs
+
+ant ignores `gorm` tags and GORM ignores `ant` tags. Both name tables and columns the same way by default (`OrderItem` is `order_items`, `UserID` is `user_id`), find a `[]Post` field with `Post.UserID` as a one-to-many relation, and set `CreatedAt` and `UpdatedAt`. A struct that embeds `gorm.Model` works in ant, apart from [soft deletes](#soft-deletes). Add the ant context and a probe for each model you move:
+
+```go
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+	Posts ant.Table[Post]
+}
+
+var Users = ant.Fields[User]()
+```
+
+### Move the queries
+
+Rewrite one call site at a time, using the table above. Both libraries read and write the same rows, so the rest of the code doesn't notice.
+
+Keep each transaction in one library where you can. When a GORM transaction has to include ant's writes, bind ant to it with [`ant.UseTx`](/transactions/connections#join-a-transaction-started-elsewhere). In a GORM transaction on a plain pool, `Statement.ConnPool` is the `*sql.Tx`:
+
+```go no-check title="GORM transaction, ant inside it"
+err := gormDB.Transaction(func(gtx *gorm.DB) error {
+	bound, err := ant.UseTx(db, gtx.Statement.ConnPool.(*sql.Tx))
+	if err != nil {
+		return err
+	}
+
+	return bound.Users.Insert(ctx, user)
+})
+```
+
+If GORM rolls back, ant's insert rolls back with it. ant can't see how the transaction ends, so read [what that means](/transactions/connections#join-a-transaction-started-elsewhere) for its tracker.
+
+### Hand the schema over
+
+Once ant's migrations own the schema, stop calling `AutoMigrate`: two tools changing one schema will disagree. [Adopting a database](/migrations/adopting) covers the steps: dump the schema, compare it with your models with `migrate drift` until nothing is left, then record a baseline.
+
+## Next
+
+- [ant vs GORM, ent, Bun and sqlc](/guides/ant-vs-gorm-ent-sqlc): when each one fits.
+- [Concepts](/concepts): probes, contexts and tracking.
+- [AI assistants](/tooling/ai-assistants): give an assistant the docs before it rewrites GORM calls.

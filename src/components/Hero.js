@@ -1,9 +1,17 @@
 import React, {useState} from 'react';
+import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import {useDoc} from '@docusaurus/plugin-content-docs/client';
+import {softwareSourceCode} from '@site/src/structured-data.mjs';
 import AntMark from './AntMark';
+import StarOnGitHub from './StarOnGitHub';
 
 const install = 'go get github.com/skudra-go/ant';
+
+// The home page's title in search results and shares. It replaces the usual
+// "<page> | ant Go ORM", because "ant" alone can't be searched for.
+const title = 'ant: a typed Go ORM with compile-checked queries and no codegen';
 
 function Install() {
   const [copied, setCopied] = useState(false);
@@ -31,10 +39,21 @@ function Install() {
 }
 
 export default function Hero() {
-  const {release, reference, repo} = useDocusaurusContext().siteConfig.customFields;
+  const {siteConfig} = useDocusaurusContext();
+  const {release, reference, repo} = siteConfig.customFields;
+  const project = softwareSourceCode({
+    url: siteConfig.url,
+    description: useDoc().metadata.description,
+    repo,
+  });
 
   return (
     <header className="hero-ant">
+      <Head>
+        <title>{title}</title>
+        <meta property="og:title" content={title} />
+        <script type="application/ld+json">{JSON.stringify(project)}</script>
+      </Head>
       <div className="hero-ant__mark">
         <AntMark watch size={96} />
       </div>
@@ -54,9 +73,7 @@ export default function Hero() {
         <Link className="ant-button" to="/why-ant">
           Why ant
         </Link>
-        <Link className="ant-button" to={repo}>
-          GitHub
-        </Link>
+        <StarOnGitHub />
         <Link className="ant-button" to="https://github.com/skudra-go/ant-examples">
           Example projects
         </Link>
