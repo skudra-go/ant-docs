@@ -2,6 +2,8 @@ import React, {useState} from 'react';
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import {useDoc} from '@docusaurus/plugin-content-docs/client';
+import {softwareSourceCode} from '@site/src/structured-data.mjs';
 import AntMark from './AntMark';
 
 const install = 'go get github.com/skudra-go/ant';
@@ -36,13 +38,20 @@ function Install() {
 }
 
 export default function Hero() {
-  const {release, reference, repo} = useDocusaurusContext().siteConfig.customFields;
+  const {siteConfig} = useDocusaurusContext();
+  const {release, reference, repo} = siteConfig.customFields;
+  const project = softwareSourceCode({
+    url: siteConfig.url,
+    description: useDoc().metadata.description,
+    repo,
+  });
 
   return (
     <header className="hero-ant">
       <Head>
         <title>{title}</title>
         <meta property="og:title" content={title} />
+        <script type="application/ld+json">{JSON.stringify(project)}</script>
       </Head>
       <div className="hero-ant__mark">
         <AntMark watch size={96} />
