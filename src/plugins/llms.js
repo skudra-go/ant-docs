@@ -29,6 +29,7 @@ const widgets = new Set([
   'MigrationFlow',
   'QueryLog',
   'SaveDemo',
+  'StarBox',
   'TwoPaths',
 ]);
 

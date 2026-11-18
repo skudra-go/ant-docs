@@ -164,7 +164,7 @@ const config = {
           {to: '/blog', label: 'Blog', position: 'right'},
           {href: reference, label: 'API', position: 'right'},
           {href: 'https://github.com/skudra-go/ant-examples', label: 'Examples', position: 'right'},
-          {href: repo, label: 'GitHub', position: 'right'},
+          {type: 'custom-star', position: 'right'},
         ],
       },
       footer: {

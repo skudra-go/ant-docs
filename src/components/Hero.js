@@ -5,6 +5,7 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import {useDoc} from '@docusaurus/plugin-content-docs/client';
 import {softwareSourceCode} from '@site/src/structured-data.mjs';
 import AntMark from './AntMark';
+import StarOnGitHub from './StarOnGitHub';
 
 const install = 'go get github.com/skudra-go/ant';
 
@@ -72,9 +73,7 @@ export default function Hero() {
         <Link className="ant-button" to="/why-ant">
           Why ant
         </Link>
-        <Link className="ant-button" to={repo}>
-          GitHub
-        </Link>
+        <StarOnGitHub />
         <Link className="ant-button" to="https://github.com/skudra-go/ant-examples">
           Example projects
         </Link>

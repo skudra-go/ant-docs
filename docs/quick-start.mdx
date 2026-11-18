@@ -5,6 +5,7 @@ description: A small Go program that saves a user with posts, queries them, and 
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import {StarBox} from '@site/src/components/StarOnGitHub';
 
 A small program that saves a user with two posts, loads them back and updates one column. You need Go 1.27 or later.
 
@@ -430,3 +431,5 @@ docker rm -f hello-db
 - [Migrations](/migrations/overview): replace `EnsureCreated` with SQL files you review.
 - [Example projects](https://github.com/skudra-go/ant-examples): this program, a blog API, an audit service and a ledger.
 - [AI assistants](/tooling/ai-assistants): give Claude, Codex, Cursor or Copilot the docs, so they write ant and not GORM.
+
+<StarBox text="It worked? Star ant on GitHub, or open an issue if it didn't." next={{to: 'https://github.com/skudra-go/ant/issues/new/choose', label: 'Open an issue'}} />

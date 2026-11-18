@@ -2232,3 +2232,50 @@ html[data-theme='dark'] .catch__mark path {
   margin: 1.2rem 0 1.6rem;
   width: 100%;
 }
+
+/* Star on GitHub: the button, its compact navbar form, and the box that ends a
+   blog post or the quick start. */
+
+.star-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.star-button__star {
+  color: var(--ant-accent);
+}
+
+.navbar .star-button--compact {
+  color: var(--ant-ink);
+  font-size: 0.85rem;
+  padding: 0.28rem 0.8rem;
+  white-space: nowrap;
+}
+
+/* Between the mobile menu and a wide screen, the navbar has room for "Star" only. */
+@media (max-width: 1180px) {
+  .navbar .star-button__more {
+    display: none;
+  }
+}
+
+.star-box {
+  background: var(--ant-raised);
+  border: 1px solid var(--ant-line);
+  border-radius: 14px;
+  margin: 2.5rem 0 1rem;
+  padding: 1.15rem 1.3rem 1.25rem;
+}
+
+.markdown .star-box__text,
+.star-box__text {
+  color: var(--ant-ink);
+  margin: 0 0 0.9rem;
+}
+
+.star-box__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
