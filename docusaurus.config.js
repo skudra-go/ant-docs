@@ -124,7 +124,8 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       // The social card shown when any page is shared. Blog posts set their own.
-      image: 'img/blog/field-pointers.png',
+      // static/img/social-card.svg is its source, in the blog cards' design.
+      image: 'img/social-card.png',
       metadata: [
         {
           name: 'description',
