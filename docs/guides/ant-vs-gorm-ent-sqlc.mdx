@@ -1,0 +1,77 @@
+---
+title: ant vs GORM, ent, Bun and sqlc
+sidebar_label: ant vs GORM, ent, Bun, sqlc
+description: GORM vs ent vs sqlc vs Bun vs ant, the Go ORMs and SQL tools compared on checked queries, code generation, migrations and speed, and when to pick each.
+# GORM's calls sit beside ant's: link only names written with their package.
+api_links: qualified
+---
+
+All five are solid ways to talk to a SQL database from Go. They differ in when a mistake shows up, what you have to keep in step, and what the library does for you after a row is loaded. This page sums that up and says when each one fits, ant included. [Why ant](/why-ant) has the longer, side-by-side version.
+
+## At a glance
+
+|  | ant | GORM | Bun | ent | sqlc |
+| --- | --- | --- | --- | --- | --- |
+| You write | Go structs | Go structs | Go structs | A schema in ent's Go DSL | SQL |
+| Columns in queries | Field pointers | Strings | Strings | Generated methods | Your SQL |
+| Code generation | None | None, or an optional CLI | None | `go generate` | `sqlc generate` |
+| Saving changes | Changed columns, found by tracking | `Save` writes every column | `Update` on a model writes every column unless you name them | Setters on an update builder | One statement per shape of update |
+| Migrations | SQL files from a diff of your structs, PostgreSQL only | `AutoMigrate`, or Atlas for versioned files | Its own runner for Go and SQL migrations | Automatic, or Atlas for versioned SQL files | None: it reads your migration tool's files |
+
+## What the compiler catches
+
+The same mistakes, made in each library's version of one query:
+
+<CatchTable />
+
+Each cell was tested by compiling the mistake, or for sqlc by running `sqlc generate` 1.30. GORM's optional [CLI](https://github.com/go-gorm/cli) generates typed field helpers.
+
+## Speed
+
+[`tools/compare`](https://github.com/skudra-go/ant/tree/main/tools/compare) runs the same operations in each library against PostgreSQL 17. Plain `database/sql` stands in for sqlc, whose generated code is a query string and a `Scan`.
+
+- Single-row reads and writes cost about the same in every library, because the round trip to the database is most of the time.
+- On a 1000-row read, ant's change tracking makes it 1.2 times slower than with `NoTracking`, and uses twice the memory. With `NoTracking`, ant read the rows as fast as plain SQL in our runs.
+- ant used the least memory of the four libraries in every row. Bun made the fewest allocations on single-row reads and updates.
+- Bun's insert is slower by default, and ent's load, edit and save sends four statements instead of two. [Benchmarks](/reference/benchmarks#what-the-numbers-say) explains both.
+
+[Benchmarks](/reference/benchmarks) has the full tables and how to run them yourself.
+
+## When to pick each
+
+### GORM
+
+The most widely used Go ORM, with the most answers online, plugins, and drivers for databases beyond these five. Pick it when your team already knows it, when you need a database ant doesn't support, or when you can't move to Go 1.27. Its [generics API](https://gorm.io/docs/the_generics_way.html) and optional CLI add some of the checks the others have.
+
+### Bun
+
+A query builder that stays close to SQL, and among the fastest on small queries in our benchmarks. Pick it when you want SQL's shape in Go and are fine with column names as strings, caught by tests rather than the compiler.
+
+### ent
+
+Schemas as Go code, generated query methods, and the strongest compile-time checks of the five: it also catches a column from the wrong model, which ant leaves to [antvet](/tooling/antvet). Pick it when your data is graph-shaped, or when you want those checks and don't mind running `go generate` after every schema change.
+
+### sqlc
+
+You write SQL, and sqlc generates typed Go functions for it, as fast as hand-written code. Pick it when your team thinks in SQL and doesn't want relations loaded for it or changes tracked. A new shape of update needs a new statement.
+
+### ant
+
+Queries the compiler checks without generated code, change tracking that writes only the columns that changed, relations loaded in batches, and migrations that are plain SQL. Pick it when you want ent's checks on plain structs, or GORM's convenience without strings.
+
+## When ant is the wrong choice
+
+- **You can't use Go 1.27.** ant needs generic methods.
+- **You need a stable API today.** ant is pre-1.0, and a release can still break the API. Each release lists what it broke.
+- **You want migrations on MySQL, MariaDB, SQLite or SQL Server.** ant's migrations are PostgreSQL only. It reads and writes the other four, but their schema stays with your current tool.
+- **Your database isn't one of the five.** ant supports PostgreSQL, MySQL, MariaDB, SQLite and SQL Server.
+- **You want SQL to be the source of truth.** sqlc fits that better.
+- **You need the ecosystem.** GORM has years of plugins, answers and people who know it. ant is new.
+- **Some mistakes still compile.** A field pointer from another model's probe compiles, and fails when the query runs or in `go vet` with antvet. ent and sqlc catch it earlier.
+
+## Next
+
+- [Why ant](/why-ant): the same query in four libraries, and four problems compared in code.
+- [Benchmarks](/reference/benchmarks): every number, and how they were measured.
+- [Migrating from GORM](/guides/migrating-from-gorm): each GORM call and its ant equivalent.
+- [Type-safe SQL in Go](/guides/type-safe-sql-in-go): the approaches behind these libraries.

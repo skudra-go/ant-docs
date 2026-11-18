@@ -90,7 +90,7 @@ End a feature page with `<Tests path="querying" />`, which links to the tests be
 
 ### Links to the API
 
-The first mention of an API name on a page, in backticks, becomes a link to its entry on pkg.go.dev, with its declaration and the first sentence of its doc comment shown on hover. Nothing needs marking up: `ant.Open`, `migrate.Config`, `db.SaveChanges`, `b.HasMany`, `db.Users.Find`, and `Table.Where` are all recognised, and so is a bare method name like `Include` when it can only mean one thing. Mentions inside `Others` and `Lib` are left alone, and inside `Pain` only names written with their package are linked, because the other libraries have methods with the same names.
+The first mention of an API name on a page, in backticks, becomes a link to its entry on pkg.go.dev, with its declaration and the first sentence of its doc comment shown on hover. Nothing needs marking up: `ant.Open`, `migrate.Config`, `db.SaveChanges`, `b.HasMany`, `db.Users.Find`, and `Table.Where` are all recognised, and so is a bare method name like `Include` when it can only mean one thing. Mentions inside `Others` and `Lib` are left alone, and inside `Pain` only names written with their package are linked, because the other libraries have methods with the same names. A page with `api_links: qualified` in its front matter, such as a guide that sets GORM's calls beside ant's, gets the `Pain` rule throughout.
 
 A mention like `ant.Foo` of a name that doesn't exist fails the build.
 
