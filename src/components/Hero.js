@@ -1,9 +1,14 @@
 import React, {useState} from 'react';
+import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import AntMark from './AntMark';
 
 const install = 'go get github.com/skudra-go/ant';
+
+// The home page's title in search results and shares. It replaces the usual
+// "<page> | ant Go ORM", because "ant" alone can't be searched for.
+const title = 'ant: a typed Go ORM with compile-checked queries and no codegen';
 
 function Install() {
   const [copied, setCopied] = useState(false);
@@ -35,6 +40,10 @@ export default function Hero() {
 
   return (
     <header className="hero-ant">
+      <Head>
+        <title>{title}</title>
+        <meta property="og:title" content={title} />
+      </Head>
       <div className="hero-ant__mark">
         <AntMark watch size={96} />
       </div>

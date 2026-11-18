@@ -13,7 +13,9 @@ const reference = api.packages.ant.url;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'ant',
+  // The suffix of every page title: "Joins | ant Go ORM". "ant" alone can't be
+  // searched for.
+  title: 'ant Go ORM',
   tagline: 'A Go ORM with plain structs, compiler-checked queries, and no code generation',
   favicon: 'img/favicon.svg',
 
@@ -94,6 +96,7 @@ const config = {
     [
       './src/plugins/llms',
       {
+        title: 'ant',
         summary:
           'ant is a Go ORM. Models are plain structs, columns are field pointers that the compiler checks, and there is no code generation.',
       },

@@ -240,7 +240,7 @@ module.exports = function llms(context, options) {
       }
 
       const index = [
-        `# ${siteConfig.title}`,
+        `# ${options.title ?? siteConfig.title}`,
         '',
         `> ${options.summary}`,
         '',
