@@ -96,7 +96,7 @@ users, err := client.User.Query().
 | Column of another model | `antvet` | runtime | runtime | compile error | `sqlc generate` |
 | No generate step | yes | yes | yes | no | no |
 
-ent and sqlc catch as much as ant does, and in ent's case even more. GORM is also dipping it's toes in generics, it has a [generics API](https://gorm.io/docs/the_generics_way.html) and an optional [CLI](https://github.com/go-gorm/cli) that generates typed field helpers. It uses code gen, and it's opt-in, but realistically if you already run GORM it's the cheapest way to get some of these checks.
+ent and sqlc catch as much as ant does, and in ent's case even more. GORM is also dipping it's toes in generics, it has a [generics API](https://gorm.io/docs/the_generics_way.html) and an optional [CLI](https://github.com/go-gorm/cli) that generates typed field helpers. It uses code gen, and it's opt-in, but realistically if you already run GORM it's the cheapest way to get some of these checks. If you'd rather move, [Migrating from GORM](/guides/migrating-from-gorm) maps each GORM call to ant and covers moving one model at a time.
 
 ## What the compiler says
 
