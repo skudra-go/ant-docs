@@ -85,6 +85,11 @@ const config = {
           },
         },
         pages: false,
+        // Lists of posts by tag, author or date add nothing a search needs, and
+        // carry a noindex tag (src/components/noIndex.js).
+        sitemap: {
+          ignorePatterns: ['/blog/archive', '/blog/authors', '/blog/authors/**', '/blog/tags', '/blog/tags/**'],
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
