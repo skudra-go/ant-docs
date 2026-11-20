@@ -2,12 +2,12 @@ ant is newer than most models' training data, and its API is not GORM's, Bun's o
 
 The rules that matter most:
 
-- Models are plain structs. A database is a struct that embeds `ant.Context` and holds an `ant.Table[T]` per model; `ant.Open[AppDB](ctx, postgres.Dialect, dsn)` fills it in. The application imports the driver.
+- Models are plain structs. A database is a struct that embeds `ant.Context` and holds an `ant.Table[T]` per model; `ant.Open[AppDB](ctx, postgres.Dialect, dsn)` fills it in, and refuses at startup a model it can't map, such as an unknown tag key or `[]*Post` where `[]Post` is meant. The application imports the driver.
 - Columns are field pointers into a probe, never strings: `var Users = ant.Fields[User]()`, then `ant.Gt(&Users.Age, 18)`. The value must have the field's type. A pointer from another model's probe is `ant.ErrWrongModel` at run time.
 - Queries chain from a table and run at the call that takes `ctx`: `All` (returns `[]*T`), `First`, `Single`, `Find`, `Count`, `Exists`, `Each`. Builders never return errors; the terminal call does.
 - Relations are fields (`Posts []Post`, `User *User`) found by name (`Post.UserID`). They load only through `Include` or `IncludeOne`; an unloaded relation is `nil`. There is no lazy loading.
 - `Update` and `Delete` hang off a query, with explicit assignments: `db.Users.Where(...).Update(ctx, ant.Set(&Users.Age, 0))`. Without a condition they return `ant.ErrNoCondition`.
-- Loaded entities are tracked: change the struct and call `SaveChanges(ctx)`, which writes only the changed columns. A tracking context serves one operation at a time, so take `ant.Session(db)` per request or goroutine. Removing an element from a loaded relation slice deletes that row on the next save.
+- The context from `ant.Open` doesn't track: share it for reads, inserts and bulk writes. A session, `ant.Session(db)`, tracks what it loads: change the struct and call `session.SaveChanges(ctx)`, which writes only the changed columns. Take one session per request or goroutine. `SaveChanges` on the root returns `ant.ErrNoTracking`. Removing an element from a loaded relation slice deletes that row on the next save.
 - `db.Tx(ctx, func(tx *AppDB) error { ... })` runs a transaction; use `tx` inside it, not `db`.
-- Match errors with `errors.Is`: `ant.ErrNotFound`, `ant.ErrConcurrency`, `ant.ErrConcurrentUse`, `ant.ErrUnsupported`.
+- Match errors with `errors.Is`: `ant.ErrNotFound`, `ant.ErrConcurrency`, `ant.ErrConcurrentUse`, `ant.ErrNoTracking`, `ant.ErrUnsupported`.
 - PostgreSQL has everything. MySQL, MariaDB, SQLite and SQL Server have queries, writes and transactions, but no migrations. Migrations are plain SQL that `go run ./cmd/migrate diff <name>` writes from the structs, and there are no down migrations.

@@ -50,6 +50,8 @@ err := session.SaveChanges(ctx)
 // UPDATE "posts" SET "title" = $1, "updated_at" = $2 WHERE "posts"."id" = $3
 ```
 
+Children decoded from a request body and put in place of a loaded relation, as in `alice.Posts = input.Posts`, leave out what the body didn't hold. A required foreign key at its zero value names no row, so the save sets it from the parent whose slice holds the child, rather than writing `0`, and a zero `UpdatedAt` is stamped. A nullable key left empty is `NULL`, which can mean no parent, so set it, or copy the loaded child's fields, to keep the child linked.
+
 ## Remove a child
 
 Removal depends on the foreign key. `Post.UserID` is required, so a removed post is deleted.

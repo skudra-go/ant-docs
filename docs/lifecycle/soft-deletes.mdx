@@ -133,4 +133,18 @@ func (User) Configure(b *ant.ModelBuilder[User]) {
 }
 ```
 
+An upsert by that column repeats the index's condition, which PostgreSQL and SQLite need to match a partial index:
+
+```go
+wrote, err := app.Users.Upsert(ctx, user, ant.OnConflict(&Users.Email))
+// INSERT INTO "users" (...) VALUES (...)
+// ON CONFLICT ("email") WHERE deleted_at IS NULL DO UPDATE SET ...
+```
+
+{/*
+```go
+var app *AppDB
+```
+*/}
+
 <Tests path="lifecycle/soft_delete_test.go" />

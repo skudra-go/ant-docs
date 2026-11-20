@@ -267,12 +267,13 @@ engine.ID(id).Update(&User{
 <Ant>
 
 ```go marks title="ant"
-user, err := db.Users.Find(ctx, id)
+session := ant.Session(db)
+user, err := session.Users.Find(ctx, id)
 
 user.Age = 0
 user.Active = false
 
-err = ⟦+:db.SaveChanges(ctx)⟧
+err = ⟦+:session.SaveChanges(ctx)⟧
 ```
 
 ```sql marks title="Sends"
@@ -417,11 +418,12 @@ Safe, with a statement for each shape of update or a `coalesce` for every option
 <Ant>
 
 ```go marks title="ant"
-user, err := db.Users.Find(ctx, id)
+session := ant.Session(db)
+user, err := session.Users.Find(ctx, id)
 
 user.Name = "Ada L."
 
-err = ⟦+:db.SaveChanges(ctx)⟧
+err = ⟦+:session.SaveChanges(ctx)⟧
 ```
 
 ```sql marks title="Sends"
@@ -445,7 +447,7 @@ Migrations run on PostgreSQL only. On the other databases ant reads and writes y
 
 ## What it costs
 
-ant keeps a copy of every row it loads, so `SaveChanges` can find what changed. On a 1000-row read, that makes ant 1.2 times slower than the same query with `NoTracking`, and uses twice the memory. Use `NoTracking` for lists, exports and reports; with it, ant read 1000 rows faster than GORM, Bun and ent in our runs, as fast as plain SQL.
+A session keeps a copy of every row it loads, so `SaveChanges` can find what changed. On a 1000-row read, that makes ant 1.2 times slower than the same query with `NoTracking`, and uses twice the memory. Read lists, exports and reports through the context `Open` returns, which doesn't track, or with `NoTracking`; untracked, ant read 1000 rows faster than GORM, Bun and ent in our runs, as fast as plain SQL.
 
 Single-row reads and writes cost about the same in every library, because the round trip to the database is most of the time. ant uses the least memory of the four libraries, and Bun makes the fewest allocations on single-row reads and updates.
 

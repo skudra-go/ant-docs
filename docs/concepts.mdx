@@ -94,7 +94,7 @@ fmt.Println(user.Posts == nil) // false: loaded, even if there are none
 
 ## Saving changes
 
-Entities that `All`, `First`, `Single`, `Find` and `Include` return are tracked: ant keeps a copy of each one, and `SaveChanges` writes only the columns that differ, in one transaction. A tracker belongs to one unit of work, so a server creates an `ant.Session` per request. `NoTracking` on a query, or `ant.WithTracking(false)` on `Open`, turns tracking off for read-only work.
+On a session, entities that `All`, `First`, `Single`, `Find` and `Include` return are tracked: the session keeps a copy of each one, and `SaveChanges` writes only the columns that differ, in one transaction. A tracker belongs to one unit of work, so a server creates an `ant.Session` per request. The context `Open` returns doesn't track, so it is safe to share, and `SaveChanges` on it returns `ant.ErrNoTracking`. `NoTracking` on a query turns tracking off for one read.
 
 ```go
 session := ant.Session(db)

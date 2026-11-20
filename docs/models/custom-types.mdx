@@ -114,13 +114,14 @@ type Note struct {
 }
 
 note := &Note{Tags: Tags{"go", "orm"}}
+session := ant.Session(db)
 
-err := db.Notes.Insert(ctx, note)
+err := session.Notes.Insert(ctx, note)
 // INSERT INTO "notes" ("tags") VALUES ($1) RETURNING "id" -- $1 = go,orm
 
 note.Tags = append(note.Tags, "sql")
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "notes" SET "tags" = $1 WHERE "notes"."id" = $2 -- $1 = go,orm,sql
 ```
 
@@ -163,12 +164,13 @@ type Device struct {
 // spot-next-line
 phone := &Device{Prefs: ant.JSON[Prefs]{V: Prefs{Theme: "dark"}}}
 
-err := db.Devices.Insert(ctx, phone)
+session := ant.Session(db)
+err := session.Devices.Insert(ctx, phone)
 
 // spot-next-line
 phone.Prefs.V.Theme = "light"
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "devices" SET "prefs" = $1 WHERE "devices"."id" = $2
 ```
 
@@ -181,6 +183,8 @@ var Devices = ant.Fields[Device]()
 A `NULL` column reads as the zero value of `T`. Writing text that is not valid UTF-8 returns an error, where `encoding/json` would store U+FFFD.
 
 `ant.JSON[[]string]` is the simple way to keep a list in a row.
+
+A number read into an interface, as in `ant.JSON[map[string]any]`, is a `json.Number`, not a `float64`, so a large integer keeps its digits; compare it with `json.Number("1")`, or call its `Int64`. Tracking compares it as stored, so reading one changes nothing. `secure.Value` reads the same way.
 
 ### Query inside JSON (PostgreSQL)
 

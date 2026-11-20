@@ -7,7 +7,8 @@ description: What happens when two branches add a migration, and squashing histo
 | --- | --- | --- |
 | The same version number | Every command refuses, and names both files | Renumber the one that hasn't been applied anywhere |
 | A snapshot merge conflict | The `latest` line changes with every migration, so this is on purpose | Take either side, keep both migrations, renumber if needed, then run `snapshot` |
-| A clean merge that lost the snapshot | `check` compares `latest` with the newest file, and fails if they differ | Run `snapshot` |
+| A clean merge that lost the snapshot | `check` and `diff` compare `latest` with the newest file, and fail if they differ | Run `snapshot` |
+| A file renumbered after one database ran the other branch's | `up` and `repair` say the version was applied as a different migration | Give the file the next free number |
 | A migration older than what ran | `up` refuses it, because it was written against a schema that is gone | Renumber it, or set `Config.OutOfOrder` |
 
 ## Two migrations with the same number
@@ -28,7 +29,27 @@ The snapshot records which migration it was written for. When a merge keeps one 
 Error: ant: snapshot does not match the migration files: it was written for 0018_enable_citext, and the newest file is 0017_drop_ip. After a merge, renumber if needed, then run snapshot
 ```
 
-`snapshot` records the merged models with no new migration. If the merged models need one, `diff` writes it afterwards.
+`snapshot` records the merged models with no new migration. If the merged models need one, `diff` writes it afterwards. `diff` refuses to run until then, since it would measure from the wrong place.
+
+The snapshot can also name a file that is gone, as when you delete the file `diff` just wrote to write it again under a better name. Then the snapshot holds a change no file has, so `diff` would find nothing to write and `snapshot` would make `check` pass with the change in no migration. Both commands refuse:
+
+```text
+Error: ant: snapshot does not match the migration files: it was written for 0002_add_sku, which has no file. If you deleted that file to write it again, put back the snapshot it replaced, from git, then run diff
+```
+
+```bash
+git checkout migrations/versions/schema.snapshot.json
+```
+
+## A version that ran as another migration
+
+Two branches both wrote `0002`, and staging already ran the feature branch's `0002_add_bee`. After the merge you renumber it to `0003_add_bee`, so on staging the history's `0002` is a different migration from the file `0002_add_ay`. ant compares the name and the contents with what ran, and stops:
+
+```text
+Error: ant: applied migration was changed: 0002_add_ay was applied as 0002_add_bee, a different migration. If it was renumbered after a merge, give the file the next free number; if it is the same migration, name it 0002_add_bee again
+```
+
+`repair` refuses it too, since accepting the file would record `0002_add_ay` as applied on a database that never ran it. Number the file no database has run after every one that has.
 
 ## Avoid collisions with timestamps
 

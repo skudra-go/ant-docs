@@ -71,12 +71,14 @@ Set these in the DSN:
 | Database | Setting | Without it |
 | --- | --- | --- |
 | MySQL, MariaDB | `parseTime=true` | `ant.Open` refuses the DSN, since times would come back as bytes. A pool given to `ant.Wrap` is not checked |
-| SQLite | `_pragma=foreign_keys(1)` | Foreign keys aren't enforced |
+| SQLite | `_pragma=foreign_keys(1)` | `ant.Open` refuses the DSN, since foreign keys wouldn't be enforced. `_pragma=foreign_keys(0)` keeps them off on purpose |
 | SQLite | `_pragma=busy_timeout(5000)&_txlock=immediate` | A second writer fails at once. See [writers at once](#sqlite-writers-at-once) |
 
 ## Generated keys
 
-MySQL has no `RETURNING`, so a key comes from `LastInsertId`, and other database-filled columns are read back with a second query. Rows with generated keys go in one at a time there, in both `SaveChanges` and `InsertMany`.
+MySQL has no `RETURNING`, so a key comes from `LastInsertId`, and other database-filled columns are read back with a second query. Rows with generated keys go in one at a time there, in both `SaveChanges` and `InsertMany`. That query finds the row by its key, so a model with no key keeps the zero values it was given in its database-filled columns there, and a key the database fills other than through `AUTO_INCREMENT`, such as a `Default` on the key, is refused with `ant.ErrUnsupported`.
+
+After an update, the columns a model marks `readonly`, generated ones and those a trigger keeps, are read back by key in the same transaction on every database. A `SELECT` is used rather than `RETURNING`, since SQLite's `RETURNING` leaves out what triggers change and SQL Server refuses `OUTPUT` on a table with a trigger.
 
 SQL Server reads a key back with `OUTPUT`, which it refuses on a table with triggers.
 

@@ -3,7 +3,7 @@ title: Sessions
 description: One tracking context per unit of work, and what happens when two operations share one.
 ---
 
-A context that tracks changes serves one operation at a time. A session is a context on the same pool with a tracker of its own, so take one per request, per job, or per goroutine. Call `ant.Open` once at startup.
+A context that tracks changes serves one operation at a time. A session is a context on the same pool with a tracker of its own, so take one per request, per job, or per goroutine. Call `ant.Open` once at startup: the context it returns doesn't track, and is the one to share.
 
 ## One per request
 
@@ -38,29 +38,20 @@ UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 
 Each session saves only its own changes, and many run at once. Observers registered on the root are shared. A session needs no closing.
 
+A session takes the root's settings, and options change them for that session alone: a logger, interceptors or replicas given to `ant.Session(db, ...)` add to the root's, for every statement the session runs, in a transaction or not.
+
 :::warning[Close the root only]
 
 A session shares the root's pool, so closing a session closes it for everyone. Close only the context from `Open`.
 
 :::
 
-## Keep the shared context out of tracking
+## The shared context doesn't track {#keep-the-shared-context-out-of-tracking}
 
-`ant.Open` gives a context that tracks, so handlers that use it directly share one tracker ([two operations at once](#two-operations-at-once)). Open it with tracking off and turn tracking on in the sessions that save:
-
-```go
-db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
-
-// spot-next-line
-session := ant.Session(db, ant.WithTracking(true))
-```
-
-A session inherits the root's settings, so on a tracking-off root it has tracking off and `SaveChanges` has nothing to save.
-
-Reads, bulk `Update` and `Delete`, and `Insert` don't touch a tracker, so a context with tracking off is safe to share between goroutines:
+The context `ant.Open` returns doesn't track, so handlers and jobs can share it: reads, `Insert`, `Upsert`, and bulk `Update` and `Delete` don't touch a tracker.
 
 ```go
-// A background job on the shared, tracking-off context.
+// A background job on the shared context.
 func purge(ctx context.Context) error {
 	_, err := db.Posts.Where(ant.Eq(&Posts.Published, false)).Delete(ctx)
 	// DELETE FROM "posts" WHERE "posts"."published" = $1
@@ -69,7 +60,15 @@ func purge(ctx context.Context) error {
 }
 ```
 
-One exception: `ant.Add` and `ant.Attach` fill the tracker even when tracking is off. Once a tracking-off context holds an entity, it is no longer safe to share.
+`SaveChanges`, `ant.Add`, `ant.Attach`, `ant.MarkModified`, `ant.Remove` and `ant.TrackGraph` on it return `ant.ErrNoTracking`, rather than saving nothing:
+
+```go
+err := db.SaveChanges(ctx)
+// ant: this context does not track changes, so there is nothing to save;
+// use a session, ant.Session(db), for a unit of work
+```
+
+A session tracks unless you give it `ant.WithTracking(false)`. `ant.WithTracking(true)` on `Open` makes the root track, for a script or a test that does one thing at a time.
 
 ## Two operations at once
 
@@ -78,12 +77,18 @@ Every load returns the tracker's one instance of a row, and `Include` writes the
 While one operation uses the tracker, another gets `ant.ErrConcurrentUse` at once instead of waiting.
 
 ```go
-// db tracks, and two requests call this at the same time.
-user, err := db.Users.Include(&Users.Posts).Find(ctx, id)
+// shared is one session, and two requests call this at the same time.
+user, err := shared.Users.Include(&Users.Posts).Find(ctx, id)
 if errors.Is(err, ant.ErrConcurrentUse) {
 	// the other request got the tracker first
 }
 ```
+
+{/*
+```go
+var shared *AppDB
+```
+*/}
 
 Fix it with a session per goroutine, including parallel work inside one request:
 
@@ -92,7 +97,7 @@ var wg sync.WaitGroup
 
 for _, id := range userIDs {
 	wg.Go(func() {
-		session := ant.Session(db, ant.WithTracking(true))
+		session := ant.Session(db)
 
 		user, err := session.Users.Find(ctx, id)
 		if err != nil {
@@ -120,8 +125,9 @@ var userIDs []int64
 | --- | --- |
 | Tracked reads: `All`, `First`, `Single`, `Find` (also from the identity map), `Include` | When tracking is on |
 | `SaveChanges` | Always |
-| `Insert`, `Upsert`, `DeleteByID`, `Load`, `LoadMissing`, `Reload` | When tracking is on, or the tracker holds anything |
-| `ant.Add`, `Attach`, `Remove`, `MarkModified`, `Detach`, `TrackGraph`, `Tracked`, `Entry`, `ClearTracked`, `HasChanges`, `DebugTracked` | Always |
+| `Insert`, `Upsert`, `DeleteByID`, `Load`, `LoadMissing`, `Reload` | When tracking is on |
+| `ant.Add`, `Attach`, `Remove`, `MarkModified`, `TrackGraph` | When tracking is on; otherwise they return `ant.ErrNoTracking` |
+| `Detach`, `Tracked`, `Entry`, `ClearTracked`, `HasChanges`, `DebugTracked` | Always |
 | Reads with `NoTracking`, `Select`, `Project` or `ant.Raw`, and bulk `Update` and `Delete` | Never |
 
 Each of these takes the `ctx` you pass, which is how a nested call knows it belongs to the same operation. `Chunk` claims the tracker for one batch at a time, so the callback can run its own queries.

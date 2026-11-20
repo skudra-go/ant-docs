@@ -22,7 +22,7 @@ ant and GORM both sit on `database/sql`, so they can share one pool, and one str
 | `Create(&user)` | `Insert(ctx, user)` | |
 | `Save(&user)` | Change a loaded entity, then `SaveChanges(ctx)` | [Writes only the changed columns](#save-and-updates) |
 | `Model(&user).Updates(User{...})` | `SaveChanges(ctx)`, or `Where(...).Update(ctx, ant.Set(...))` | Zero values are written |
-| `Delete(&user)` | `ant.Remove(ctx, db, user)`, then `SaveChanges(ctx)` | Runs delete hooks |
+| `Delete(&user)` | `ant.Remove(ctx, session, user)`, then `SaveChanges(ctx)` | Runs delete hooks |
 | `Delete(&User{}, id)` | `DeleteByID(ctx, id)` | No hooks. A missing row is `ant.ErrNotFound` |
 | `Transaction(func(tx *gorm.DB) error {...})` | `Tx(ctx, func(tx *AppDB) error {...})` | |
 | `BeforeCreate(tx *gorm.DB) error` | `BeforeInsert(ctx context.Context) error` | [Hooks get a context, not a transaction](#hooks) |
@@ -68,18 +68,20 @@ db.Delete(&user)
 ```
 
 ```go title="ant"
-err := db.Users.Insert(ctx, user)
+session := ant.Session(db) // one per request
+
+err := session.Users.Insert(ctx, user)
 
 user.Name = "Ada L."
-err = db.SaveChanges(ctx) // UPDATE "users" SET "name" = $1, "updated_at" = $2 ...
+err = session.SaveChanges(ctx) // UPDATE "users" SET "name" = $1, "updated_at" = $2 ...
 
 n, err := db.Users.Where(ant.Eq(&Users.ID, user.ID)).Update(ctx, ant.Set(&Users.Age, 37))
 
-err = ant.Remove(ctx, db, user)
-err = db.SaveChanges(ctx)
+err = ant.Remove(ctx, session, user)
+err = session.SaveChanges(ctx)
 ```
 
-`SaveChanges` saves what the context loaded or inserted, so give each request its own [session](/tracking/sessions). For lists you only read, `NoTracking()` skips the copy ant keeps of each row.
+`SaveChanges` saves what a [session](/tracking/sessions) loaded or inserted, so give each request its own. The context `ant.Open` returns doesn't track, as a `*gorm.DB` doesn't: share it for reads and bulk writes, and `SaveChanges` on it returns `ant.ErrNoTracking`. For lists a session only reads, `NoTracking()` skips the copy it keeps of each row.
 
 ## Transactions
 

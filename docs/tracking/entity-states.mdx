@@ -5,7 +5,13 @@ description: Mark entities as new, saved, changed or removed, and inspect what t
 
 `SaveChanges` writes each tracked entity according to its state. ant sets the state on load, insert and edit. Set it yourself for a struct that didn't come from a query.
 
-These calls take a `ctx`, return an error and claim the tracker, so call them on a [session](/tracking/sessions) that no other goroutine is using.
+These calls take a `ctx`, return an error and claim the tracker, so call them on a [session](/tracking/sessions) that no other goroutine is using. On the context `ant.Open` returns, which doesn't track, `Add`, `Attach`, `MarkModified`, `Remove` and `TrackGraph` return `ant.ErrNoTracking`.
+
+{/*
+```go
+var session *AppDB
+```
+*/}
 
 ## The states
 
@@ -22,10 +28,11 @@ These calls take a `ctx`, return an error and claim the tracker, so call them on
 `ant.Add` marks a new entity. Adding several and saving once batches them into one `INSERT` per table.
 
 ```go
+session := ant.Session(db)
 newUser := &User{Name: "Dana", Email: "dana@example.com"}
 
-err := ant.Add(ctx, db, newUser)
-err = db.SaveChanges(ctx)
+err := ant.Add(ctx, session, newUser)
+err = session.SaveChanges(ctx)
 // INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
 // VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id"
 ```
@@ -33,8 +40,8 @@ err = db.SaveChanges(ctx)
 ## Delete on the next save
 
 ```go
-err := ant.Remove(ctx, db, user)
-err = db.SaveChanges(ctx)
+err := ant.Remove(ctx, session, user)
+err = session.SaveChanges(ctx)
 // DELETE FROM "users" WHERE "users"."id" = $1
 ```
 
@@ -45,11 +52,11 @@ err = db.SaveChanges(ctx)
 `ant.Attach` tracks an entity as it is, assuming it matches the database. Later edits save only the changed columns. Use it for a value from your own cache or a previous request.
 
 ```go
-err := ant.Attach(ctx, db, existing)
+err := ant.Attach(ctx, session, existing)
 
 existing.Age = 32
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
@@ -58,8 +65,8 @@ err = db.SaveChanges(ctx)
 `ant.MarkModified` is for a struct with no known earlier values, such as a request body. The next save writes every column the struct holds, and stamps `updated_at` with the current time, as any update does, so a body that left it out doesn't store the zero time. The same goes for an entity `TrackGraph` decides is `Modified`.
 
 ```go
-err := ant.MarkModified(ctx, db, disconnect)
-err = db.SaveChanges(ctx)
+err := ant.MarkModified(ctx, session, disconnect)
+err = session.SaveChanges(ctx)
 // UPDATE "users" SET "updated_at" = $1, "name" = $2, "email" = $3, "age" = $4, "bio" = $5
 // WHERE "users"."id" = $6
 ```
@@ -70,8 +77,8 @@ A field the body left out is written as its zero value, so use it only when the 
 
 ```go
 // spot-start
-err := ant.Detach(ctx, db, user) // forget this entity and its unsaved changes
-err = db.ClearTracked(ctx)       // forget everything
+err := ant.Detach(ctx, session, user) // forget this entity and its unsaved changes
+err = session.ClearTracked(ctx)       // forget everything
 // spot-end
 ```
 
@@ -90,7 +97,7 @@ var (
 
 ```go
 // spot-next-line
-entry, err := ant.Entry(ctx, db, user)
+entry, err := ant.Entry(ctx, session, user)
 
 fmt.Println(entry.State())   // Modified
 fmt.Println(entry.Changed()) // [Age]
@@ -103,10 +110,10 @@ before, err := ant.Original(entry, &Users.Age)
 
 An untracked entity is `Detached`, and `Original` on it returns `ant.ErrNotTracked`.
 
-`ant.Tracked[User](ctx, db)` lists the tracked entities of one type, oldest first. `db.DebugTracked(ctx)` returns the tracker as text:
+`ant.Tracked[User](ctx, session)` lists the tracked entities of one type, oldest first. `session.DebugTracked(ctx)` returns the tracker as text:
 
 ```go
-text, err := db.DebugTracked(ctx)
+text, err := session.DebugTracked(ctx)
 // User {1} Modified Age
 ```
 
@@ -116,7 +123,7 @@ text, err := db.DebugTracked(ctx)
 
 ```go
 // spot-start
-err := ant.TrackGraph(ctx, db, incoming, func(n ant.GraphNode) ant.State {
+err := ant.TrackGraph(ctx, session, incoming, func(n ant.GraphNode) ant.State {
 	if n.HasKey {
 		return ant.Modified
 	}
@@ -125,7 +132,7 @@ err := ant.TrackGraph(ctx, db, incoming, func(n ant.GraphNode) ant.State {
 })
 // spot-end
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "users" SET ... WHERE "users"."id" = $6
 // UPDATE "posts" SET ... WHERE "posts"."id" = $5
 // INSERT INTO "posts" (...) VALUES (...) RETURNING "id"

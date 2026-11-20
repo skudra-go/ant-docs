@@ -23,7 +23,7 @@ Tags combine with commas, as in `ant:"default='new',immutable"`.
 
 ## Read a value the database generates
 
-`readonly` suits generated columns and trigger-set values. ant leaves the column out of every write and copies the value back after an insert.
+`readonly` suits generated columns and trigger-set values. ant leaves the column out of every write and reads the value back after an insert and after an update, so a column a trigger keeps, such as `last_update`, holds what the row does, and can serve as a [token](/lifecycle/optimistic-concurrency#a-token-you-manage). After an update the row is read by its key in the same transaction, since SQLite's `RETURNING` leaves out what a trigger changes.
 
 ```go
 type Account struct {
@@ -78,7 +78,7 @@ type Account struct {
 account.CreatedBy = "someone else"
 
 // spot-next-line
-changed, err := db.HasChanges(ctx) // false
+changed, err := session.HasChanges(ctx) // false
 ```
 
 Explicit writes keep the same rule: a bulk `Update` such as `db.Accounts.Where(...).Update(ctx, ant.Set(&Accounts.CreatedBy, "x"))`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it.
@@ -86,6 +86,8 @@ Explicit writes keep the same rule: a bulk `Update` such as `db.Accounts.Where(.
 {/*
 ```go
 var account *Account
+
+var session *RolesDB
 
 var Accounts = ant.Fields[Account]()
 

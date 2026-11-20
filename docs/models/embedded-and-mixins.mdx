@@ -59,11 +59,12 @@ type ShopsDB struct {
 Tracking works per column, so changing one field writes one column:
 
 ```go
-shop, err := db.Shops.Find(ctx, id)
+session := ant.Session(db)
+shop, err := session.Shops.Find(ctx, id)
 
 shop.Billing.Zip = "9"
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "shops" SET "billing_zip" = $1 WHERE "shops"."id" = $2
 ```
 

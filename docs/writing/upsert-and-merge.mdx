@@ -46,7 +46,9 @@ wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&Users.Email))
 // RETURNING "id", "created_at", "updated_at", "name", "email", "age", "bio"
 ```
 
-`OnConflict` names the unique column. By default every column except the key, the constraint's own and `CreatedAt` is overwritten, and your struct receives the stored row, key included. A zero value overwrites too. `UpdatedAt` takes the current time on the update branch of every upsert, unless the clause assigns it.
+`OnConflict` names the unique column. By default every column except the key, the constraint's own and `CreatedAt` is overwritten, and your struct receives the stored row, key included. A zero value overwrites too, also in a field with a `default`: the insert leaves that zero to the database's default, and the update writes the zero, as `Update` does, so a sync that sends `Active: false` turns the flag off. `UpdatedAt` takes the current time on the update branch of every upsert, unless the clause assigns it.
+
+When the column is unique through a [partial index](/lifecycle/soft-deletes#reuse-a-unique-value), the model's index gives the condition, and the statement repeats it: `ON CONFLICT ("email") WHERE deleted_at IS NULL`.
 
 Running it twice leaves one row, so a feed can be reapplied after a crash and changed rows are updated.
 

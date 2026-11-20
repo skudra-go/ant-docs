@@ -30,9 +30,8 @@ Use `tx` inside the function: anything you do on `db` runs outside the transacti
 
 ```go
 func transfer(ctx context.Context, db *BankDB, from, to, amount int64) error {
-	return db.Tx(ctx, func(tx *BankDB) error {
-		// A session inside the transaction has a tracker of its own.
-		tx = ant.Session(tx, ant.WithTracking(true))
+	// A session tracks what the transfer loads, so SaveChanges can write it.
+	return ant.Session(db).Tx(ctx, func(tx *BankDB) error {
 
 		source, err := tx.Accounts.Where(ant.Eq(&Accounts.ID, from)).ForUpdate().Single(ctx)
 		if err != nil {
@@ -91,10 +90,12 @@ var ErrInsufficientFunds = errors.New("insufficient funds")
 
 ## SaveChanges in a transaction
 
-`SaveChanges` always runs in a transaction. Outside one it opens its own. Inside one it uses a savepoint, so a failed save undoes only itself.
+`SaveChanges` always runs in a transaction. Outside one it opens its own. Inside one it uses a savepoint, so a failed save undoes only itself. A transaction of a [session](/tracking/sessions) tracks as the session does; one of the context `ant.Open` returns doesn't, and `SaveChanges` there returns `ant.ErrNoTracking`.
 
 ```go
-err := db.Tx(ctx, func(tx *AppDB) error {
+session := ant.Session(db)
+
+err := session.Tx(ctx, func(tx *AppDB) error {
 	user, err := tx.Users.Find(ctx, id)
 	if err != nil {
 		return err
@@ -110,12 +111,14 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 // RELEASE SAVEPOINT ant_sp_1
 ```
 
-If the transaction then rolls back, the tracker takes the save back too: a rolled-back insert has its generated key and timestamps cleared and is inserted by the next `SaveChanges`, and a rolled-back update is pending again.
+If the transaction then rolls back, the tracker takes the save back too. An entity the transaction began tracking, by loading, adding or inserting it, is forgotten, since what it read or wrote is gone with the rollback. An entity tracked before the transaction stays tracked: a rolled-back insert has its generated key and timestamps cleared and is inserted by the next `SaveChanges`, and a rolled-back update is pending again.
 
 ```go
+session := ant.Session(db)
+user, err := session.Users.Find(ctx, id) // tracked before the transaction
 user.Age = 50
 
-err := db.Tx(ctx, func(tx *AppDB) error {
+err = session.Tx(ctx, func(tx *AppDB) error {
 	if err := tx.SaveChanges(ctx); err != nil {
 		return err
 	}
@@ -123,9 +126,11 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 	return errors.New("changed my mind")
 })
 
-has, _ := db.HasChanges(ctx)
+has, _ := session.HasChanges(ctx)
 // has is true: the update was rolled back, so it is pending again
 ```
+
+So load inside the transaction what it changes: a rollback then leaves nothing of it in the session.
 
 `ant.WithoutAutoTx()` stops `SaveChanges` and `Insert` from opening transactions of their own, so a failure partway leaves earlier statements in place. Those rows count as saved, so calling `SaveChanges` again writes only the rest. Use it only to control transactions yourself.
 

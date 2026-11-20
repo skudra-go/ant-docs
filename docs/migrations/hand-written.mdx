@@ -41,7 +41,7 @@ CREATE EXTENSION IF NOT EXISTS citext;
 
 ## Views and functions
 
-Files in `migrations/code` run after the versioned ones, in name order, and again whenever they change, so the file stays the one definition of the view or function. Number them if one depends on another, as in `10_views/` and `20_functions/`. Each file must be safe to run again.
+Files in `migrations/code` run after the versioned ones, in name order, and again whenever they change, and after any versioned migration that runs later, since it may have dropped the view to change a column the view reads. The file stays the one definition of the view or function. Number them if one depends on another, as in `10_views/` and `20_functions/`. Each file must be safe to run again.
 
 ```sql title="migrations/code/10_post_stats.sql"
 -- spot-start
@@ -81,7 +81,11 @@ Put it in a package that `cmd/migrate` and any program calling `migrate.Up` both
 CREATE INDEX CONCURRENTLY "posts_title_idx" ON "posts" ("title");
 ```
 
-If such a file fails partway, `up` stops until someone has looked: see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
+The directive counts only in the comments at the top of the file. One below the first statement, as when a `Render` puts a `SET` first, would not be read, so `up` refuses the file.
+
+A file that runs in ant's transaction can't hold a `BEGIN`, `COMMIT` or `ROLLBACK` of its own: its `COMMIT` would end ant's transaction, and a failure after it would leave half the file applied. `up` refuses such a file before anything of it runs. A file from another tool that manages its own transaction takes `-- ant:no-transaction`. `ROLLBACK TO` a savepoint stays inside the transaction and is fine.
+
+If a file without a transaction fails partway, or the process running `up` dies in it, `up` stops until someone has looked: see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
 
 ## Seed data
 
@@ -107,6 +111,6 @@ go run ./cmd/migrate seed
 
 ## Tests and prototypes
 
-`db.EnsureCreated(ctx)` builds tables straight from the structs, and `db.EnsureDeleted(ctx)` removes them. `go run ./cmd/migrate reset` wipes a local database and applies everything. It asks for the database's name first, or takes `--confirm name`.
+`db.EnsureCreated(ctx)` builds tables straight from the structs, with the enums and sequences they use, and `db.EnsureDeleted(ctx)` removes them. `go run ./cmd/migrate reset` wipes a local database and applies everything. It asks for the database's name first, or takes `--confirm name`.
 
 <Tests path="migrations/data_test.go" />

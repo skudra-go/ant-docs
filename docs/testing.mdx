@@ -74,6 +74,8 @@ func TestSignup(t *testing.T) {
 
 Code that commits for real, such as through a second connection, doesn't see the test's writes, so a concurrency test needs a database of its own. An isolated context is one connection, so don't share it between goroutines.
 
+The isolated context tracks as the context you give it does, so a test that calls `SaveChanges` isolates a session: `anttest.Isolate(t, ant.Session(shared))`. The rollback forgets what the test's transaction began tracking, so a later test never saves an earlier one's rows.
+
 ## Make entities with factories
 
 A factory makes valid entities, so a test spells out only what it needs. Its number argument keeps values unique.
