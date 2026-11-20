@@ -3,12 +3,20 @@ title: SaveChanges
 description: Change what you loaded, and SaveChanges writes only the differences, in one transaction.
 ---
 
-ant snapshots each entity it loads. `SaveChanges` compares every tracked entity with its snapshot and writes the differences: one `UPDATE` per changed entity, with only the changed columns, plus any inserts and deletes.
+A [session](/tracking/sessions) snapshots each entity it loads. `SaveChanges` compares every tracked entity with its snapshot and writes the differences: one `UPDATE` per changed entity, with only the changed columns, plus any inserts and deletes.
+
+{/*
+```go
+var session *AppDB
+```
+*/}
 
 ## Update what you loaded
 
 ```go
-user, err := db.Users.Find(ctx, id)
+session := ant.Session(db) // one per request or job
+
+user, err := session.Users.Find(ctx, id)
 if err != nil {
 	return err
 }
@@ -16,7 +24,7 @@ if err != nil {
 // spot-start
 user.Age++
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // spot-end
 // UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
@@ -31,7 +39,7 @@ user.Age = 0
 user.Bio = nil
 // spot-end
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "users" SET "age" = $1, "bio" = $2, "updated_at" = $3 WHERE "users"."id" = $4
 ```
 
@@ -50,14 +58,14 @@ For a value where deep equality is wrong, see [custom comparers](#custom-compare
 
 ## Save several entities
 
-`SaveChanges` covers everything the context tracks, with parents before children on insert and children first on delete.
+`SaveChanges` covers everything the session tracks, with parents before children on insert and children first on delete.
 
 ```go
 // spot-start
 user.Age = 30
 post.Title = "Edited"
 
-err := db.SaveChanges(ctx)
+err := session.SaveChanges(ctx)
 // spot-end
 // UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 // UPDATE "posts" SET "title" = $1, "updated_at" = $2 WHERE "posts"."id" = $3
@@ -67,10 +75,10 @@ New entities are batched into one `INSERT` per table and fill in their keys:
 
 ```go
 // spot-start
-err := ant.Add(ctx, db, &User{Name: "N1", Email: "n1@example.com"})
-err = ant.Add(ctx, db, &User{Name: "N2", Email: "n2@example.com"})
+err := ant.Add(ctx, session, &User{Name: "N1", Email: "n1@example.com"})
+err = ant.Add(ctx, session, &User{Name: "N2", Email: "n2@example.com"})
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // spot-end
 // INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio")
 // VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12) RETURNING "id"
@@ -78,17 +86,17 @@ err = db.SaveChanges(ctx)
 
 ## What is tracked
 
-`All`, `First`, `Single` and `Find` track their results, and so do `Insert` and the rows an `Include` loads. `All` returns pointers, so changes in a `range` count.
+On a session, `All`, `First`, `Single` and `Find` track their results, and so do `Insert` and the rows an `Include` loads. `All` returns pointers, so changes in a `range` count.
 
 ```go
-users, err := db.Users.All(ctx)
+users, err := session.Users.All(ctx)
 
 // spot-start
 for _, user := range users {
 	user.Age = 50
 }
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // spot-end
 ```
 
@@ -109,18 +117,18 @@ These aren't tracked, so changing them saves nothing:
 first := &User{Name: "N1", Email: "n1@example.com"}
 second := &User{Name: "N2", Email: "alice@example.com"} // taken
 
-err := ant.Add(ctx, db, first)
-err = ant.Add(ctx, db, second)
+err := ant.Add(ctx, session, first)
+err = ant.Add(ctx, session, second)
 
 // spot-next-line
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // ERROR: duplicate key value violates unique constraint "users_email_key" (SQLSTATE 23505)
 ```
 
 After a failure the entities are as they were before the call:
 
 - Keys the save generated are cleared, so `first.ID` and `second.ID` are 0 again, not the ids of rows that were rolled back.
-- `db.HasChanges(ctx)` is still true.
+- `session.HasChanges(ctx)` is still true.
 
 Fix the cause and call `SaveChanges` again to insert both users with new keys.
 
@@ -128,15 +136,15 @@ Fix the cause and call `SaveChanges` again to insert both users with new keys.
 first := &User{Name: "N1", Email: "n1@example.com"}
 second := &User{Name: "N2", Email: "alice@example.com"} // taken
 
-err := ant.Add(ctx, db, first)
-err = ant.Add(ctx, db, second)
+err := ant.Add(ctx, session, first)
+err = ant.Add(ctx, session, second)
 
-err = db.SaveChanges(ctx) // fails, nothing saved, first.ID == 0
+err = session.SaveChanges(ctx) // fails, nothing saved, first.ID == 0
 
 second.Email = "n2@example.com"
 
 // spot-next-line
-err = db.SaveChanges(ctx) // inserts both
+err = session.SaveChanges(ctx) // inserts both
 ```
 
 A save that failed on a deadlock or serialization conflict can [run again](/transactions/retries) by itself.
@@ -175,7 +183,7 @@ Changing a primary key on a tracked entity returns `ant.ErrKeyChanged`. Add a ne
 ```go
 user.Age = 60
 
-has, err := db.HasChanges(ctx)
+has, err := session.HasChanges(ctx)
 // has is true
 ```
 
@@ -210,14 +218,14 @@ Entities loaded inside stay in the tracker with their edits, so pass a throwaway
 
 ## One instance per row
 
-A context holds one instance per row, so a later query returns the same pointer, with your unsaved changes.
+A session holds one instance per row, so a later query returns the same pointer, with your unsaved changes.
 
 ```go
-first, err := db.Users.Find(ctx, id)
+first, err := session.Users.Find(ctx, id)
 
 first.Age = 70
 
-again, err := db.Users.Where(ant.Eq(&Users.ID, id)).Single(ctx)
+again, err := session.Users.Where(ant.Eq(&Users.ID, id)).Single(ctx)
 
 // spot-next-line
 fmt.Println(first == again, again.Age) // true 70
@@ -227,17 +235,14 @@ A bulk `Update` doesn't touch tracked entities. [`Reload`](/writing/update-and-d
 
 ## Turning it off
 
-`NoTracking` opts one query out, in any position in the chain. `WithTracking(false)` turns tracking off for a whole context.
+`NoTracking` opts one query out, in any position in the chain, so a session can read a long list without keeping it.
 
 ```go
-// spot-start
-db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithTracking(false))
-
-session := ant.Session(db, ant.WithTracking(true))
-// spot-end
+// spot-next-line
+users, err := session.Users.NoTracking().All(ctx)
 ```
 
-A context with tracking off never grows and is safe to share between goroutines. Tracking lives in the [sessions](/tracking/sessions) that save.
+The context `ant.Open` returns doesn't track at all: it never grows and is safe to share between goroutines, and `SaveChanges` on it returns `ant.ErrNoTracking`. Tracking lives in the [sessions](/tracking/sessions) that save.
 
 ## Custom comparers
 
@@ -261,9 +266,9 @@ func sameItems(a, b ant.JSON[[]string]) bool {
 var Taggeds = ant.Fields[Tagged]()
 ```
 
-:::warning[A context remembers everything it loads]
+:::warning[A session remembers everything it loads]
 
-A tracker keeps growing until it is cleared, and a tracking context serves one operation at a time. Use a [session](/tracking/sessions) per unit of work.
+A tracker keeps growing until it is cleared, and a tracking context serves one operation at a time. Use a [session](/tracking/sessions) per unit of work, and let it go when the work is done.
 
 :::
 

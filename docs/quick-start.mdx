@@ -131,9 +131,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// A session is one unit of work: it remembers what it loads, so a changed
+	// entity can be saved. The context from Open is shared and does not track.
+	// spot-next-line
+	session := ant.Session(db)
+
 	// Insert Alice and her posts on the first run, and find her on later ones.
 	// spot-start
-	alice, created, err := db.Users.FirstOrCreate(
+	alice, created, err := session.Users.FirstOrCreate(
 		ctx,
 		&User{
 			Name:  "Alice",
@@ -154,7 +159,7 @@ func main() {
 
 	// Load every adult with their posts. ant.Gte(&Users.Age, "18") wouldn't compile.
 	// spot-start
-	adults, err := db.Users.
+	adults, err := session.Users.
 		Where(ant.Gte(&Users.Age, 18)).
 		Include(&Users.Posts). // one query for every user's posts
 		OrderBy(&Users.Name).
@@ -172,7 +177,7 @@ func main() {
 	// spot-start
 	adults[0].Age++
 
-	err = db.SaveChanges(ctx)
+	err = session.SaveChanges(ctx)
 	// spot-end
 	if err != nil {
 		log.Fatal(err)
@@ -241,9 +246,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// A session is one unit of work: it remembers what it loads, so a changed
+	// entity can be saved. The context from Open is shared and does not track.
+	// spot-next-line
+	session := ant.Session(db)
+
 	// Insert Alice and her posts on the first run, and find her on later ones.
 	// spot-start
-	alice, created, err := db.Users.FirstOrCreate(ctx, &User{
+	alice, created, err := session.Users.FirstOrCreate(ctx, &User{
 		Name:  "Alice",
 		Email: "alice@example.com",
 		Age:   30,
@@ -260,7 +270,7 @@ func main() {
 
 	// Load every adult with their posts.
 	// spot-start
-	adults, err := db.Users.
+	adults, err := session.Users.
 		Where(ant.Gte(&Users.Age, 18)).
 		Include(&Users.Posts).
 		OrderBy(&Users.Name).
@@ -278,7 +288,7 @@ func main() {
 	// spot-start
 	adults[0].Age++
 
-	err = db.SaveChanges(ctx)
+	err = session.SaveChanges(ctx)
 	// spot-end
 	if err != nil {
 		log.Fatal(err)
@@ -358,7 +368,7 @@ SELECT "users"."id", "users"."created_at", "users"."updated_at", "users"."name",
 SELECT "posts"."id", "posts"."created_at", "posts"."updated_at", "posts"."user_id", "posts"."title" FROM "posts" WHERE "posts"."user_id" IN (?)
 ```
 
-**`SaveChanges`** compared Alice with the copy ant kept at load time. It wrote only `age` and the timestamp:
+**`SaveChanges`** compared Alice with the copy the session kept at load time. It wrote only `age` and the timestamp:
 
 ```sql
 UPDATE "users" SET "age" = ?, "updated_at" = ? WHERE "users"."id" = ?
@@ -398,7 +408,7 @@ SELECT ... FROM "users" WHERE "users"."age" >= $1 ORDER BY "users"."name"
 SELECT ... FROM "posts" WHERE "posts"."user_id" IN ($1)
 ```
 
-**`SaveChanges`** compared Alice with the copy ant kept at load time. It wrote only `age` and the timestamp:
+**`SaveChanges`** compared Alice with the copy the session kept at load time. It wrote only `age` and the timestamp:
 
 ```sql
 UPDATE "users" SET "age" = $1, "updated_at" = $2 WHERE "users"."id" = $3
