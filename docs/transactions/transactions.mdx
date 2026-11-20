@@ -186,7 +186,7 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 })
 // SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2
 // INSERT INTO "users" (...) VALUES (...) RETURNING "id"       -- loses the race, 23505
-// SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2 FOR SHARE
+// SELECT ... FROM "users" WHERE "users"."email" = $1 LIMIT $2 FOR UPDATE
 ```
 
 The failed insert runs in a savepoint, so the transaction stays usable.
