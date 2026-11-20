@@ -78,7 +78,7 @@ type Account struct {
 account.CreatedBy = "someone else"
 
 // spot-next-line
-changed, err := db.HasChanges(ctx) // false
+changed, err := session.HasChanges(ctx) // false
 ```
 
 Explicit writes keep the same rule: a bulk `Update` such as `db.Accounts.Where(...).Update(ctx, ant.Set(&Accounts.CreatedBy, "x"))`, an upsert's `DoUpdate` or `Set`, a merge's `WhenMatched` and `UpdateMany` refuse an immutable, readonly or computed field with an error naming it.
@@ -86,6 +86,8 @@ Explicit writes keep the same rule: a bulk `Update` such as `db.Accounts.Where(.
 {/*
 ```go
 var account *Account
+
+var session *RolesDB
 
 var Accounts = ant.Fields[Account]()
 

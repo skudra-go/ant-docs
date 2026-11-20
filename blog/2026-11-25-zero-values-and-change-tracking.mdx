@@ -55,12 +55,13 @@ Writing every column has its own cost. GORM's `Save` does it too. Two requests l
 You change the loaded value and call `SaveChanges`:
 
 ```go
-user, err := db.Users.Find(ctx, id)
+session := ant.Session(db)
+user, err := session.Users.Find(ctx, id)
 
 user.Age = 0
 user.Active = false
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 ```
 
 ```sql
@@ -147,7 +148,7 @@ SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2
 UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
-A session shares the root's connection pool and needs no closing. If you'd rather have a shared context that can never trip this rule, open the root with `ant.WithTracking(false)` and turn tracking on only in the sessions that save. Reads, bulk updates, bulk deletes and inserts don't touch a tracker, so a tracking-off context is safe to share.
+A session shares the root's connection pool and needs no closing. The root, the context `Open` returns, doesn't track, so it can never trip this rule: reads, bulk updates, bulk deletes and inserts don't touch a tracker, and `SaveChanges` on it returns `ant.ErrNoTracking`, which says to use a session.
 
 ## What the snapshot costs
 

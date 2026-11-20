@@ -113,15 +113,16 @@ To finish, rewrite the rows that still use the old key, then drop it. A row whos
 
 ```go
 old := ant.SQLCond("ssn NOT LIKE ?", "2027:%")
+session := ant.Session(db)
 
-err := db.Patients.Where(old).ChunkByKey(ctx, 500, func(batch []*Patient) error {
+err := session.Patients.Where(old).ChunkByKey(ctx, 500, func(batch []*Patient) error {
 	for _, p := range batch {
-		if err := ant.MarkModified(ctx, db, p); err != nil {
+		if err := ant.MarkModified(ctx, session, p); err != nil {
 			return err
 		}
 	}
 
-	return db.SaveChanges(ctx)
+	return session.SaveChanges(ctx)
 })
 // SELECT ... FROM "patients" WHERE (ssn NOT LIKE $1) ORDER BY "patients"."id" LIMIT $2
 // UPDATE "patients" SET "ssn" = $1, "ssn_hash" = $2 WHERE "patients"."id" = $3

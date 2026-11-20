@@ -24,10 +24,10 @@ type AppDB struct {
 
 ## Lock a row for update
 
-Read the row with `ForUpdate`, change it, and save in the same transaction. Others who try to lock or write the row wait.
+Read the row with `ForUpdate`, change it, and save in the same transaction of a [session](/tracking/sessions). Others who try to lock or write the row wait. On a session that already holds the row, a locking read refreshes that instance with the row as it stands under the lock, and returns `ant.ErrConcurrency` if the instance has unsaved changes and the row moved on.
 
 ```go
-err := db.Tx(ctx, func(tx *AppDB) error {
+err := ant.Session(db).Tx(ctx, func(tx *AppDB) error {
 	user, err := tx.Users.Where(ant.Eq(&Users.ID, id)).ForUpdate().Single(ctx)
 	// SELECT ... FROM "users" WHERE "users"."id" = $1 LIMIT $2 FOR UPDATE
 	if err != nil {
@@ -56,7 +56,7 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 `SkipLocked` lets each worker claim a row nobody else holds.
 
 ```go
-err := db.Tx(ctx, func(tx *AppDB) error {
+err := ant.Session(db).Tx(ctx, func(tx *AppDB) error {
 	job, err := tx.Jobs.OrderBy(&Jobs.ID).ForUpdate().SkipLocked().First(ctx)
 	// SELECT ... FROM "jobs" ORDER BY "jobs"."id" LIMIT $1 FOR UPDATE SKIP LOCKED
 	if err != nil {

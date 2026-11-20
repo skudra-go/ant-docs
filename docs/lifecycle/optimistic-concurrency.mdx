@@ -28,16 +28,19 @@ type WikiDB struct {
 }
 
 var page *Page
+
+var session *WikiDB
 ```
 */}
 
 A save changes the row only if it still has the version you loaded:
 
 ```go
-a, err := db.Pages.Find(ctx, id)
+session := ant.Session(db)
+a, err := session.Pages.Find(ctx, id)
 
 a.Title = "first"
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "pages" SET "title" = $1, "version" = $2
 // WHERE "pages"."id" = $3 AND "pages"."version" = $4
 // -- $1 = "first", $2 = 2, $3 = 1, $4 = 1
@@ -68,7 +71,7 @@ err = two.SaveChanges(ctx) // ant.ErrConcurrency
 The error is an `*ant.ConcurrencyError`, naming the model and key. Reload the row, then let the user retry.
 
 ```go
-err := db.SaveChanges(ctx)
+err := session.SaveChanges(ctx)
 
 // spot-start
 var conflict *ant.ConcurrencyError
@@ -76,7 +79,7 @@ var conflict *ant.ConcurrencyError
 if errors.As(err, &conflict) {
 	fmt.Println(conflict.Model, conflict.Key)
 
-	return db.Pages.Reload(ctx, page)
+	return session.Pages.Reload(ctx, page)
 }
 // spot-end
 ```
@@ -85,7 +88,7 @@ A handler maps it to a 409:
 
 ```go
 func save(w http.ResponseWriter, r *http.Request) {
-	err := db.SaveChanges(r.Context())
+	err := session.SaveChanges(r.Context())
 
 	if errors.Is(err, ant.ErrConcurrency) {
 		http.Error(w, "someone else changed this page, reload and try again", http.StatusConflict)
@@ -94,6 +97,32 @@ func save(w http.ResponseWriter, r *http.Request) {
 	}
 }
 ```
+
+## Check the version a client saw
+
+A form or an API client sends back the version it loaded. Copy it into the entity you load, and the save checks that version, not the one just read, so an edit made from a stale form fails:
+
+```go
+page, err := session.Pages.Find(ctx, id)
+
+page.Title = input.Title
+// spot-next-line
+page.Version = input.Version // the version the client saw
+
+err = session.SaveChanges(ctx)
+// UPDATE "pages" SET "title" = $1, "version" = $2
+// WHERE "pages"."id" = $3 AND "pages"."version" = $4
+// -- $4 = input.Version: ant.ErrConcurrency if the row has moved on since
+```
+
+{/*
+```go
+var input struct {
+	Title   string
+	Version int64
+}
+```
+*/}
 
 ## Every write moves the version
 

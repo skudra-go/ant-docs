@@ -166,18 +166,20 @@ func (Grant) Configure(b *ant.ModelBuilder[Grant]) {
 
 var Grants = ant.Fields[Grant]()
 
+session := ant.Session(db)
+
 // spot-next-line
-grant, err := db.Grants.FindKey(ctx, int64(1), "write")
+grant, err := session.Grants.FindKey(ctx, int64(1), "write")
 // SELECT ... FROM "grants"
 // WHERE "grants"."user_id" = $1 AND "grants"."scope" = $2 LIMIT $3
 
 grant.Level = 3
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 // UPDATE "grants" SET "level" = $1 WHERE "grants"."user_id" = $2 AND "grants"."scope" = $3
 
-err = ant.Remove(ctx, db, grant)
-err = db.SaveChanges(ctx)
+err = ant.Remove(ctx, session, grant)
+err = session.SaveChanges(ctx)
 // DELETE FROM "grants" WHERE "grants"."user_id" = $1 AND "grants"."scope" = $2
 ```
 
@@ -209,10 +211,11 @@ var Readings = ant.Fields[Reading]()
 
 at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.FixedZone("CET", 3600))
 
-err := db.Readings.Insert(ctx, &Reading{At: at, Value: 1})
+session := ant.Session(db)
+err := session.Readings.Insert(ctx, &Reading{At: at, Value: 1})
 
 // spot-next-line
-same, err := db.Readings.Find(ctx, at.UTC()) // the tracked row, not a second copy
+same, err := session.Readings.Find(ctx, at.UTC()) // the tracked row, not a second copy
 ```
 
 ## Sequences

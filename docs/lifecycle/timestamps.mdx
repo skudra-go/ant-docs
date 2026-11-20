@@ -33,7 +33,7 @@ type Note struct {
 
 ```go
 user.Name = "Carol"
-err := db.SaveChanges(ctx)
+err := session.SaveChanges(ctx)
 // UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
@@ -48,7 +48,7 @@ Unlinking a child sets its foreign key to `NULL` with an `UPDATE`. It moves `Upd
 
 ## Set a time yourself
 
-A `CreatedAt` you set is kept on insert. An `UpdatedAt` the write sets wins over ant's, so imports and backfills keep their times:
+A `CreatedAt` you set is kept on insert. An `UpdatedAt` the write sets wins over ant's, so imports and backfills keep their times. A zero `UpdatedAt` is not a time anyone chose, such as the one a struct decoded from a request body holds, so a save stamps it with the current time:
 
 ```go
 _, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Update(ctx, ant.Set(&Users.UpdatedAt, imported))
@@ -58,6 +58,8 @@ _, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Update(ctx, ant.Set(&User
 {/*
 ```go
 var imported time.Time
+
+var session *AppDB
 ```
 */}
 

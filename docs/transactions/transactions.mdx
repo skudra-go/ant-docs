@@ -114,6 +114,7 @@ err := session.Tx(ctx, func(tx *AppDB) error {
 If the transaction then rolls back, the tracker takes the save back too. An entity the transaction began tracking, by loading, adding or inserting it, is forgotten, since what it read or wrote is gone with the rollback. An entity tracked before the transaction stays tracked: a rolled-back insert has its generated key and timestamps cleared and is inserted by the next `SaveChanges`, and a rolled-back update is pending again.
 
 ```go
+session := ant.Session(db)
 user, err := session.Users.Find(ctx, id) // tracked before the transaction
 user.Age = 50
 

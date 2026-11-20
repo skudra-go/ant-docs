@@ -128,10 +128,11 @@ ages, err := db.Users.Column(&Users.Age).Distinct().All(ctx)
 
 ## Skip the tracker
 
-Results are tracked by default so `SaveChanges` can see your changes. `NoTracking` skips the snapshot.
+On a [session](/tracking/sessions), results are tracked so `SaveChanges` can see your changes. `NoTracking` skips the snapshot for one query. The context `Open` returns tracks nothing, so it needs none.
 
 ```go
-users, err := db.Users.NoTracking().Where(ant.Gt(&Users.Age, 18)).All(ctx)
+session := ant.Session(db)
+users, err := session.Users.NoTracking().Where(ant.Gt(&Users.Age, 18)).All(ctx)
 ```
 
 On 1000 rows that's 1.2 times faster and half the memory ([benchmarks](/reference/benchmarks)).
@@ -142,7 +143,7 @@ On 1000 rows that's 1.2 times faster and half the memory ([benchmarks](/referenc
 
 A tracked read, `Find` included, claims the tracker. A second one that starts before the first ends returns `ant.ErrConcurrentUse` instead of waiting.
 
-Give each request or goroutine its own context with `ant.Session`. A context opened with `ant.WithTracking(false)` never claims, so it is safe to share.
+Give each request or goroutine its own context with `ant.Session`. The context `Open` returns doesn't track and never claims, so it is safe to share.
 
 ```go
 func handler(w http.ResponseWriter, r *http.Request) {

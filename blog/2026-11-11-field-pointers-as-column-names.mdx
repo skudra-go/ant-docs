@@ -278,12 +278,13 @@ In ant you change the loaded entity and call `SaveChanges`:
 <i style={{fontSize: '0.85em', color: 'var(--ifm-color-emphasis-600)'}}>I liked how Entity Framework Core does this, they were the inspiration.</i>
 
 ```go
-user, err := db.Users.Find(ctx, id)
+session := ant.Session(db)
+user, err := session.Users.Find(ctx, id)
 
 user.Age = 0
 user.Active = false
 
-err = db.SaveChanges(ctx)
+err = session.SaveChanges(ctx)
 ```
 
 ```sql

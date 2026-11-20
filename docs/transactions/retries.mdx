@@ -11,12 +11,11 @@ description: Run a transaction again after a deadlock or serialization conflict.
 
 ```go
 func transfer(ctx context.Context, db *BankDB, from, to string, amount int64) error {
-	return db.Tx(
+	// A session tracks what the transfer loads, so SaveChanges can write it,
+	// and each rerun forgets what the failed run loaded.
+	return ant.Session(db).Tx(
 		ctx,
 		func(tx *BankDB) error {
-			// A tracker of its own, so every attempt reads the rows afresh.
-			tx = ant.Session(tx, ant.WithTracking(true))
-
 			source, err := tx.Accounts.Where(ant.Eq(&Accounts.Owner, from)).Single(ctx)
 			if err != nil {
 				return err
@@ -64,7 +63,7 @@ Before a rerun, the tracker forgets what the failed run loaded or added, so the 
 
 :::
 
-The function runs from the top each time. If it changes an entity tracked before the transaction, a tracked read returns that same instance, edits included, so a function that changes `source.Balance` subtracts twice on the second run. A session inside the function, as above, gives each run a clean tracker of its own. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
+The function runs from the top each time. If it changes an entity tracked before the transaction, a tracked read returns that same instance, edits included, so a function that changes `source.Balance` subtracts twice on the second run. Loading inside the function, as above, gives each run the rows afresh. Reading with `NoTracking` and writing with a bulk `Update` avoids the tracker altogether:
 
 ```go
 err := db.Tx(
@@ -99,6 +98,8 @@ type BankDB struct {
 }
 
 var Accounts = ant.Fields[Account]()
+
+var session *BankDB
 ```
 */}
 
@@ -134,7 +135,7 @@ On MySQL, MariaDB and SQL Server a deadlock rolls back the whole transaction, no
 Use `ant.IsRetryable` to write your own loop for work that doesn't fit in a `Tx` closure.
 
 ```go
-err := db.SaveChanges(ctx)
+err := session.SaveChanges(ctx)
 
 // spot-next-line
 if ant.IsRetryable(err) {

@@ -79,9 +79,9 @@ if errors.Is(err, ant.ErrNotFound) {
 | --- | --- |
 | `ant.ErrNoContext` | The type passed to `Open` does not embed `ant.Context` |
 | `ant.ErrNotOpen` | A table or context that did not come from `Open` |
-| `ant.ErrNoForeignKey` | A relation whose foreign key cannot be found by convention. Name it in `Configure` |
+| `ant.ErrNoForeignKey` | A relation whose foreign key cannot be found by convention, from `Open`. Name it in `Configure` |
 | `ant.ErrNoColumnType` | A field whose database type cannot be worked out. Set it with `Column(...).Type(...)` |
-| `ant.ErrBadSchema` | Models that cannot become a valid schema |
+| `ant.ErrBadSchema` | A model `Open` would misread, such as an unknown tag key or two fields on one column, or models that cannot become a valid schema. The error names the field |
 | `ant.ErrNotImplemented` | A feature with no implementation yet |
 
 ## Change tracking and transactions
@@ -91,6 +91,7 @@ if errors.Is(err, ant.ErrNotFound) {
 | `ant.ErrConcurrency` | A version or token check failed. See [stale writes](#stale-writes) |
 | `ant.ErrConcurrentUse` | A context with change tracking was used by two operations at once. See [a tracking context used twice](#a-tracking-context-used-twice) |
 | `ant.ErrKeyChanged` | The primary key of a tracked entity was changed. Insert a new entity instead |
+| `ant.ErrNoTracking` | `SaveChanges`, `Add`, `Attach`, `MarkModified`, `Remove` or `TrackGraph` on a context that doesn't track, such as the one `Open` returns. Use a [session](/tracking/sessions) |
 | `ant.ErrNotTracked` | An operation on an entity the context does not track |
 | `ant.ErrNotInTx` | `Commit`, `Rollback` or a savepoint outside a transaction |
 | `ant.ErrTxDone` | The transaction already ended |
@@ -112,7 +113,7 @@ if errors.As(err, &conflict) {
 
 ## A tracking context used twice
 
-If a second operation starts on a tracking context while the first runs, the second gets `ant.ErrConcurrentUse` at once without waiting. Give each request its own `ant.Session`, or share a context opened with `WithTracking(false)`. A query that a hook makes must use the `context.Context` the hook received. See [sessions](/tracking/sessions) and [hooks](/lifecycle/hooks-and-observers#query-from-a-hook).
+If a second operation starts on a tracking context while the first runs, the second gets `ant.ErrConcurrentUse` at once without waiting. Give each request its own `ant.Session`, and share the context `ant.Open` returns, which doesn't track. A query that a hook makes must use the `context.Context` the hook received. See [sessions](/tracking/sessions) and [hooks](/lifecycle/hooks-and-observers#query-from-a-hook).
 
 ## Unsupported on this database
 
