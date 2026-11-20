@@ -17,6 +17,7 @@ total, err := ant.SumOf(ctx, adults, &Users.Age) // int
 
 average, err := ant.AvgOf(ctx, adults, &Users.Age) // float64
 // SELECT AVG("users"."age") FROM "users" WHERE "users"."age" > $1
+// SQL Server: AVG(CAST("users"."age" AS FLOAT)), since its AVG keeps an integer's type
 
 lowest, err := ant.MinOf(ctx, adults, &Users.Age) // int
 // SELECT MIN("users"."age") FROM "users" WHERE "users"."age" > $1

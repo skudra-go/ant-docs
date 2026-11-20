@@ -27,12 +27,12 @@ type Summary struct {
 rows, err := ant.Raw[Summary](db, `SELECT name, age + 1 AS years_on FROM users`).All(ctx)
 ```
 
-[`ant.WithStrict`](/tooling/errors#strict-scanning) makes a column with no field an error.
+[`ant.WithStrict`](/tooling/errors#strict-scanning) makes a column with no field an error. Two result columns for one field, as `SELECT *` over a join gives for `id`, are always an error that names them, where the field used to take the last one.
 
 ## Scan a single value
 
 ```go
-count, err := ant.Raw[int](db, `SELECT count(*) FROM users`).First(ctx)
+n, err := ant.Raw[int](db, `SELECT count(*) FROM users`).First(ctx) // n is an *int
 names, err := ant.Raw[string](db, `SELECT name FROM users ORDER BY name`).All(ctx)
 now, err := ant.Raw[time.Time](db, `SELECT now()`).First(ctx)
 ```
@@ -67,7 +67,7 @@ d, err := ant.Raw[User](db, `SELECT * FROM users WHERE age NOT IN (?)`, []int{})
 // SELECT * FROM users WHERE age NOT IN (NULL)
 ```
 
-Outside `IN`, a slice is one array value, as in `age = ANY($1)`.
+Outside `IN`, a slice is one array value, as in `age = ANY($1)`. That includes a slice of a named type, such as `[]Status` for an enum.
 
 ### Times
 

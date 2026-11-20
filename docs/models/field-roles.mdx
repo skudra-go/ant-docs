@@ -17,7 +17,7 @@ Tags combine with commas, as in `ant:"default='new',immutable"`.
 | `ant:"writeonly"` | Written, never read |
 | `ant:"immutable"` | Written on insert, never changed by `SaveChanges` |
 | `ant:"computed"` | Filled by `Query.With`, no column |
-| `ant:"version"` | [Optimistic concurrency](/lifecycle/optimistic-concurrency) counter |
+| `ant:"version"` | [Optimistic concurrency](/lifecycle/optimistic-concurrency) counter, a signed integer |
 | `ant:"token"` | Optimistic concurrency, with a value you manage |
 | `ant:"embedded"`, `ant:"embedded,prefix=x_"` | [Flatten a struct](/models/embedded-and-mixins) into columns |
 

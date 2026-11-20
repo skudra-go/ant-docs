@@ -83,6 +83,8 @@ var (
 
 A relation that nothing connects returns `ant.ErrNoForeignKey` at the terminal call (`All`, `First` and so on), not when the model is declared.
 
+Two relations to the same model, such as `Posts []Article` and `Edited []Article` on `Author`, would both be found through `Article.AuthorID` and read each other's rows, so both return `ant.ErrNoForeignKey` until one of them names its key. A relation scoped with `.Where`, `.Latest` or `.Oldest` shares the key on purpose, and is not refused.
+
 ## Join on a column other than the key
 
 `References` joins on another column of the owner, which must be unique, such as a handle or a SKU.

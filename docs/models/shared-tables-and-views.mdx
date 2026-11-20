@@ -82,6 +82,8 @@ func (UserName) Configure(b *ant.ModelBuilder[UserName]) {
 }
 ```
 
+A table is shared only when you say so, with `b.Table` or `b.Discriminator`. Two models that reach one table by convention, such as `billing.Account` and `auth.Account`, are refused when the context opens, since each would read the other's rows.
+
 To keep a separate table per type, embed a shared struct in each model.
 
 ## Map a model to a view

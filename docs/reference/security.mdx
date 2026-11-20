@@ -56,7 +56,7 @@ func list(ctx context.Context, db *AppDB, sort string) ([]*User, error) {
 
 ## Secrets
 
-- `secure.Value` uses AES-256-GCM with a random nonce. It prints and marshals as `[encrypted]`. It refuses text that isn't valid UTF-8.
+- `secure.Value` uses AES-256-GCM with a random nonce. It prints and marshals as `[encrypted]`, and decoding that placeholder leaves the value as it was. It refuses text that isn't valid UTF-8.
 - Known limit: a ciphertext isn't bound to its row. See [encrypted fields](/recipes/encrypted-fields#limits).
 - ant doesn't log connection strings. Known limit: an error from `Open` comes from the driver, and pgx masks passwords on a best-effort basis, so a badly malformed connection string can still reach the message. Treat that error as sensitive.
 

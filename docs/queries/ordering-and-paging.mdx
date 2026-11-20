@@ -56,7 +56,9 @@ users, err := db.Users.OrderBy(&Users.Name).Limit(10).Offset(20).All(ctx)
 // SELECT ... FROM "users" ORDER BY "users"."name" LIMIT $1 OFFSET $2   -- $1 = 10, $2 = 20
 ```
 
-Without an ordering, the database picks which rows `Offset` skips.
+Without an ordering, the database picks which rows `Offset` skips. A negative `Limit` or `Offset` is an error at the terminal call on every database, where SQLite would read `LIMIT -1` as no limit.
+
+`Page`, `Chunk` and `ChunkByKey` read inside a `Limit` and `Offset` the query already has, so a shared `Limit(1000)` query chunks those 1000 rows and no more, and `Page` counts its `Total` within them too.
 
 ## Numbered pages
 
@@ -96,7 +98,7 @@ next, err := query.After(ctx, page.Next, 20)
 
 `After` asks for one row more than the page size to detect another page. `Next` is empty on the last page. The key is added to the ordering as a tie-breaker, so no row is lost at a page boundary. With no ordering it pages by key.
 
-The ordering must use plain, non-`NULL` columns of this table. Anything else returns `ant.ErrCursor` rather than skip rows. A tampered cursor is `ant.ErrCursor` too.
+The ordering must use plain columns of this table that cannot hold `NULL`: no pointer or `sql.Null` field, unless its column is configured `NotNull`. Anything else returns `ant.ErrCursor` before reading a row, because no seek comparison matches `NULL` and the pages would end where the `NULL` rows begin. A query with its own `Limit` or `Offset` is `ant.ErrCursor` too, since a cursor has no count of the rows before it, and so is a tampered cursor. `After` reads the key and the ordering columns even when `Column` or `Omit` left them out.
 
 ```go
 func listUsers(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +160,7 @@ err := db.Users.Where(ant.Gt(&Users.Age, 100)).ChunkByKey(ctx, 500, func(users [
 // SELECT ... FROM "users" WHERE "users"."age" > $1 AND "users"."id" > $2 ORDER BY "users"."id" LIMIT $3
 ```
 
-`ChunkByKey` returns `ant.ErrNoKey` for a model without a primary key.
+`ChunkByKey` reads the key even when `Column` or `Omit` left it out. A composite key is paged by the whole key, as `After` pages, and a model without a primary key returns `ant.ErrNoKey`.
 
 ## Which one
 

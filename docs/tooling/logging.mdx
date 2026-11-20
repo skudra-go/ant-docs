@@ -31,7 +31,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 
 ## Log values
 
-`ant.LogValues` adds the argument values to each line. Use it in development only, since values can be passwords or personal data.
+`ant.LogValues` adds the argument values to each line: what a pointer holds, or nil, and what a `driver.Valuer` gives. Use it in development only, since values can be passwords or personal data.
 
 ```go
 db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
@@ -42,7 +42,7 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn,
 
 ## Keep a column out of the logs
 
-`.Sensitive()` marks a column so its value is never logged, even with `LogValues`, on inserts, updates, `Set` and conditions. It logs as `[redacted]`.
+`.Sensitive()` marks a column so its value is never logged, even with `LogValues`, on inserts, updates, `Set`, `UpdateMany`, `Values` and conditions, however a condition is built: `ant.Eq`, `ant.Col(&f).Eq`, `ant.Lower(&f).Eq`, a value passed to `ant.SQL` with the column, `InTuples`, or the seek values of `After` and `ChunkByKey`. It logs as `[redacted]`.
 
 ```go
 type Account struct {

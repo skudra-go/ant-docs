@@ -23,7 +23,7 @@ ant runs on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. PostgreSQL has ev
 | `FULL JOIN` | Yes | No | No | Yes | Yes |
 | Lateral joins | Yes | Yes | No | No | No |
 | `UpdateReturning` | Yes | No | No | Yes | Yes |
-| `DeleteReturning`, `Toggle` | Yes | No | Yes | Yes | Yes |
+| `DeleteReturning` | Yes | No | Yes | Yes | Yes |
 | `Today` | Yes | Yes | Yes | No | No |
 | `DatePart` | Yes | No | No | No | No |
 | `WITH` in a subquery, as in `Update` or `Delete` after `FromCTE` or `Recursive` | Yes | Yes | Yes | Yes | No |
@@ -70,7 +70,7 @@ Set these in the DSN:
 
 | Database | Setting | Without it |
 | --- | --- | --- |
-| MySQL, MariaDB | `parseTime=true` | Times come back as bytes |
+| MySQL, MariaDB | `parseTime=true` | `ant.Open` refuses the DSN, since times would come back as bytes. A pool given to `ant.Wrap` is not checked |
 | SQLite | `_pragma=foreign_keys(1)` | Foreign keys aren't enforced |
 | SQLite | `_pragma=busy_timeout(5000)&_txlock=immediate` | A second writer fails at once. See [writers at once](#sqlite-writers-at-once) |
 
@@ -113,6 +113,22 @@ MySQL refuses an `UPDATE` or `DELETE` whose subquery reads the table being writt
 | MariaDB | Error 1020. From 11.6 it rolls a transaction back when a row the transaction read changed since its snapshot |
 | SQL Server | Deadlocks |
 | SQLite | A busy database |
+
+On MySQL, MariaDB and SQL Server a deadlock ends the whole transaction, so ant marks it lost: later statements return `ant.ErrTxDone`, and `Tx` rolls it back. See [retries](/transactions/retries).
+
+`FirstOrCreate` in a transaction reads the row another writer inserted first `FOR UPDATE`. On MySQL and MariaDB the insert that lost already holds a share lock on that row, so two such transactions can still deadlock there (MariaDB: error 1020). The error is retryable, so run them with `ant.Attempts`.
+
+## Row locks
+
+`ForUpdate` and `ForShare` lock the rows a query returns. `Count`, `Exists`, the aggregates and the total of `Page` read no rows to lock, and PostgreSQL refuses a lock on them, so they run without it on every database. With `IncludeJoined` the lock is on the query's own table, `FOR UPDATE OF`, since PostgreSQL refuses to lock the nullable side of a left join. MariaDB has no `OF`, and locks the related rows as well.
+
+## Nested read-only transactions
+
+A `Tx` inside another is a savepoint. On PostgreSQL `ant.ReadOnly()` holds there until the savepoint ends. MySQL, MariaDB, SQLite and SQL Server can't make a transaction read-only once it has begun, so it returns `ant.ErrUnsupported`. `ant.Isolation` on a nested `Tx` is `ant.ErrNestedIsolation` everywhere.
+
+## Averages on SQL Server
+
+`AVG` there returns its argument's type, so the average of an integer column would lose its fraction. ant writes `AVG(CAST(x AS FLOAT))`, and `Avg`, `AvgOf` and `AvgRelated` give the same number on every database.
 
 ## SQLite: writers at once
 
@@ -181,11 +197,13 @@ The conversion applies to:
 
 A `driver.Valuer` of your own is passed as it is, so have it return a time in UTC.
 
+A time read back is held in UTC on every database, in each of those shapes, though pgx decodes `TIMESTAMPTZ` in the process's zone, so a time compares equal before and after a round trip and renders the same in JSON.
+
 `ant.Past` and `ant.Future` compare with the server's own clock, so run the server in UTC. On SQLite and MySQL, `CURRENT_TIMESTAMP` has whole seconds.
 
 ## Types
 
-`postgres.Array`, `postgres.JSONSet`, `postgres.Vector` and the rest of `dialect/postgres` need PostgreSQL. `Collate` quotes its name, which SQL Server doesn't accept.
+`postgres.Array`, `postgres.JSONSet`, `postgres.Vector` and the rest of `dialect/postgres` need PostgreSQL. A `postgres.Array` holds plain values, so reading an array with a `NULL` element is an error, not the text `NULL`, `false` or zero. `Collate` quotes its name, which SQL Server doesn't accept.
 
 ## Rollbacks on SQL Server
 

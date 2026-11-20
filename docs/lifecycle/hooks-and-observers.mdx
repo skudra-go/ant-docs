@@ -28,7 +28,7 @@ func (m *Member) BeforeInsert(ctx context.Context) error {
 | Hook | Runs |
 | --- | --- |
 | `Validate` | Before every insert and update |
-| `BeforeInsert`, `AfterInsert` | Around an insert |
+| `BeforeInsert`, `AfterInsert` | Around an insert, and around an `Upsert` whichever way it goes |
 | `BeforeUpdate`, `AfterUpdate` | Around a save that changed the entity |
 | `BeforeDelete`, `AfterDelete` | Around a delete |
 | `AfterLoad` | After a row is read |
@@ -86,7 +86,7 @@ A query with another context, such as `context.Background()`, counts as a second
 
 ## What runs no hooks
 
-Bulk `Update` and `Delete`, `InsertMany` and `Raw` run no hooks, since they load no entity. A save with nothing to save runs none either.
+Bulk `Update` and `Delete`, `InsertMany`, `UpdateMany`, `Merge` and `Raw` run no hooks, since they load no entity. A save with nothing to save runs none either.
 
 `ant.WithoutHooks` skips hooks for one call:
 

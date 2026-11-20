@@ -65,7 +65,7 @@ err := session.SaveChanges(ctx)
 // DELETE FROM "posts" WHERE "posts"."id" = $1
 ```
 
-A nullable foreign key is unlinked instead: the child stays, with no parent.
+A nullable foreign key is unlinked instead: the child stays, with no parent. Nullable means its zero value is written as `NULL`: a pointer, or a type such as `sql.Null[T]`. A `uuid.UUID` key is not, so a removed child with one is deleted rather than given the zero UUID, and so is one whose column is configured `NotNull`.
 
 ```go
 type Member struct {

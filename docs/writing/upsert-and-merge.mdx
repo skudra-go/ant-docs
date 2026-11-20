@@ -50,6 +50,8 @@ wrote, err := db.Users.Upsert(ctx, user, ant.OnConflict(&Users.Email))
 
 Running it twice leaves one row, so a feed can be reapplied after a crash and changed rows are updated.
 
+An upsert offers your struct as a new row, so it checks the [validation rules](/lifecycle/validation) and runs `Validate`, `BeforeInsert` and `AfterInsert` whichever way the database goes, as GORM runs its create hooks. If the transaction around it rolls back, the struct loses the key it was given and stops being tracked, as after a rolled-back `Insert`.
+
 ## Choose what changes
 
 ```go
@@ -194,7 +196,7 @@ changed, err := ant.Merge(&db.Stock, db.Staged.Query(), ant.EqCol(&Stocks.SKU, &
 // WHEN NOT MATCHED THEN INSERT ("sku", "count") VALUES ("stageds"."sku", "stageds"."count")
 ```
 
-`Exec` returns the rows changed.
+`Exec` returns the rows changed. A merge is a bulk write: it loads no entities, so no hooks or validation rules run.
 
 ### What Merge fills in
 
