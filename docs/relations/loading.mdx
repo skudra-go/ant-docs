@@ -65,7 +65,7 @@ users, err := db.Users.
 
 ### The latest three of each
 
-`Limit` and `Offset` apply per parent: each user gets their three newest posts.
+`Limit` and `Offset` apply per parent: each user gets their three newest posts. That holds through a join table too, for a [many-to-many](/relations/many-to-many) or a `HasManyThrough` relation.
 
 ```go
 users, err := db.Users.
@@ -85,7 +85,7 @@ users, err := db.Users.
 
 ### Pick columns
 
-`Column` picks columns. The foreign key is always kept so ant can match rows to parents.
+`Column` picks columns. The foreign key is always kept so ant can match rows to parents. The same holds the other way: a parent query with `Column` or `Omit` still reads the key its includes match by.
 
 ```go
 users, err := db.Users.
@@ -148,7 +148,7 @@ posts, err := db.Posts.IncludeJoined(&Posts.User).OrderBy(&Posts.Title).All(ctx)
 // ORDER BY "posts"."title"
 ```
 
-To filter or order on the parent, use a [join](/queries/joins).
+To filter or order on the parent, use a [join](/queries/joins). `IncludeJoined` can't load where a query is not read as rows of its model, so `Each`, set operations, `From`, `FromCTE`, `Recursive` and `JoinSub` refuse it with `ant.ErrIncludeInEach` or `ant.ErrIncludeInSubquery`, as they refuse `Include`.
 
 ## Include and tracked entities
 

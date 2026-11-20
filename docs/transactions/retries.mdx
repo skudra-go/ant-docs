@@ -118,7 +118,7 @@ var Accounts = ant.Fields[Account]()
 
 ## Retry every transaction
 
-`ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context. `ant.Attempts` overrides it for one call.
+`ant.WithRetry` applies to every `Tx` and `SaveChanges` of a context. `ant.Attempts` overrides it for one call; other options, such as `ant.Isolation`, keep it.
 
 ```go
 // spot-next-line
@@ -126,6 +126,8 @@ db, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn, ant.WithRetry(ant.Retry{A
 ```
 
 A `SaveChanges` outside a transaction retries its own transaction. Inside a `Tx`, the transaction decides, and `SaveChanges` runs once per attempt.
+
+On MySQL, MariaDB and SQL Server a deadlock rolls back the whole transaction, not just the statement. ant then marks the transaction lost: later statements in it return `ant.ErrTxDone`, and `Tx` rolls it back and retries it if it may. When the context ends during a retry, the error joins the context's and the conflict that caused the retry.
 
 ## Check by hand
 

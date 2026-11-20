@@ -251,6 +251,8 @@ type Item struct {
 var Items = ant.Fields[Item]()
 ```
 
+An `Array` holds no `NULL` element, so reading an array that has one is an error that says so, rather than the text `"NULL"` or `false`. A quoted `"NULL"` is still the text.
+
 Points and vectors have conditions and orderings of their own, and full-text search works on any text column.
 
 ```go

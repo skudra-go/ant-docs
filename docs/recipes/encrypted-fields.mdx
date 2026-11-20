@@ -43,7 +43,7 @@ loaded, err := db.Patients.Find(ctx, patient.ID)
 fmt.Println(loaded.SSN.V) // 123-45-6789
 ```
 
-`fmt` and JSON print `[encrypted]`. Read `.V` for the value. `ant.LogValues` logs SQL arguments, so add `.Sensitive()` to the column to keep them out of logs (see [security](/reference/security#logs-and-errors)).
+`fmt` and JSON print `[encrypted]`. Read `.V` for the value. Decoding JSON fills it from a plain value, so a model with a secure field can come from a request body; the `"[encrypted]"` placeholder decodes as no change, so echoing a model back can't overwrite the value with it. `ant.LogValues` logs SQL arguments, so add `.Sensitive()` to the column to keep them out of logs (see [security](/reference/security#logs-and-errors)).
 
 ### What can go inside
 

@@ -29,7 +29,19 @@ ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [da
 
 ## Breaking changes so far
 
-The latest release is v0.3.1. Before it came v0.1.0, v0.2.0 and v0.3.0.
+The latest release is v0.3.2. Before it came v0.1.0, v0.2.0, v0.3.0 and v0.3.1.
+
+### v0.3.2
+
+No exported name changed or went away. It adds `ant.ErrNestedIsolation`, `pgxext.ErrInTx`, `metrics.Operation` and JSON decoding for `secure.Value`. Some behaviour changed, mostly where ant used to misread something without a word and now refuses it:
+
+- `ant.Open` refuses a MySQL or MariaDB DSN without `parseTime=true`, a `version` field that is not a signed integer, and two models that reach one table by convention.
+- Two relations to the same model, guessed onto one foreign key, are `ant.ErrNoForeignKey` until one names its key.
+- A negative `Limit` or `Offset` is an error, and `ant.SQL` or `ant.SQLCond` with arguments needs one per `?`. `Raw` refuses two result columns for one field.
+- `After` returns `ant.ErrCursor` for an ordering column that can hold `NULL`, and for a query with its own `Limit` or `Offset`. `Page`, `Chunk` and `ChunkByKey` read inside a query's `Limit` and `Offset`.
+- `Upsert` runs the validation rules, `Validate`, `BeforeInsert` and `AfterInsert`. A soft delete and `Restore` stamp `UpdatedAt` and move a version on.
+- Options on a `Tx` nested in another hold, so a nested `ant.ReadOnly()` is `ant.ErrUnsupported` off PostgreSQL. `pgxext.Copy` and `Batch.Send` refuse a transaction's context.
+- A time read from the database is in UTC on PostgreSQL too, and a `postgres.Array` with a `NULL` element is an error.
 
 ### v0.3.1
 

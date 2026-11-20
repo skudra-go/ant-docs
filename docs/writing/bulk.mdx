@@ -124,6 +124,8 @@ affected, err := batch.Send(ctx, db)
 // spot-end
 ```
 
+`Copy` and `Batch.Send` take a pool connection of their own, so they can't join a transaction: given a transaction's context, such as one inside `db.Tx` or `anttest.Isolate`, they return `pgxext.ErrInTx` rather than write rows that would survive its rollback.
+
 `affected` holds the rows each statement touched.
 
 <Tests path="writing/bulk_test.go" />

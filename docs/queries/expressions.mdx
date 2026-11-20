@@ -70,7 +70,7 @@ kind := ant.Case[string]().
 // CASE WHEN "users"."age" < $1 THEN $2 WHEN "users"."age" > $3 THEN $4 ELSE $5 END
 ```
 
-`Else` returns an `Expr[string]`. `End` returns `Expr[sql.Null[string]]`, since a row that matches nothing is `NULL`. `WhenExpr` and `ElseExpr` take columns or other expressions as results.
+`Else` returns an `Expr[string]`. `End` returns `Expr[sql.Null[string]]`, since a row that matches nothing is `NULL`. `WhenExpr` and `ElseExpr` take columns or other expressions as results. Assigned with `ant.SetExpr` to a column declared with `.Enum(...)`, the `CASE` is cast to that enum type, which PostgreSQL would otherwise refuse as text.
 
 To read the label, map it into a struct with [`Project`](/queries/projections):
 
@@ -120,7 +120,7 @@ users, err := db.Users.Where(even).All(ctx)
 // SELECT ... FROM "users" WHERE ("users"."age" % $1 = 0)
 ```
 
-The wrong number of arguments is an error.
+With arguments, their number must match the `?` marks, or it is an error that counts both. With none, each `?` is written as it is, so `jsonb`'s `?` operator works.
 
 :::danger[Never build the text from input]
 

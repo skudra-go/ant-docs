@@ -35,17 +35,17 @@ The column is a nullable timestamp. `NULL` means the row is live.
 
 ```go
 n, err := db.Notes.Where(ant.Eq(&Notes.Text, "draft")).Delete(ctx)
-// UPDATE "notes" SET "deleted_at" = $1
-// WHERE "notes"."text" = $2 AND "notes"."deleted_at" IS NULL
+// UPDATE "notes" SET "deleted_at" = $1, "updated_at" = $2
+// WHERE "notes"."text" = $3 AND "notes"."deleted_at" IS NULL
 ```
 
 ```go
 err := db.Notes.DeleteByID(ctx, id)
-// UPDATE "notes" SET "deleted_at" = $1
-// WHERE "notes"."id" = $2 AND "notes"."deleted_at" IS NULL
+// UPDATE "notes" SET "deleted_at" = $1, "updated_at" = $2
+// WHERE "notes"."id" = $3 AND "notes"."deleted_at" IS NULL
 ```
 
-Deleting an already marked row keeps the first timestamp. The delete does not touch `UpdatedAt`.
+Deleting an already marked row keeps the first timestamp. A delete is a write, so it stamps `UpdatedAt`, and on a model with a [version](/lifecycle/optimistic-concurrency) it moves the version on, so a copy loaded before cannot save over the deleted row.
 
 ## Read live rows
 
@@ -74,12 +74,12 @@ gone, err := db.Notes.OnlyDeleted().All(ctx)
 
 ```go
 n, err := db.Notes.Where(ant.Eq(&Notes.Text, "draft")).Restore(ctx)
-// UPDATE "notes" SET "deleted_at" = $1
-// WHERE "notes"."text" = $2 AND "notes"."deleted_at" IS NOT NULL
+// UPDATE "notes" SET "deleted_at" = $1, "updated_at" = $2
+// WHERE "notes"."text" = $3 AND "notes"."deleted_at" IS NOT NULL
 // -- $1 = NULL
 ```
 
-On a model without a `DeletedAt` field, `Restore` returns `ant.ErrNotSoftDeleted`.
+It stamps `UpdatedAt` and moves a version on, as a delete does. On a model without a `DeletedAt` field, `Restore` returns `ant.ErrNotSoftDeleted`.
 
 ## Delete for good
 

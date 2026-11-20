@@ -3,7 +3,7 @@ title: Validation
 description: Check entities before they are inserted or updated.
 ---
 
-Validation runs before every insert and update. A failure stops the write. It runs with [hooks](/lifecycle/hooks-and-observers), so bulk writes and `ant.WithoutHooks` skip it.
+Validation runs before every insert and update, an `Upsert` included. A failure stops the write. It runs with [hooks](/lifecycle/hooks-and-observers), so bulk writes and `ant.WithoutHooks` skip it.
 
 ## Add a rule to a field
 

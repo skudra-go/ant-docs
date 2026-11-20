@@ -102,7 +102,7 @@ user, created, err := db.Users.FirstOrCreate(
 // INSERT INTO "users" (...) VALUES (...) RETURNING "id"
 ```
 
-If another writer inserts the row between the read and the insert, the unique constraint stops yours and you get the winner's row back. The conditions should match a unique column. Inside a transaction the re-read takes a lock, so it sees the row even on MySQL's default `REPEATABLE READ`.
+If another writer inserts the row between the read and the insert, the unique constraint stops yours and you get the winner's row back. The conditions should match a unique column. Inside a transaction the re-read locks the row `FOR UPDATE`, so it sees the row even on MySQL's default `REPEATABLE READ`, and two callers that both lost the insert don't deadlock when they update it next.
 
 `FirstOrNew` does the same without saving. Its bool reports whether a row was found.
 
