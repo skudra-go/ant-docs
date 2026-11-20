@@ -63,6 +63,38 @@ ALTER TABLE "tickets" ADD COLUMN "level" ticket_level NOT NULL DEFAULT 'low';
 ALTER TABLE "tickets" ALTER COLUMN "level" DROP DEFAULT;
 ```
 
+A required foreign key can't take a zero value, since no row has key `0`. Its column is added `NULL` and made `NOT NULL` after, for you to fill the existing rows in between:
+
+```go
+type Gadget struct {
+	ID      int64
+	Name    string
+	// spot-start
+	MakerID int64
+	Maker   *Maker
+	// spot-end
+}
+```
+
+```sql
+-- WARNING: existing rows of gadgets need a maker_id that refers to a row of makers, which no default gives. Fill it before SET NOT NULL below, as UPDATE ... SET maker_id = ...; or the file fails on a table with rows.
+ALTER TABLE "gadgets" ADD COLUMN "maker_id" bigint;
+-- spot-next-line
+-- UPDATE "gadgets" SET "maker_id" = ...;   <- yours
+ALTER TABLE "gadgets" ALTER COLUMN "maker_id" SET NOT NULL;
+```
+
+{/*
+```go
+type Maker struct {
+	ID   int64
+	Name string
+}
+```
+*/}
+
+Left as it is, the file fails on a table with rows with `column "maker_id" contains null values`, which says why.
+
 ## Fill a new column from existing data
 
 `Handle` is required and unique, so the zero value gives every existing user the same empty string:
@@ -351,10 +383,19 @@ ALTER SEQUENCE "org_numbers" START WITH 2000;
 -- WARNING: a statement below cannot run in a transaction, so this file runs without one.
 -- If it fails partway, finish it by hand. Consider keeping such statements in a file of their own.
 
+DROP INDEX CONCURRENTLY IF EXISTS "tickets_qty_idx";
 CREATE INDEX CONCURRENTLY "tickets_qty_idx" ON "tickets" ("qty");
 ```
 
-A table created in the same file has no writers yet, so its indexes are built plainly. If such a file fails partway, see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
+A concurrent build that fails, on duplicate rows or a cancelled statement, leaves an invalid index of its name. The `DROP` takes it away first, so the file runs again once the cause is fixed, and `drift` lists an invalid index as one to drop and build again. A table created in the same file has no writers yet, so its indexes are built plainly. If such a file fails partway, see [troubleshooting](/migrations/troubleshooting#a-no-transaction-migration-failed-partway).
+
+## Change how a table is partitioned
+
+PostgreSQL can't change a table's partitioning in place, so adding, removing or changing `PartitionByRange` and the others is a change to make by hand. `check`, `diff` and `drift` report it, and the file `diff` writes holds only a warning:
+
+```sql
+-- WARNING: PostgreSQL cannot change how readings is partitioned. Do it by hand: create the new table partitioned by LIST (at), copy the rows over, and swap the names.
+```
 
 ## Order NULLs in an index
 
@@ -386,7 +427,9 @@ PostgreSQL cuts a name after 63 bytes, so two long names can become one. `diff` 
 Error: ant: index name "tickets_a_very_long_index_name_that_goes_well_beyond_the_limit_of_sixty_three_bytes" is 83 bytes, and postgres keeps only 63: give it a shorter one
 ```
 
-The names ant generates are shortened with a hash.
+The names ant generates are shortened with a hash, and cut where a character starts, so a long name in Cyrillic stays valid UTF-8, as PostgreSQL requires.
+
+Default names join their columns with underscores, as PostgreSQL's do, so an index on `a_b` and one on `(a, b)` are both `t_a_b_idx`. Two tables, keys or indexes of one schema with one name are refused when the schema is built, naming both: give one a name with `.Name(...)`.
 
 ## Names with line breaks
 

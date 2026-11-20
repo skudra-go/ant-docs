@@ -34,6 +34,26 @@ func (m *Member) BeforeInsert(ctx context.Context) error {
 | `AfterLoad` | After a row is read |
 | `AfterInclude` | After its relations are loaded |
 
+An after hook runs once the row is written, so a change it makes to its entity, such as a slug built from the new key, is not in that write. On a session it is a change still to save, which the next `SaveChanges` writes.
+
+```go
+func (s *Story) AfterInsert(ctx context.Context) error {
+	s.Slug = fmt.Sprintf("%s-%d", s.Name, s.ID)
+
+	return nil
+}
+```
+
+{/*
+```go
+type Story struct {
+	ID   int64
+	Name string
+	Slug string
+}
+```
+*/}
+
 ## Refuse a write
 
 An error from a before hook stops the write. An error from an after hook undoes it, because hooks run inside the transaction.

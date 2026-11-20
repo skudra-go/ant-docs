@@ -8,8 +8,10 @@ ant doesn't generate structs from a database, because the mapping is ambiguous: 
 ## Dump the schema
 
 ```bash
-pg_dump --schema-only "$DATABASE_URL" > schema.sql
+pg_dump --schema-only --no-owner --no-privileges "$DATABASE_URL" > schema.sql
 ```
+
+`--no-owner` and `--no-privileges` leave out the roles of the server you dumped, which another database, such as CI's or a teammate's, may not have.
 
 ## Write the models
 
@@ -80,7 +82,7 @@ No drift: the database matches the models.
 
 ### From the dump
 
-This is usually the right choice: a new database gets everything, including what your models don't describe. `adopt` strips the psql commands recent `pg_dump` versions write, such as `\restrict`, and records a snapshot from your models.
+This is usually the right choice: a new database gets everything, including what your models don't describe. `adopt` strips the psql commands recent `pg_dump` versions write, such as `\restrict`, and the lines that give tables to roles or grant to them (`OWNER TO`, `GRANT`, `REVOKE`), which a database owned by another role could not run. It says how many it left out, and records a snapshot from your models. Put the grants an application needs in a migration of their own.
 
 ```bash
 go run ./cmd/migrate adopt schema.sql
@@ -88,7 +90,7 @@ go run ./cmd/migrate adopt schema.sql
 
 ```text
 Wrote migrations/versions/0001_baseline.up.sql, and the snapshot from your models.
-New databases run that file. On each database that already has this schema, run: baseline
+New databases run that file. On each database that already has this schema, run: baseline 0001
 ```
 
 ### From the models
@@ -105,17 +107,17 @@ To keep the history, copy the files into `migrations/versions`, then run `snapsh
 
 ## Mark each existing database as done
 
-`baseline` records the migrations as applied without running them. It adds the `ant_migrations` table and touches nothing else. Run it once on every database that already has the schema.
+`baseline` records the migrations as applied without running them, through the version you give. It adds the `ant_migrations` table and touches nothing else. Run it once on every database that already has the schema, with the version of the baseline, so a database adopted after more migrations were written runs those with `up`.
 
 ```bash
-go run ./cmd/migrate baseline
+go run ./cmd/migrate baseline 0001
 ```
 
 ```text
 Recorded 0001_baseline as applied, without running it.
 ```
 
-A new database skips this step and runs `up`. From here on, `diff` and `up` work as in any project.
+A new database skips this step and runs `up`. From here on, `diff` and `up` work as in any project. With no version, `baseline` records only when one migration is left to record, and otherwise refuses and names the version to give.
 
 ```bash
 go run ./cmd/migrate status
@@ -155,7 +157,8 @@ Rules:
 - Declare each model's probe, named after the model in the plural: var Users = ant.Fields[User]().
 - A primary key named id is found by convention. For anything else use b.Key or
   b.CompositeKey. A key that is not an identity or serial column needs
-  .NotGenerated(). If the constraint is not named table_pkey, add b.KeyName("name").
+  .NotGenerated(). An identity or serial key needs no Default. If the constraint
+  is not named table_pkey, add b.KeyName("name").
 - For each foreign key, add a relation with b.BelongsTo, and the other side with
   b.HasMany where it is useful. Set .OnDelete and .OnUpdate to match. If the
   constraint is not named table_column_fkey, add .ConstraintName("name"). If the
@@ -169,7 +172,10 @@ Rules:
   needed. Use b.IndexExpr for an expression.
 - Add b.Check for each check constraint, using its name.
 - Add b.Column(&X.F).Default("expr") for each default, and .Generated("expr") for
-  each generated column.
+  each generated column. A default also leaves a zero value to the database on
+  insert, so a bool or number field with one never inserts false or 0: where the
+  zero must be stored, make the field a pointer with .NotNull() and
+  .Default("expr"), and nil takes the default.
 - Views are b.View("name"). Leave triggers, functions, and types out of the models.
 - A context struct embeds ant.Context, and has an ant.Table[T] field for each model.
 

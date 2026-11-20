@@ -81,9 +81,11 @@ var (
 | `b.BelongsTo(&Posts.User)` | many-to-one, key on this side |
 | `b.ManyToMany(&Users.Roles)` | [through a join table](/relations/many-to-many) |
 
-A relation that nothing connects returns `ant.ErrNoForeignKey` at the terminal call (`All`, `First` and so on), not when the model is declared.
+A relation that nothing connects returns `ant.ErrNoForeignKey` when the context opens, and from every use of it. A relation a model inherits from one it embeds, such as `User.Posts` in a model that embeds `User`, is found through the key its own model's name gives, `Post.UserID`.
 
-Two relations to the same model, such as `Posts []Article` and `Edited []Article` on `Author`, would both be found through `Article.AuthorID` and read each other's rows, so both return `ant.ErrNoForeignKey` until one of them names its key. A relation scoped with `.Where`, `.Latest` or `.Oldest` shares the key on purpose, and is not refused.
+A slice of a relation holds values, `[]Post`. `[]*Post` is refused when the context opens, since it would be read as a column.
+
+Two relations to the same model, such as `Posts []Article` and `Edited []Article` on `Author`, would both be found through `Article.AuthorID` and read each other's rows, so the context refuses to open with `ant.ErrNoForeignKey` until one of them names its key. A relation scoped with `.Where`, `.Latest` or `.Oldest` shares the key on purpose, and is not refused.
 
 ## Join on a column other than the key
 

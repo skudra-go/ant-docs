@@ -127,4 +127,41 @@ Naming and conventions are global: ant reflects each model once per process, so 
 
 :::
 
+The migrate program builds the schema from the same models, so give it the same options in `migrate.Config.Options`, or `diff` writes tables and columns under the default names:
+
+```go
+config := migrate.Config{
+	// spot-next-line
+	Options: []ant.Option{ant.WithNaming(naming)},
+}
+```
+
+{/*
+```go
+var naming ant.Naming
+```
+*/}
+
+## What Open refuses
+
+`ant.Open` reads every model, and every model its relations reach, and refuses one it would misread, with an error that names the field. It reports every broken model at once.
+
+| Model | Error |
+| --- | --- |
+| An unknown or misspelled tag key, such as `ant:"uniqe"` | `ant.ErrBadSchema`: `unknown tag key "uniqe"` |
+| A value on a key that takes none (`unique=false`), or none on one that needs it (`column=`) | `ant.ErrBadSchema` |
+| `prefix=` without `embedded` | `ant.ErrBadSchema` |
+| Two fields on one column, such as `UserID` and `UserId`, or two embedded structs that both have `Name` | `ant.ErrBadSchema`, naming both fields |
+| A relation slice of pointers, `[]*Post`, where `[]Post` is meant | `ant.ErrBadSchema` |
+| A struct embedded by pointer, `*Base` | `ant.ErrBadSchema`: embed the value |
+| A func, chan or `unsafe.Pointer` field | `ant.ErrBadSchema`: tag it `ant:"-"` |
+| A relation whose foreign key can't be found | `ant.ErrNoForeignKey` |
+
+```go
+_, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
+// ant: invalid schema: Typo.Email: unknown tag key "uniqe"
+```
+
+A struct field with no tag and no exported fields of its own, such as `netip.Addr`, is a value the driver converts, so `*netip.Addr` is a nullable column.
+
 <Tests path="model_definition" />

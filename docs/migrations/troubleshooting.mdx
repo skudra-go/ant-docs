@@ -14,7 +14,7 @@ Error: ant: migration 0016_add_handle failed and was rolled back: ERROR: could n
 
 ## A no-transaction migration failed partway
 
-Some of it may have run, so `up` refuses to continue. Check the database, then pick one.
+Some of it may have run, so `up` refuses to continue. ant records such a file as failed before it starts, so one whose process was killed partway is `failed` too, with `it did not finish`, rather than pending, where `up` would run it again from the first statement. Check the database, then pick one.
 
 - If you undid what ran, or the file can run again: fix the file, run `repair`, then `up`.
 - If you finished it by hand: run `repair`, then `baseline <version>`.
@@ -28,6 +28,28 @@ Error: ant: applied migration was changed: 0015_orders. Applied migrations must 
 ```
 
 `status` shows the file as `changed`. After `repair`, it is `applied` again.
+
+## `was applied as ..., a different migration`
+
+The version ran under another name with other contents: two branches both wrote `0002`, a database ran the other branch's, and the file was renumbered after the merge. It is not an edit, so `repair` refuses it.
+
+```text
+Error: ant: applied migration was changed: 0002_add_ay was applied as 0002_add_bee, a different migration. If it was renumbered after a merge, give the file the next free number; if it is the same migration, name it 0002_add_bee again
+```
+
+A new name with the same contents is the same migration, and is no error.
+
+## `has a BEGIN of its own`
+
+The file runs in ant's transaction and holds its own `BEGIN`, `COMMIT` or `ROLLBACK`, which would end that transaction. Take them out, or put `-- ant:no-transaction` at the top. A `-- ant:no-transaction` below the first statement is refused the same way, since it would not be read; move it into the comments at the top. Both are checked before anything of the file runs. See [statements that refuse a transaction](/migrations/hand-written#statements-that-refuse-a-transaction).
+
+## `no migrations folder at ...`
+
+The versions folder isn't where the program looks, as when it runs from another directory or from an image built without its migrations. `up`, `status` and `baseline` refuse rather than apply nothing. Run it from the project's root, or set `Config.Dir`. `diff`, `adopt`, `check` and `drift` work without the folder.
+
+## `no migration has version ...`
+
+`up --to` and `baseline` name a version that no file has, as a typo would. Check `status` for the versions there are.
 
 ## `applied migration is missing`
 

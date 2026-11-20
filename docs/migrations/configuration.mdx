@@ -42,18 +42,27 @@ type Source interface {
 
 ## Change the SQL that is written
 
-`Render` receives the plan and can wrap the default. This one starts every generated file with a lock timeout:
+`Render` receives the plan and can wrap the default. This one sets a lock timeout in every generated file:
 
 ```go
 config := migrate.Config{
 	// spot-start
 	Render: func(plan *schema.Plan, d schema.Dialect) (string, error) {
 		text, err := schema.Script(d, plan)
+		if err != nil {
+			return "", err
+		}
 
-		return "SET lock_timeout = '5s';\n\n" + text, err
+		// Directives such as -- ant:no-transaction are read from the
+		// comments at the top, so the SET goes after them.
+		header, body, _ := strings.Cut(text, "\n\n")
+
+		return header + "\n\nSET lock_timeout = '5s';\n\n" + body, nil
 	},
 	// spot-end
 }
 ```
+
+Anything you add goes after those comments. A directive below the first statement would not be read, so `up` refuses such a file.
 
 <Tests path="migrations/source_test.go" />

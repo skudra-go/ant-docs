@@ -38,6 +38,8 @@ UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
 
 Each session saves only its own changes, and many run at once. Observers registered on the root are shared. A session needs no closing.
 
+A session takes the root's settings, and options change them for that session alone: a logger, interceptors or replicas given to `ant.Session(db, ...)` add to the root's, for every statement the session runs, in a transaction or not.
+
 :::warning[Close the root only]
 
 A session shares the root's pool, so closing a session closes it for everyone. Close only the context from `Open`.

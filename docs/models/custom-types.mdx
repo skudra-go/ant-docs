@@ -184,6 +184,8 @@ A `NULL` column reads as the zero value of `T`. Writing text that is not valid U
 
 `ant.JSON[[]string]` is the simple way to keep a list in a row.
 
+A number read into an interface, as in `ant.JSON[map[string]any]`, is a `json.Number`, not a `float64`, so a large integer keeps its digits; compare it with `json.Number("1")`, or call its `Int64`. Tracking compares it as stored, so reading one changes nothing. `secure.Value` reads the same way.
+
 ### Query inside JSON (PostgreSQL)
 
 The `postgres` package reads and updates parts of a document. Paths are bound as parameters.

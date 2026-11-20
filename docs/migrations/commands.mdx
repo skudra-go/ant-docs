@@ -26,17 +26,24 @@ Run each with `go run ./cmd/migrate <command>`.
 | Command | Does |
 | --- | --- |
 | `up` | Apply pending migrations, then changed repeatable ones |
-| `up --to <version>` | Stop after this version |
+| `up --to <version>` | Stop after this version, which must exist |
 | `up --dry-run` | Print what would run |
 | `status` | List every migration and where it stands |
+| `status --check` | Also fail while anything waits, or `up` would refuse to run, for a deploy gate |
 | `drift` | Compare the live database with the snapshot, `--sql` for the fix |
 | `db-show` | Summarize the live database: version, size, and tables |
-| `baseline [version]` | Record migrations as applied without running them |
+| `baseline [version]` | Record migrations as applied without running them, through the version; with none, only when one is left to record |
 | `repair` | Accept changed files, clear failed runs, and forget missing files |
 | `seed [name...]` | Run seeders |
 | `reset` | Delete everything and apply all migrations, `--seed` to seed too |
 
-These take `--dsn`, and otherwise read `DATABASE_URL`, then `Config.DSN`.
+These take `--dsn`, and otherwise read `DATABASE_URL`, then `Config.DSN`. `up`, `status` and `baseline` refuse a missing versions folder, rather than apply nothing from the wrong directory.
+
+`status --check` fails with `migrate.ErrPending` while a migration waits, joined with the error `up` would refuse with, such as `migrate.ErrChecksum` for a changed file:
+
+```text
+Error: ant: migrations are pending: 1 waiting
+```
 
 ## Look at the models
 
@@ -105,4 +112,4 @@ go run ./cmd/migrate repair
 Accepted the current contents of 0015_orders.
 ```
 
-It also clears a failed no-transaction run and forgets a migration whose file is gone. [Troubleshooting](/migrations/troubleshooting) says when to use each.
+It also clears a failed no-transaction run and forgets a migration whose file is gone. It refuses a file whose version ran as a different migration, as after a renumbering. [Troubleshooting](/migrations/troubleshooting) says when to use each.

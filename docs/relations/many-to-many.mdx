@@ -30,11 +30,11 @@ var (
 )
 ```
 
-The join table's columns default to `student_id` and `course_id` here.
+The join table's columns default to `student_id` and `course_id` here. `Through` is required: a many-to-many with no join table is refused when the context opens.
 
 ### Name the join columns
 
-`PivotColumns` names them. A self-referencing relation needs it, because both columns would otherwise get the same name.
+`PivotColumns` names them. A self-referencing relation needs it, because both columns would otherwise get the same name, and the context refuses to open without it.
 
 ```go
 type Person struct {
