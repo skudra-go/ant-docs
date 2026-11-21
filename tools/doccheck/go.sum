@@ -42,8 +42,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/shopspring/decimal v1.6.0 h1:DcTwjCj4tJPLuGZYsR9W0hyX9pQwMIkdo26Ig1T9xX4=
 github.com/shopspring/decimal v1.6.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=
-github.com/skudra-go/ant v0.3.2 h1:RXmb08ofax9hAUA+eRc0IoCIX3UExyq9fGfPx4oO+EI=
-github.com/skudra-go/ant v0.3.2/go.mod h1:lvKmF0JiNpLmkd0JK5sB8L/3EFoEpYJDM6XcnEHgjA0=
+github.com/skudra-go/ant v0.4.0 h1:RXsIbLOGPQUeG5jol13nEwnAk6EI9Ggeh2lZpBfZdKc=
+github.com/skudra-go/ant v0.4.0/go.mod h1:lvKmF0JiNpLmkd0JK5sB8L/3EFoEpYJDM6XcnEHgjA0=
 github.com/skudra-go/ant/contrib/otel v0.0.0-20261114185136-81cd820c78ca h1:I18FUwg1mR4y301b0hUldlaZANhTefIM2hP1/BxMeI4=
 github.com/skudra-go/ant/contrib/otel v0.0.0-20261114185136-81cd820c78ca/go.mod h1:qezgaW+gYq2sWDEhtvRYBXC82X3J0XPxcLzQU7gmY7o=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

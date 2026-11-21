@@ -151,8 +151,12 @@ Rules:
 - A column that allows NULL must be a pointer or sql.Null[T]. A NOT NULL column
   must not be.
 - bigint is int64, integer is int32, smallint is int16, boolean is bool, text is
-  string, timestamptz is time.Time, jsonb is ant.JSON[T], bytea is []byte. For any
-  other type, including varchar(n), numeric(p,s), date, enums, and domains, use
+  string, timestamptz is time.Time, jsonb is ant.JSON[T], bytea is []byte,
+  interval is time.Duration, inet is netip.Addr, cidr is netip.Prefix, and an
+  array such as text[] or bigint[] is a slice such as []string or []int64. A
+  netip.Addr or netip.Prefix column allows NULL, so add
+  b.Column(&X.Field).NotNull() in Configure for a NOT NULL one. For any other
+  type, including varchar(n), numeric(p,s), date, enums, and domains, use
   b.Column(&X.Field).Type("the type as written") in Configure.
 - Declare each model's probe, named after the model in the plural: var Users = ant.Fields[User]().
 - A primary key named id is found by convention. For anything else use b.Key or

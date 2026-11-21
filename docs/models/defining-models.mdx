@@ -162,6 +162,6 @@ _, err := ant.Open[AppDB](ctx, postgres.Dialect, dsn)
 // ant: invalid schema: Typo.Email: unknown tag key "uniqe"
 ```
 
-A struct field with no tag and no exported fields of its own, such as `netip.Addr`, is a value the driver converts, so `*netip.Addr` is a nullable column.
+A struct field with no tag and no exported fields of its own, such as `netip.Addr`, is a value the driver converts, not an embedded struct. On PostgreSQL a `netip.Addr` is an `inet` column that allows `NULL`, since pgx writes the zero `netip.Addr` as `NULL`.
 
 <Tests path="model_definition" />

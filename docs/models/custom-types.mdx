@@ -231,11 +231,11 @@ _, err := db.Devices.Where(ant.Eq(&Devices.ID, id)).
 
 ## Limits of the drivers
 
-`database/sql` or the driver refuses these, and ant doesn't work around them:
+`database/sql` or the driver refuses or changes these, and ant doesn't work around them:
 
 - `sql.Null[uint64]` above `math.MaxInt64`. A plain `uint64` field is accepted.
-- `NULL` into a named `[]byte` type such as `json.RawMessage` or `net.IP`. Use a pointer to the type for a column that allows `NULL`.
-- PostgreSQL `INTERVAL` into a `time.Duration`. Store microseconds, or read it into `pgtype.Interval`.
+- pgx writes a pointer to a nil `json.RawMessage` as the JSON `null`, not as `NULL`.
+- pgx writes a 16-byte `net.IP` that holds an IPv4 address, which is what `net.ParseIP` returns, to an `inet` as `::ffff:10.0.0.1`, which `<<` against an IPv4 network doesn't match. Call `To4` on it, or use `netip.Addr`.
 
 See [databases](/reference/databases) for the rest.
 
@@ -256,6 +256,27 @@ var Items = ant.Fields[Item]()
 ```
 
 An `Array` holds no `NULL` element, so reading an array that has one is an error that says so, rather than the text `"NULL"` or `false`. A quoted `"NULL"` is still the text.
+
+### Standard Go types
+
+Go types that PostgreSQL has a column for take that column, as [models to tables](/migrations/models-to-tables#column-types) lists, and ant reads each back wherever it scans a row, including the values an insert or update reads back.
+
+```go
+type Job struct {
+	ID      int64
+	// spot-start
+	Timeout time.Duration  // interval
+	Tags    []string       // text[]
+	Meta    map[string]any // jsonb
+	// spot-end
+}
+```
+
+- A `time.Duration` reads an `interval` in each `IntervalStyle`, counted as `EXTRACT(EPOCH FROM ...)` counts it: a year is 365.25 days, a month left over 30 days, a day 24 hours. An infinite interval, or one past about 292 years, is an error. An interval keeps microseconds, so the nanoseconds below one are cut toward zero.
+- A `net.IP` reads an `inet` as an address. One with a netmask, such as `10.0.0.1/24`, is an error: read it into a `netip.Prefix`. `netip.Addr` is an `inet` too, and `netip.Prefix` a `cidr`.
+- A named byte slice, such as `json.RawMessage`, reads `NULL` as nil, as a `[]byte` does.
+- A map with string keys reads its numbers as `json.Number`, as `ant.JSON` does, so a large integer keeps its digits.
+- A plain slice, such as `[]string`, is an array of its element's type, and the driver reads it.
 
 Points and vectors have conditions and orderings of their own, and full-text search works on any text column.
 

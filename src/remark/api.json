@@ -1,10 +1,10 @@
 {
 	"module": "github.com/skudra-go/ant",
-	"version": "v0.3.2",
+	"version": "v0.4.0",
 	"packages": {
 		"ant": {
 			"path": "github.com/skudra-go/ant",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0",
 			"symbols": {
 				"Action": {
 					"kind": "type",
@@ -466,7 +466,7 @@
 				"Context.EnsureCreated": {
 					"kind": "method",
 					"decl": "func (c *Context) EnsureCreated(ctx context.Context) error",
-					"doc": "EnsureCreated creates the tables, indexes, and foreign keys of models that have no table yet, directly from the structs, and leaves existing tables as they are."
+					"doc": "EnsureCreated creates the tables, indexes, and foreign keys of models that have no table yet, and the enums and sequences they use that are not there, directly from the structs, and leaves existing ones as they are."
 				},
 				"Context.EnsureDeleted": {
 					"kind": "method",
@@ -486,7 +486,7 @@
 				"Context.Rollback": {
 					"kind": "method",
 					"decl": "func (c *Context) Rollback() error",
-					"doc": "Rollback ends a transaction from Begin, discarding its changes."
+					"doc": "Rollback ends a transaction from Begin, discarding its changes, and forgets the entities it began tracking, as a rollback of Tx does."
 				},
 				"Context.RollbackTo": {
 					"kind": "method",
@@ -649,7 +649,7 @@
 				},
 				"ErrBadSchema": {
 					"kind": "var",
-					"decl": "var ErrBadSchema = errors.New(\"ant: invalid schema\")",
+					"decl": "var ErrBadSchema = errs.ErrBadSchema",
 					"doc": "ErrBadSchema reports models that cannot become a valid schema."
 				},
 				"ErrConcurrency": {
@@ -746,6 +746,11 @@
 					"kind": "var",
 					"decl": "var ErrNoRows = errors.New(\"ant: no rows given\")",
 					"doc": "ErrNoRows reports an operation given no rows to work on."
+				},
+				"ErrNoTracking": {
+					"kind": "var",
+					"decl": "var ErrNoTracking = errors.New( \"ant: this context does not track changes, so there is nothing to save; \" + \"use a se...",
+					"doc": "ErrNoTracking reports SaveChanges, or a helper that gives it work such as Add, on a context with tracking off, such as the one Open returns, where it would save nothing."
 				},
 				"ErrNotColumn": {
 					"kind": "var",
@@ -1293,12 +1298,12 @@
 				"Interceptor.After": {
 					"kind": "method",
 					"decl": "After(ctx context.Context, s *Statement, o Outcome)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Interceptor.After"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Interceptor.After"
 				},
 				"Interceptor.Before": {
 					"kind": "method",
 					"decl": "Before(ctx context.Context, s *Statement) (context.Context, error)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Interceptor.Before"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Interceptor.Before"
 				},
 				"Into": {
 					"kind": "func",
@@ -1378,7 +1383,7 @@
 				"JSON.UnmarshalJSON": {
 					"kind": "method",
 					"decl": "func (j *JSON[V]) UnmarshalJSON(data []byte) error",
-					"doc": "UnmarshalJSON reads the value inside."
+					"doc": "UnmarshalJSON reads the value inside, as Scan does."
 				},
 				"JSON.V": {
 					"kind": "field",
@@ -2109,12 +2114,12 @@
 				"Outcome.Duration": {
 					"kind": "field",
 					"decl": "Duration time.Duration",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Outcome.Duration"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Outcome.Duration"
 				},
 				"Outcome.Err": {
 					"kind": "field",
 					"decl": "Err error",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Outcome.Err"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Outcome.Err"
 				},
 				"Page": {
 					"kind": "type",
@@ -2770,7 +2775,7 @@
 				},
 				"SchemaOf": {
 					"kind": "func",
-					"decl": "func SchemaOf[DB any](d dialect.Dialect) (*schema.Schema, error)",
+					"decl": "func SchemaOf[DB any](d dialect.Dialect, options ...Option) (*schema.Schema, error)",
 					"doc": "SchemaOf returns the schema DB's models describe: its Table fields, and models reached through their relations."
 				},
 				"Selectable": {
@@ -2838,7 +2843,7 @@
 					"kind": "method",
 					"decl": "func (s State) String() string",
 					"doc": "String returns the state's name.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/track#State.String"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/track#State.String"
 				},
 				"Statement": {
 					"kind": "type",
@@ -2848,18 +2853,18 @@
 				"Statement.Args": {
 					"kind": "field",
 					"decl": "Args []any",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Statement.Args"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.Args"
 				},
 				"Statement.Replica": {
 					"kind": "field",
 					"decl": "Replica bool",
 					"doc": "read from a replica",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Statement.Replica"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.Replica"
 				},
 				"Statement.SQL": {
 					"kind": "field",
 					"decl": "SQL string",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/exec#Statement.SQL"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.SQL"
 				},
 				"Sub": {
 					"kind": "type",
@@ -3225,19 +3230,19 @@
 					"kind": "method",
 					"decl": "func (UnixTime) ColumnType(string) string",
 					"doc": "ColumnType implements schema.Typed.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/meta#UnixTime.ColumnType"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.ColumnType"
 				},
 				"UnixTime.Scan": {
 					"kind": "method",
 					"decl": "func (t *UnixTime) Scan(src any) error",
 					"doc": "Scan implements sql.Scanner.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/meta#UnixTime.Scan"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.Scan"
 				},
 				"UnixTime.Value": {
 					"kind": "method",
 					"decl": "func (t UnixTime) Value() (driver.Value, error)",
 					"doc": "Value implements driver.Valuer.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/internal/meta#UnixTime.Value"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.Value"
 				},
 				"Unlink": {
 					"kind": "func",
@@ -3393,7 +3398,7 @@
 				"WithTracking": {
 					"kind": "func",
 					"decl": "func WithTracking(on bool) Option",
-					"doc": "WithTracking sets whether queries track what they load."
+					"doc": "WithTracking sets whether a context tracks what it loads, adds, and saves."
 				},
 				"WithoutAutoTx": {
 					"kind": "func",
@@ -3414,7 +3419,7 @@
 		},
 		"anttest": {
 			"path": "github.com/skudra-go/ant/anttest",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/anttest",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/anttest",
 			"symbols": {
 				"Factory": {
 					"kind": "type",
@@ -3490,7 +3495,7 @@
 		},
 		"dialect": {
 			"path": "github.com/skudra-go/ant/dialect",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect",
 			"symbols": {
 				"AppendNumbered": {
 					"kind": "func",
@@ -3859,7 +3864,7 @@
 		},
 		"ids": {
 			"path": "github.com/skudra-go/ant/ids",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/ids",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/ids",
 			"symbols": {
 				"NewSnowflake": {
 					"kind": "func",
@@ -3890,7 +3895,7 @@
 		},
 		"metrics": {
 			"path": "github.com/skudra-go/ant/metrics",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/metrics",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/metrics",
 			"symbols": {
 				"Metrics": {
 					"kind": "type",
@@ -3957,7 +3962,7 @@
 		},
 		"migrate": {
 			"path": "github.com/skudra-go/ant/migrate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/migrate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/migrate",
 			"symbols": {
 				"Absorbed": {
 					"kind": "const",
@@ -4039,6 +4044,11 @@
 					"kind": "field",
 					"decl": "OnApply func(Applied)",
 					"doc": "OnApply runs after each migration is applied, for logs and metrics."
+				},
+				"Config.Options": {
+					"kind": "field",
+					"decl": "Options []ant.Option",
+					"doc": "Options are those the application gives ant.Open."
 				},
 				"Config.Out": {
 					"kind": "field",
@@ -4172,7 +4182,7 @@
 				"ErrPending": {
 					"kind": "var",
 					"decl": "var ErrPending = errors.New(\"ant: migrations are pending\")",
-					"doc": "ErrPending reports migrations that have not been applied."
+					"doc": "ErrPending reports migrations that have not been applied, from status --check."
 				},
 				"ErrPendingChanges": {
 					"kind": "var",
@@ -4316,7 +4326,7 @@
 				"Repeatable": {
 					"kind": "const",
 					"decl": "const Repeatable Kind",
-					"doc": "Repeatable migrations run after the versioned ones, and again whenever they change."
+					"doc": "Repeatable migrations run after the versioned ones, and again whenever they change or a versioned migration runs, since that migration may have dropped what they define."
 				},
 				"Run": {
 					"kind": "func",
@@ -4409,7 +4419,7 @@
 		},
 		"mysql": {
 			"path": "github.com/skudra-go/ant/dialect/mysql",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect/mysql",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/mysql",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -4466,7 +4476,7 @@
 		},
 		"pgxext": {
 			"path": "github.com/skudra-go/ant/dialect/postgres/pgxext",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect/postgres/pgxext",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/postgres/pgxext",
 			"symbols": {
 				"Batch": {
 					"kind": "type",
@@ -4522,7 +4532,7 @@
 		},
 		"postgres": {
 			"path": "github.com/skudra-go/ant/dialect/postgres",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect/postgres",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/postgres",
 			"symbols": {
 				"Array": {
 					"kind": "type",
@@ -4700,7 +4710,7 @@
 		},
 		"qb": {
 			"path": "github.com/skudra-go/ant/qb",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/qb",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/qb",
 			"symbols": {
 				"Aliased": {
 					"kind": "func",
@@ -4871,6 +4881,10 @@
 				"Conflict.Set": {
 					"kind": "field",
 					"decl": "Set []Assignment"
+				},
+				"Conflict.Target": {
+					"kind": "field",
+					"decl": "Target []Cond"
 				},
 				"Conflict.Where": {
 					"kind": "field",
@@ -5552,7 +5566,7 @@
 		},
 		"schema": {
 			"path": "github.com/skudra-go/ant/schema",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/schema",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/schema",
 			"symbols": {
 				"AddCheck": {
 					"kind": "type",
@@ -5589,6 +5603,10 @@
 				"AddColumn.Column": {
 					"kind": "field",
 					"decl": "Column *Column"
+				},
+				"AddColumn.References": {
+					"kind": "field",
+					"decl": "References *Ref"
 				},
 				"AddColumn.String": {
 					"kind": "method",
@@ -6431,6 +6449,11 @@
 					"kind": "field",
 					"decl": "Include []string"
 				},
+				"Index.Invalid": {
+					"kind": "field",
+					"decl": "Invalid bool",
+					"doc": "Invalid marks an index a live database has but does not use, as a CREATE INDEX CONCURRENTLY that failed leaves behind."
+				},
 				"Index.Method": {
 					"kind": "field",
 					"decl": "Method string",
@@ -6765,6 +6788,33 @@
 					"decl": "func (c ReorderEnum) Warning() string",
 					"doc": "Warning implements Change."
 				},
+				"Repartition": {
+					"kind": "type",
+					"decl": "type Repartition struct{ … }",
+					"doc": "Repartition reports a table whose partitioning changed: added, removed, or by another method or key."
+				},
+				"Repartition.From": {
+					"kind": "field",
+					"decl": "From *Partition"
+				},
+				"Repartition.String": {
+					"kind": "method",
+					"decl": "func (c Repartition) String() string",
+					"doc": "String implements Change."
+				},
+				"Repartition.Table": {
+					"kind": "field",
+					"decl": "Table Ref"
+				},
+				"Repartition.To": {
+					"kind": "field",
+					"decl": "To *Partition"
+				},
+				"Repartition.Warning": {
+					"kind": "method",
+					"decl": "func (c Repartition) Warning() string",
+					"doc": "Warning implements Change."
+				},
 				"Schema": {
 					"kind": "type",
 					"decl": "type Schema struct{ … }",
@@ -7021,7 +7071,7 @@
 		},
 		"secure": {
 			"path": "github.com/skudra-go/ant/secure",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/secure",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/secure",
 			"symbols": {
 				"ErrNoKeys": {
 					"kind": "var",
@@ -7091,7 +7141,7 @@
 		},
 		"sqlite": {
 			"path": "github.com/skudra-go/ant/dialect/sqlite",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect/sqlite",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/sqlite",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -7102,7 +7152,7 @@
 		},
 		"sqlserver": {
 			"path": "github.com/skudra-go/ant/dialect/sqlserver",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/dialect/sqlserver",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/sqlserver",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -7113,7 +7163,7 @@
 		},
 		"validate": {
 			"path": "github.com/skudra-go/ant/validate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.3.2/validate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/validate",
 			"symbols": {
 				"All": {
 					"kind": "func",

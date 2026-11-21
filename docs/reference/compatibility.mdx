@@ -29,9 +29,9 @@ ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [da
 
 ## Breaking changes so far
 
-The latest release is v0.3.2. Before it came v0.1.0, v0.2.0, v0.3.0 and v0.3.1.
+The latest release is v0.4.0. Before it came v0.1.0, v0.2.0, v0.3.0, v0.3.1 and v0.3.2.
 
-### The next release
+### v0.4.0
 
 It changes how tracking starts, which most code that saves will notice:
 
@@ -41,6 +41,8 @@ It changes how tracking starts, which most code that saves will notice:
 | `ant.Session(db)` of a root opened with `WithTracking(false)` didn't track | A session tracks unless given `WithTracking(false)` |
 | A rolled-back transaction left what it loaded in the tracker | A rollback forgets what its transaction began tracking |
 
+On PostgreSQL, standard Go types take PostgreSQL's own column, and ant reads them back: `time.Duration` is `interval`, `net.IP` and `netip.Addr` are `inet`, `netip.Prefix` is `cidr`, `json.RawMessage` and a map with string keys are `jsonb`, `decimal.Decimal` is `numeric`, and a plain slice is an array, as `[]string` is `text[]`. A `time.Duration` was `bigint`, and a `net.IP` and a `json.RawMessage` were `bytea`, so the next `diff` of tables ant made converts those columns and their values. `.Type("bigint")` on a column keeps it as it is. See [columns made by earlier releases](/migrations/models-to-tables#columns-made-by-earlier-releases).
+
 The rest of the changes are refusals of what ant used to misread, and fixes:
 
 - `ant.Open` resolves every relation and refuses an unknown tag key, a flag key with a value, two fields on one column, `[]*Post`, an embedded `*Base`, func and chan fields, a many-to-many with no `Through` or with one column for both sides, and a SQLite DSN that doesn't set `foreign_keys`. It reports every broken model at once.
@@ -48,6 +50,7 @@ The rest of the changes are refusals of what ant used to misread, and fixes:
 - `ant.SchemaOf` takes options, and `migrate.Config.Options` passes the application's to the migrate program. `ant.ErrNoTracking` and `schema.Repartition` are new.
 - Migrations refuse a file with its own `BEGIN` or `COMMIT` that runs in ant's transaction, a `-- ant:no-transaction` below the first statement, a missing versions folder, `up --to` an unknown version, and `baseline` with no version when more than one migration is left. `repair` refuses a version applied as another migration, and `diff` and `check` a snapshot written for a file that is gone. `status --check` fails while anything waits.
 - Generated SQL: a new required foreign key column is added `NULL`, then `SET NOT NULL`; a foreign key column takes its target's type; enum and sequence names are quoted where columns use them; two default names that collide are refused; a concurrent index build drops a leftover first; partitioning changes are reported. `adopt` leaves out `OWNER TO`, `GRANT` and `REVOKE`.
+- `IncludeJoined` and a projection with a `LeftJoin` read a joined side's `netip.Addr`, slices and `[16]byte`, which failed with `unsupported Scan`. `Avg` and `AvgOf` of a `time.Duration` read an `interval`'s average as nanoseconds.
 
 ### v0.3.2
 
