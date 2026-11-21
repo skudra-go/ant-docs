@@ -26,6 +26,8 @@ last, err := ant.MaxOf(ctx, adults, &Users.Name) // string
 // SELECT MAX("users"."name") FROM "users" WHERE "users"."age" > $1
 ```
 
+`AvgOf` and `ant.Avg` of a `time.Duration` give its average in nanoseconds, from an `interval` column on PostgreSQL as from an integer one, so `time.Duration(average)` turns it back into a duration.
+
 Over no rows these calls return zero, not `NULL`. For a plain row count, see [`Count`](/queries/reading-rows#count-and-check).
 
 ## Group rows

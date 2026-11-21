@@ -182,9 +182,21 @@ A list of more values than one statement can take as parameters is sent on Postg
 ant doesn't work around these limits of `database/sql` and drivers.
 
 - An `sql.Null[uint64]` above `math.MaxInt64` is refused by `database/sql`, though a bare `uint64` field is not.
-- `NULL` can't be read into a named `[]byte` type such as `json.RawMessage` or `net.IP`. Use a pointer to it for a column that allows `NULL`.
-- pgx hands an `INTERVAL` to `database/sql` as text, which doesn't convert to a `time.Duration`. Read it into `pgtype.Interval`, or store a number of microseconds.
+- pgx writes a pointer to a nil `json.RawMessage` as the JSON `null`, not as `NULL`.
+- pgx writes a 16-byte `net.IP` that holds an IPv4 address, which is what `net.ParseIP` returns, to an `inet` as `::ffff:10.0.0.1`, which `<<` against an IPv4 network doesn't match. Call `To4` on it, or use `netip.Addr`.
 - `ant.JSON` and `secure.Value` refuse text that isn't valid UTF-8, as a text column does. `encoding/json` would otherwise store U+FFFD in its place.
+
+## Values ant converts
+
+`database/sql` can't fill some types from what the drivers give, so ant reads them itself, wherever it scans a row:
+
+- A `time.Duration`, `*time.Duration` or `sql.Null[time.Duration]` reads an integer as nanoseconds, and PostgreSQL's text for an `interval` in each `IntervalStyle`. A year counts 365.25 days, a month left over 30 and a day 24 hours, as `EXTRACT(EPOCH FROM ...)` counts them. An infinite interval, or one past about 292 years, is an error.
+- A `net.IP`, `*net.IP` or `sql.Null[net.IP]` reads bytes as they are, and the text of an `inet` as an address. One with a netmask, such as `10.0.0.1/24`, is an error: read it into a `netip.Prefix`.
+- A named byte slice, such as `json.RawMessage`, reads `NULL` as nil, as a `[]byte` does.
+- A `float64`, `*float64` or `sql.Null[float64]` reads an interval as its nanoseconds, so `Avg`, `AvgOf` and `AvgRelated` of a `time.Duration` give nanoseconds from an `interval` column as from an integer one.
+- A map with string keys reads JSON with `json.Number` for the numbers in its interfaces, as `ant.JSON` does.
+
+On PostgreSQL these types also get PostgreSQL's own column: see [models to tables](/migrations/models-to-tables#column-types).
 
 ## Times
 
