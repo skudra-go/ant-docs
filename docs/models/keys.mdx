@@ -97,7 +97,7 @@ err := db.Seats.Insert(ctx, &Seat{Number: 0, Row: "A"})
 
 ## String and UUID keys
 
-Non-integer keys are never generated, and an empty one is written as it is. A named type works as a key and a plain string finds it.
+The database generates only integer keys. A string or `uuid.UUID` key is yours to fill: set it, [generate it in Go](#generate-the-key-in-go), or give the column a default. A named type works as a key and a plain string finds it.
 
 ```go
 type Slug string
@@ -114,6 +114,17 @@ err := db.Pages.Insert(ctx, &Page{ID: "home", Title: "Home"})
 home, err := db.Pages.Find(ctx, "home")
 // spot-end
 ```
+
+An insert with the key at its zero value, an empty string or the zero `uuid.UUID`, is refused before anything is written, since every such row would get the same key and the second would fail as a duplicate:
+
+```go
+err := db.Pages.Insert(ctx, &Page{Title: "Untitled"})
+// ant: the key is zero and nothing generates it: Page.ID is the zero main.Slug, and nothing
+// generates it: set it before the insert, generate it with ant.GenerateKey in Configure ...
+errors.Is(err, ant.ErrZeroKey) // true
+```
+
+For a `uuid.UUID` from `github.com/google/uuid`, call `ant.GenerateKey(b, &Docs.ID, uuid.New)` in `Configure`. On PostgreSQL a default works too: `ID uuid.UUID` tagged `ant:"default=gen_random_uuid()"`. A `BeforeInsert` hook that sets the key runs before the check.
 
 ## Generate the key in Go
 

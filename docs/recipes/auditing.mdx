@@ -116,7 +116,7 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 // -- $1 = 'order.created', $2 = the new order's id
 ```
 
-A hook only gets a `context.Context` and cannot reach the transaction, so use hooks to check or refuse, not to write rows.
+A hook's `ctx` is bound to the write's transaction, so a hook can write the audit row too: [`db.AuditLog.Insert(ctx, ...)`](/lifecycle/hooks-and-observers#write-from-a-hook) in an `AfterInsert` commits or rolls back with the order.
 
 ## React after the commit
 

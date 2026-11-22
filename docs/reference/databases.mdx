@@ -181,6 +181,8 @@ A list of more values than one statement can take as parameters is sent on Postg
 
 ant doesn't work around these limits of `database/sql` and drivers.
 
+- The MySQL, SQLite and SQL Server drivers take only what `database/sql` converts. On those four, `ant.Open` refuses a slice, map, array or plain struct field with no `driver.Valuer` and `sql.Scanner`, and names it. Store one with [`ant.JSON[T]`](/models/custom-types#json), which works on every database. pgx converts them on PostgreSQL: a `[]string` is a `text[]`, a map or a struct `jsonb`.
+- SQLite has no decimal type. A `decimal.Decimal` with a fraction is stored as a `REAL`, so `SumOf` and `Sum` add floats there: 1.10 + 2.20 reads back as 3.3000000000000003. The other four add decimals exactly. On SQLite, keep money in integer cents.
 - An `sql.Null[uint64]` above `math.MaxInt64` is refused by `database/sql`, though a bare `uint64` field is not.
 - pgx writes a pointer to a nil `json.RawMessage` as the JSON `null`, not as `NULL`.
 - pgx writes a 16-byte `net.IP` that holds an IPv4 address, which is what `net.ParseIP` returns, to an `inet` as `::ffff:10.0.0.1`, which `<<` against an IPv4 network doesn't match. Call `To4` on it, or use `netip.Addr`.

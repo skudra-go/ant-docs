@@ -64,6 +64,7 @@ const sidebars = {
       'writing/update-and-delete',
       'writing/upsert-and-merge',
       'writing/bulk',
+      'writing/from-a-request',
     ]),
     section('Change tracking', 'eye', [
       'tracking/save-changes',

@@ -52,8 +52,9 @@ if errors.Is(err, ant.ErrNotFound) {
 | Error | Means |
 | --- | --- |
 | `ant.ErrNoCondition` | A [bulk write](/writing/update-and-delete#the-no-condition-guard) with no condition that can exclude a row. `Unfiltered` allows it on purpose |
-| `ant.ErrNoAssignment` | An `Update` with nothing to set |
-| `ant.ErrNoRows` | A write given no rows |
+| `ant.ErrNoAssignment` | An `Update` with nothing to set, or an `UpdateMany` that names no fields. The error shows the call that names them |
+| `ant.ErrNoRows` | `PrepareBulk` or `Values` given no rows. `Insert` and `InsertMany` given none do nothing and return `nil` |
+| `ant.ErrZeroKey` | An insert whose string or `uuid.UUID` key is zero and that nothing generates. See [string and UUID keys](/models/keys#string-and-uuid-keys) |
 | `ant.ErrNilEntity` | A nil pointer passed to a write |
 | `ant.ErrReadOnly` | A write to a read-only model, such as a view |
 | `ant.ErrNotSoftDeleted` | `Restore` on a model with no [`DeletedAt`](/lifecycle/soft-deletes) |
@@ -68,7 +69,7 @@ if errors.Is(err, ant.ErrNotFound) {
 | `ant.ErrWrongModel` | A field pointer from another model's probe |
 | `ant.ErrNotColumn` | A relation used as a column |
 | `ant.ErrNotRelation` | A field that is not a relation, used as one |
-| `ant.ErrNoKey` | A key operation on a model with no primary key |
+| `ant.ErrNoKey` | A key operation on a model with no primary key. A field spelled `Id` is not the key, and the error says to name it `ID` |
 | `ant.ErrKeyType` | A key whose type does not match the primary key |
 
 [`antvet`](/tooling/antvet) finds most of these at build time.
@@ -77,11 +78,11 @@ if errors.Is(err, ant.ErrNotFound) {
 
 | Error | Means |
 | --- | --- |
-| `ant.ErrNoContext` | The type passed to `Open` does not embed `ant.Context` |
+| `ant.ErrNoContext` | The type passed to `Open` does not embed `ant.Context`, or is a pointer: `Open[AppDB]`, not `Open[*AppDB]` |
 | `ant.ErrNotOpen` | A table or context that did not come from `Open` |
-| `ant.ErrNoForeignKey` | A relation whose foreign key cannot be found by convention, from `Open`. Name it in `Configure` |
-| `ant.ErrNoColumnType` | A field whose database type cannot be worked out. Set it with `Column(...).Type(...)` |
-| `ant.ErrBadSchema` | A model `Open` would misread, such as an unknown tag key or two fields on one column, or models that cannot become a valid schema. The error names the field |
+| `ant.ErrNoForeignKey` | A relation whose foreign key cannot be found by convention, from `Open`. The error names the fields it looked for and the `ForeignKey` call to write in `Configure` |
+| `ant.ErrNoColumnType` | A field whose database type cannot be worked out. Set it with `Column(...).Type(...)`. On MySQL, MariaDB, SQLite and SQL Server, also a slice, map or struct field the driver can't take: store it with `ant.JSON[T]` |
+| `ant.ErrBadSchema` | A model `Open` would misread, such as an unknown tag key or two fields on one column, or models that cannot become a valid schema. The error names the field, and for a GORM tag such as `primaryKey` or `size:100` gives ant's spelling |
 | `ant.ErrNotImplemented` | A feature with no implementation yet |
 
 ## Change tracking and transactions
@@ -178,6 +179,14 @@ case ant.IsRetryable(err):
 ```
 
 `ant.SQLState(err)` returns the code itself, such as `23505`. Each dialect translates its own codes.
+
+A table that does not exist is `42P01` on all five, and the message says so, since the drivers' own name only the table:
+
+```go
+users, err := db.Users.All(ctx)
+// ERROR: relation "users" does not exist (SQLSTATE 42P01); the table does not exist:
+// create it with EnsureCreated, or with a migration on PostgreSQL
+```
 
 | Function | SQLSTATE |
 | --- | --- |

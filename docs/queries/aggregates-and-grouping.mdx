@@ -28,7 +28,7 @@ last, err := ant.MaxOf(ctx, adults, &Users.Name) // string
 
 `AvgOf` and `ant.Avg` of a `time.Duration` give its average in nanoseconds, from an `interval` column on PostgreSQL as from an integer one, so `time.Duration(average)` turns it back into a duration.
 
-Over no rows these calls return zero, not `NULL`. For a plain row count, see [`Count`](/queries/reading-rows#count-and-check).
+Over no rows these calls return zero, not `NULL`, and nil for a pointer field. They take a field of any type, such as a nullable `*int`, a `decimal.Decimal` or a `*time.Time`, and the database says if it can't add one up. For a plain row count, see [`Count`](/queries/reading-rows#count-and-check).
 
 ## Group rows
 
@@ -104,6 +104,8 @@ groups, err := ant.Project[AgeGroup](
 | `ant.Sum(&Users.Age)` | the column's type |
 | `ant.Avg(&Users.Age)` | `float64` |
 | `ant.Min(&Users.Age)`, `ant.Max(&Users.Age)` | the column's type |
+
+In a [projection](/queries/projections#null-in-a-plain-field), an aggregate over no rows reads into a plain field as zero. `ant.Nullable(ant.Max(&Users.Age))` keeps the `NULL` for an `sql.Null` field.
 
 Each is an [expression](/queries/expressions), so `.Filter(...)` narrows one aggregate without touching the rest of the query:
 

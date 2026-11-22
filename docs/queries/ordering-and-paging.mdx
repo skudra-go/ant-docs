@@ -14,7 +14,7 @@ users, err := db.Users.OrderBy(&Users.Age).ThenByDesc(&Users.Name).All(ctx)
 // SELECT ... FROM "users" ORDER BY "users"."age", "users"."name" DESC
 ```
 
-`ThenBy` without an ordering before it returns `ant.ErrThenWithoutOrder`.
+`ThenBy` without an ordering before it returns `ant.ErrThenWithoutOrder`. They take a field of any type, so a nullable, `uuid.UUID` or `decimal.Decimal` column sorts as a plain one does, and the database says if it can't order one. `Latest` and `Oldest` take any field too.
 
 ## Order by an expression or place NULLs
 
@@ -29,6 +29,34 @@ users, err := db.Users.
 	All(ctx)
 // SELECT ... FROM "users" ORDER BY "users"."bio" NULLS LAST, LOWER("users"."name") DESC
 ```
+
+## Sort by a column the request names {#sort-from-a-request}
+
+A request names its sort as text. List the names it may use in a map of `ant.FieldRef`, and order by the entry's `Asc` or `Desc`:
+
+```go
+sorts := map[string]ant.FieldRef{
+	"name": ant.F(&Users.Name),
+	"age":  ant.F(&Users.Age),
+}
+
+field, ok := sorts[r.URL.Query().Get("sort")]
+if !ok {
+	return errors.New("unknown sort")
+}
+
+// spot-next-line
+users, err := db.Users.Order(field.Desc(), sorts["name"].Asc()).All(ctx)
+// SELECT ... FROM "users" ORDER BY "users"."age" DESC, "users"."name"
+```
+
+{/*
+```go
+var r *http.Request
+```
+*/}
+
+A name that isn't in the map gives a zero `FieldRef`, which makes the query fail with `ant.ErrNotProbe` rather than sort by nothing. Check `ok` to answer the request with a 400.
 
 ## Newest, oldest, random
 

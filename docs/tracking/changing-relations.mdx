@@ -163,6 +163,38 @@ err = session.SaveChanges(ctx)
 
 A pointer that was empty when loaded and is still empty leaves the foreign key to you.
 
+## Replace or clear a has-one {#replace-a-has-one}
+
+A has-one pointer works like a slice of one. Replacing the loaded child, or setting it to `nil`, removes the old one as [removing a child](#remove-a-child) does: a required foreign key deletes it, and a nullable one unlinks it. The old row goes before the new one is inserted, so a unique foreign key holds.
+
+```go
+type Driver struct {
+	ant.Base
+	Name    string
+	License *License
+}
+
+type License struct {
+	ant.Base
+	// spot-next-line
+	DriverID int64 `ant:"unique"` // required, so a replaced license is deleted
+	Number   string
+}
+
+var Drivers = ant.Fields[Driver]()
+
+driver, err := session.Drivers.IncludeOne(&Drivers.License).Find(ctx, id)
+
+// spot-next-line
+driver.License = &License{Number: "B-2"}
+
+err = session.SaveChanges(ctx)
+// DELETE FROM "licenses" WHERE "licenses"."id" = $1
+// INSERT INTO "licenses" ("created_at", "updated_at", "driver_id", "number") VALUES ($1, $2, $3, $4) RETURNING "id"
+```
+
+An old child that another parent holds now is moved, not removed. A has-one [scoped with `Latest` or `Oldest`](/relations/advanced#scoped-relations-and-latest-of-many) shows one of many rows, so replacing or clearing it removes nothing. A [soft-deleted](/lifecycle/soft-deletes#reuse-a-unique-value) old child keeps its foreign key, so a unique index on that key must leave deleted rows out.
+
 ## Change a many-to-many link
 
 Appending to a many-to-many slice links, removing unlinks, and the target rows stay.
@@ -272,6 +304,8 @@ type SessionDB struct {
 	Teams      ant.Table[Team]
 	Students   ant.Table[Student]
 	Categories ant.Table[Category]
+	Drivers    ant.Table[Driver]
+	Licenses   ant.Table[License]
 }
 
 var (

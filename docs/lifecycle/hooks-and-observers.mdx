@@ -96,13 +96,16 @@ func (m *Member) BeforeInsert(ctx context.Context) error {
 type MembersDB struct {
 	ant.Context
 	Members ant.Table[Member]
+	Notes   ant.Table[Note]
 }
 
 var Members = ant.Fields[Member]()
 ```
 */}
 
-A query with another context, such as `context.Background()`, counts as a second operation on the tracker and returns `ant.ErrConcurrentUse`. Goroutines started with the hook's context share the claim and must not use the tracker concurrently.
+The hook's `ctx` is bound to the write's transaction, as by [`ant.InTx`](/transactions#code-that-holds-db). So the query runs in that transaction even through a global `db`, sees the rows the write has made so far, and waits on none of its locks.
+
+A query with another context, such as `context.Background()`, runs outside the transaction. On a context with change tracking it also counts as a second operation on the tracker and returns `ant.ErrConcurrentUse`. Goroutines started with the hook's context share the claim and must not use the tracker concurrently.
 
 ## What runs no hooks
 
@@ -121,11 +124,47 @@ var member *Member
 ```
 */}
 
-:::warning[A hook cannot reach the transaction]
+## Write from a hook
 
-A hook only gets a `context.Context`, so use it to check or refuse a write, not to write rows. For that, see [auditing](/recipes/auditing).
+A write a hook makes with its `ctx` is part of the write's transaction, so it commits or rolls back with it:
 
-:::
+```go
+func (m *Member) AfterInsert(ctx context.Context) error {
+	// spot-next-line
+	return db.Notes.Insert(ctx, &Note{MemberID: m.ID, Text: "joined"})
+}
+
+err := db.Members.Insert(ctx, &Member{Name: "Ann", Email: "ann@example.com"})
+// BEGIN
+// INSERT INTO "members" (...) VALUES (...) RETURNING "id"
+// INSERT INTO "notes" (...) VALUES (...) RETURNING "id"   -- AfterInsert's
+// COMMIT
+```
+
+{/*
+```go
+type Note struct {
+	ID       int64
+	MemberID int64
+	Text     string
+}
+```
+*/}
+
+If a later part of the write fails, the note is rolled back too. For an audit log of every save, a [`SaveInterceptor`](/recipes/auditing) sees the whole save in one place.
+
+Outside a transaction, a write of one row whose model has no After hook opens none, so what its Before hooks write commits on its own. Inside a `Tx` they run in that transaction.
+
+For a write that must stay even when the outer write fails, such as a record of the attempt, give it `ant.InTx(ctx, db)` with `db` in no transaction, which unbinds the context:
+
+```go
+func (m *Member) BeforeDelete(ctx context.Context) error {
+	// spot-next-line
+	return db.Notes.Insert(ant.InTx(ctx, db), &Note{MemberID: m.ID, Text: "delete tried"})
+}
+```
+
+A `Tx` inside a hook is a savepoint in the write's transaction. It takes no `Isolation`, which returns `ant.ErrNestedIsolation`, and `Attempts` does not retry it.
 
 ## Observe committed writes {#observers}
 

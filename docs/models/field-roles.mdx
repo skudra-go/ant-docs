@@ -101,7 +101,7 @@ type RolesDB struct {
 
 ## Computed
 
-`computed` has no column. `Query.With` fills it from an expression; without `With` it stays empty.
+`computed` has no column. `Query.With` fills it from an expression; without `With` it stays empty. A tracked entity read with `With` saves its other fields as usual, and never writes a computed one.
 
 ```go
 type Writer struct {

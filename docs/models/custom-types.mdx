@@ -80,7 +80,9 @@ func (m *Money) parse(text string) error {
 
 Without `ColumnType`, set the column type in `Configure` with `b.Column(&...).Type("numeric(19,4)")`, or migrations stop with `ant.ErrNoColumnType`.
 
-Use a custom type for a value with its own encoding, such as money or a phone number. Use [`ant.JSON`](#json) for a document you may query inside.
+Use a custom type for a value with its own encoding, such as a phone number. Use [`ant.JSON`](#json) for a document you may query inside.
+
+For money, `decimal.Decimal` from `github.com/shopspring/decimal` needs no type of your own. It is `numeric` on PostgreSQL, adds up exactly on four of the five databases, and conditions, ordering, `Sum` and `Inc` take it as they take a number. SQLite has no decimal type and stores a fraction as a `REAL`, so a sum there can read back as 3.3000000000000003: on SQLite, keep money in integer cents.
 
 ### Slice types
 

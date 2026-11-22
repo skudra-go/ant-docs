@@ -3,7 +3,7 @@ title: Insert
 description: Insert one row, several, or a whole graph of related entities.
 ---
 
-`Insert` writes new entities and fills in generated keys. Every field is written as is, zeros included.
+`Insert` writes new entities and fills in generated keys. Every field is written as is, zeros included. A model decoded from a request body is written as is too, so decode into an input struct instead: see [write from a request](/writing/from-a-request).
 
 ## Insert one row
 

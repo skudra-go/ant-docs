@@ -30,8 +30,11 @@ Add the vet line to CI to fail the build on a report.
 | A field pointer that does not come from a [probe](/models/field-probes) | `ant.Gt(&age, 18)` |
 | A field pointer from another model's probe | `db.Posts.Where(ant.Gt(&Users.Age, 18))` |
 | A `Find` key of the wrong type | `db.Users.Find(ctx, "1")` |
+| A change saved through a context that did not load it | `user` from `db.Users.Find`, changed, then `session.SaveChanges(ctx)` |
 
 The second check covers a query's conditions, ordering, grouping, columns, includes and updates, and aggregates such as `ant.SumOf`. The key in the third check comes from the model's `Configure` when it sets one with `Key` or `GenerateKey`, so a model with a `Code string` key is judged against `string`, not against the field named `ID`.
+
+The fourth check follows an entity within one function, from a `Find` or `First` on one context to a `SaveChanges` on another, and names it: `user was loaded through db and changed, but session.SaveChanges saves only what session tracks`. It stays quiet when the entity is attached, passed to another function, or also saved through the context that loaded it. See [load and save through one session](/tracking/sessions#one-session).
 
 Every field pointer passed to an ant function or builder method must come from a probe, including `ant.Into`, `ant.EqCol`, the relation functions and `ant.Original`. Functions that take an entity, such as `ant.Add`, accept any pointer.
 

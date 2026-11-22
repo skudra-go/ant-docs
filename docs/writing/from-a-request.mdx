@@ -1,0 +1,111 @@
+---
+title: Write from a request
+description: Decode a request body into an input struct, not a model, so a client sets only the fields you allow.
+---
+
+A model decoded straight from a request body takes every field the body names, including its key, its timestamps and its relations, and ant writes them as given. Decode into an input struct that holds what the client may set, and copy those fields into the model.
+
+## Decode into an input struct
+
+```go
+import "encoding/json"
+
+type NewPost struct {
+	Title string
+}
+
+func createPost(w http.ResponseWriter, r *http.Request) {
+	var in NewPost
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+
+		return
+	}
+
+	// spot-start
+	post := &Post{
+		UserID: signedIn(r), // from the session, not the body
+		Title:  in.Title,
+	}
+	// spot-end
+
+	if err := db.Posts.Insert(r.Context(), post); err != nil {
+		http.Error(w, "could not save", http.StatusInternalServerError)
+	}
+}
+```
+
+```sql
+INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title", "published")
+VALUES ($1, $2, $3, $4, $5) RETURNING "id"
+```
+
+A body such as `{"Title": "Mine", "ID": 77, "User": {"Name": "Evil"}}` sets the title and nothing else, since `NewPost` has no other field.
+
+## What a body reaches in a model
+
+Decoded into `Post` itself, the same body chooses the key and inserts a user:
+
+```go
+import "encoding/json"
+
+var decoded Post
+
+err := json.Unmarshal(body, &decoded) // {"Title": "Mine", "ID": 77, "User": {"Name": "Evil", ...}}
+
+// spot-next-line
+err = db.Posts.Insert(ctx, &decoded)
+// INSERT INTO "users" ("created_at", "updated_at", "name", "email", "age", "bio") VALUES (...) RETURNING "id"
+// INSERT INTO "posts" ("id", "created_at", "updated_at", "user_id", "title", "published") VALUES ($1, ...) -- $1 = 77
+```
+
+| In the body | What the insert does with it |
+| --- | --- |
+| A key, `"ID": 77` | Writes it: a non-zero key is inserted as given |
+| `"CreatedAt"` | Keeps it, as any [`CreatedAt` you set](/lifecycle/timestamps) |
+| `"Version": 9` | Starts the row at that [version](/lifecycle/optimistic-concurrency) |
+| `"DeletedAt"` with a time | Inserts the row already [soft-deleted](/lifecycle/soft-deletes) |
+| A parent, `"User": {...}` | Inserts it, and links the post to it in place of `UserID` |
+| Children, `"Posts": [...]` on a user | Inserts them |
+
+`InsertOnly` leaves the relations out, and writes the rest as given.
+
+## Update from a request
+
+Decoding into a tracked entity writes over what was loaded. `"Posts": []` empties a loaded relation, and `SaveChanges` [deletes those posts](/tracking/changing-relations#remove-a-child). Decode into an input struct here too, and copy what it holds:
+
+```go
+import "encoding/json"
+
+type Rename struct {
+	Name string
+}
+
+session := ant.Session(db)
+
+user, err := session.Users.Include(&Users.Posts).Find(ctx, id)
+
+var in Rename
+
+err = json.Unmarshal(body, &in) // {"Name": "Alice B.", "Posts": []}
+
+// spot-next-line
+user.Name = in.Name
+
+err = session.SaveChanges(ctx)
+// UPDATE "users" SET "name" = $1, "updated_at" = $2 WHERE "users"."id" = $3
+```
+
+For a field the client may leave out, give the input struct a pointer, such as `Name *string`, and copy it only when it isn't nil.
+
+{/*
+```go
+import "encoding/json"
+
+func signedIn(r *http.Request) int64 { return 1 }
+
+var body []byte
+```
+*/}
+
+<Tests path="writing/from_request_test.go" />

@@ -49,7 +49,7 @@ gophers, err := db.Users.Where(ant.Eq(&Users.Bio, new("Gopher"))).All(ctx)
 // spot-end
 ```
 
-`In` and `NotIn` treat a `nil` among their values the same way. See [conditions](/queries/conditions#null).
+`In` and `NotIn` treat a `nil` among their values the same way, and `Ne` with a value matches the NULL rows too, as `!=` does in Go. See [conditions](/queries/conditions#null).
 
 ## Set a column to NULL
 

@@ -40,6 +40,23 @@ Each session saves only its own changes, and many run at once. Observers registe
 
 A session takes the root's settings, and options change them for that session alone: a logger, interceptors or replicas given to `ant.Session(db, ...)` add to the root's, for every statement the session runs, in a transaction or not.
 
+## Load and save through one session {#one-session}
+
+`SaveChanges` saves only what its own context tracks. An entity loaded through the root, which doesn't track, or through another session is left out, and `SaveChanges` still returns nil:
+
+```go
+user, err := db.Users.Find(ctx, id) // through the root
+
+user.Name = "Alice B."
+
+session := ant.Session(db)
+
+// spot-next-line
+err = session.SaveChanges(ctx) // nil, and nothing is written
+```
+
+Load it through the session that saves it, or `ant.Attach(ctx, session, user)` before changing it. `session.HasChanges(ctx)` tells whether a save would write anything, and [antvet](/tooling/antvet) reports this slip within a function.
+
 :::warning[Close the root only]
 
 A session shares the root's pool, so closing a session closes it for everyone. Close only the context from `Open`.
@@ -73,6 +90,8 @@ A session tracks unless you give it `ant.WithTracking(false)`. `ant.WithTracking
 ## Two operations at once
 
 Every load returns the tracker's one instance of a row, and `Include` writes the related rows into it. Two requests on one tracking context would load into the same entities while both change them: each would reset Alice's posts and append its own, so both would see the posts twice.
+
+That one instance can also make a loaded graph a cycle: a post's author is the user that holds the post, and `json.Marshal` refuses it. See [encoding a loaded graph](/relations/loading#json).
 
 While one operation uses the tracker, another gets `ant.ErrConcurrentUse` at once instead of waiting.
 
