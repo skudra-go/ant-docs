@@ -29,7 +29,32 @@ ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [da
 
 ## Breaking changes so far
 
-The latest release is v0.4.0. Before it came v0.1.0, v0.2.0, v0.3.0, v0.3.1 and v0.3.2.
+The latest release is v0.5.0. Before it came v0.1.0, v0.2.0, v0.3.0, v0.3.1, v0.3.2 and v0.4.0.
+
+### v0.5.0
+
+Code that filters on nullable columns, or writes from a hook, will notice these:
+
+| Before | Now |
+| --- | --- |
+| `Ne`, `NotIn` and `Not(Eq(...))` with a value left out the rows where a nullable column is NULL | They match them: `bio <> $1 OR bio IS NULL`. `Gt`, `Lt` and `Not(Gt(...))` still never match NULL. See [NULL](/queries/conditions#null) |
+| `OrderBy`, `Gt` to `Between`, `Sum`, `Inc` and the other helpers took only `ant.Ordered` or `ant.Number` fields | They take a field of any type, so nullable, `uuid.UUID`, `decimal.Decimal` and `ant.DeletedAt` fields compile, and the database checks the column. `ant.Ordered` and `ant.Number` are deprecated |
+| A query or write in a hook through another context, such as a global `db`, ran outside the write's transaction | The hook's `ctx` is bound to the transaction, as by the new `ant.InTx`, so it runs there and rolls back with the write. See [write from a hook](/lifecycle/hooks-and-observers#write-from-a-hook) |
+| An entity read with `With` on a session wasn't tracked, so its changes were never saved | It is tracked. Its computed fields are never written |
+| Replacing or clearing a loaded has-one kept the old row | It deletes the old row, or clears its foreign key if that is nullable. See [replace or clear a has-one](/tracking/changing-relations#replace-a-has-one) |
+
+The rest are fixes, refusals of what used to fail later, and additions:
+
+- A comparison with a nil pointer, such as `Gt` or `Between`, matches nothing, as in SQL. Only `Eq`, `Ne` and `In` turn nil into `IS NULL`.
+- `Inc` on a nullable column counts a NULL from 0, and a step with a fraction on an integer field is refused.
+- `ant.Project` reads a NULL from a left join, or from an aggregate over no rows, into a plain field as its zero value, where it failed. Wrap the expression in the new `ant.Nullable` and use an `sql.Null[V]` field to keep the NULL. See [NULL in a plain field](/queries/projections#null-in-a-plain-field).
+- Code that holds `db`, such as a repository, runs in a transaction when given `ctx := ant.InTx(ctx, tx)`. See [code that holds db](/transactions#code-that-holds-db).
+- Inserting a `uuid.UUID` or `string` key at its zero value returns the new `ant.ErrZeroKey`, where it was written as it was. See [string and UUID keys](/models/keys#string-and-uuid-keys).
+- `ant.DeletedAt` encodes to JSON as `null` or a time, where it wrote `{"V": ..., "Valid": ...}`. It decodes all three. See [in JSON](/lifecycle/soft-deletes#json).
+- On MySQL, MariaDB, SQLite and SQL Server, `ant.Open` refuses a slice, map or plain struct field with `ant.ErrNoColumnType`, including a type defined as `time.Time`, where the first write failed. It also refuses a `*ant.Table[T]` field, which panicked on first use. See [what Open refuses](/models/defining-models).
+- Errors say what to write instead: a GORM tag such as `primaryKey` or `size:100` names ant's spelling, a relation with no foreign key names the fields ant looked for, and `ant.Open[*AppDB]` says to give the struct type. A table that doesn't exist gives `ant.SQLState(err) == "42P01"` on every database, with a hint to create it. See [errors](/tooling/errors).
+- `FieldRef.Asc` and `FieldRef.Desc` order by a column chosen at run time. See [sort from a request](/queries/ordering-and-paging#sort-from-a-request).
+- [antvet](/tooling/antvet) reports a change saved through a context that did not load the entity, which `SaveChanges` leaves out.
 
 ### v0.4.0
 

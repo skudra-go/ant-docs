@@ -122,9 +122,13 @@ var cutoff time.Time
 
 ant binds times in UTC on SQLite and SQL Server, whose columns keep no time zone, so `DeletedAt` compares correctly across server zones. See [databases](/reference/databases).
 
+## In JSON {#json}
+
+`ant.DeletedAt` encodes to JSON as `null` for a live row and as an RFC 3339 time for a deleted one, as a `*time.Time` does: `"DeletedAt": null`, or `"DeletedAt": "2026-11-22T10:00:00Z"`. It decodes `null`, a time, and the `{"V": ..., "Valid": ...}` object that earlier releases wrote.
+
 ## Reuse a unique value
 
-A plain unique constraint also covers marked rows, so their emails can't be reused. Index only live rows:
+A plain unique constraint also covers marked rows, so their emails can't be reused. That holds for a foreign key too: a [has-one child](/tracking/changing-relations#replace-a-has-one) that a replacement deletes softly keeps its key. Index only live rows:
 
 ```go
 func (User) Configure(b *ant.ModelBuilder[User]) {

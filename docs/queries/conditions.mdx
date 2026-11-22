@@ -35,7 +35,14 @@ users, err := db.Users.
 | `ant.ILike(&Users.Name, "a%")` | `name ILIKE $1` (case-insensitive) |
 | `ant.IsNull(&Users.Bio)`, `ant.IsNotNull(&Users.Bio)` | `bio IS NULL`, `bio IS NOT NULL` |
 
-The orderings (`Gt`, `Between` and the rest) take numbers, strings and `time.Time`. `ILike` is native on PostgreSQL; on the other databases ant writes it as `LIKE` between lowered values.
+Every condition takes a field of any type, and the database checks that it can compare it: a nullable `*int` or `sql.Null[T]`, a `uuid.UUID`, a `decimal.Decimal` or an `ant.DeletedAt` works as a plain field does. `ILike` is native on PostgreSQL; on the other databases ant writes it as `LIKE` between lowered values.
+
+```go
+users, err := db.Users.Where(ant.Gte(&Users.Bio, new("M"))).OrderBy(&Users.Bio).All(ctx)
+// SELECT ... FROM "users" WHERE "users"."bio" >= $1 ORDER BY "users"."bio"
+```
+
+On a nullable field, the orderings follow SQL: `Gt`, `Lt`, `Between` and the rest never match a NULL row, and given a nil pointer they match no rows.
 
 `ant.Eq(&Users.Age, 0)` matches rows where the age is 0. Zero values are never dropped from the query.
 
@@ -76,11 +83,18 @@ users, err := db.Users.Where(ant.Eq(&Users.Bio, noBio)).All(ctx)
 // SELECT ... FROM "users" WHERE "users"."bio" IS NULL
 ```
 
+`Ne` with a value, `NotIn` without a nil, and `Not` around either also match the NULL rows, as `!=` does in Go. Plain SQL's `<>` and `NOT IN` leave them out. On a `NOT NULL` column the SQL is the plain one.
+
+```go
+var bio = "Go developer"
+
+users, err := db.Users.Where(ant.Ne(&Users.Bio, &bio)).All(ctx)
+// SELECT ... FROM "users" WHERE ("users"."bio" <> $1 OR "users"."bio" IS NULL)
+```
+
 A nil among the values of `In` or `NotIn` matches NULL rows, as with `Eq`. Plain SQL doesn't.
 
 ```go
-bio := "Go developer"
-
 users, err := db.Users.Where(ant.In(&Users.Bio, noBio, &bio)).All(ctx)
 // SELECT ... FROM "users" WHERE ("users"."bio" IN ($1) OR "users"."bio" IS NULL)
 

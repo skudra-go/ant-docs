@@ -36,6 +36,8 @@ _, err := db.Users.Where(ant.Eq(&Users.ID, id)).Update(ctx, ant.Inc(&Users.Age, 
 // UPDATE "users" SET "age" = ("users"."age" + $1), "updated_at" = $2 WHERE "users"."id" = $3
 ```
 
+They take any number field, such as a `decimal.Decimal` or an `sql.Null[float64]`. On a nullable column they count a `NULL` from 0, so `ant.Inc(&Posts.Votes, 1)` on a `Votes *int` writes `SET "votes" = (COALESCE("posts"."votes", 0) + $1)`. A `NOT NULL` column gets the plain SQL above. On an integer field the step must be a whole number, such as `1` or `2.0`: `ant.Inc(&Users.Age, 0.5)` returns an error, since the database would round it.
+
 `SetExpr` assigns any [expression](/queries/expressions), such as a function of another column:
 
 ```go

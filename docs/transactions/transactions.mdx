@@ -22,7 +22,49 @@ err := db.Tx(ctx, func(tx *AppDB) error {
 
 The error is returned unchanged. A panic propagates after the rollback.
 
-Use `tx` inside the function: anything you do on `db` runs outside the transaction. Cancelling the context rolls the transaction back.
+Use `tx` inside the function: anything you do on `db` runs outside the transaction, unless you give it a [bound `ctx`](#code-that-holds-db). Cancelling the context rolls the transaction back.
+
+## Code that holds db
+
+`Tx` passes on the `ctx` it was given, so a repository or service built at startup with `db` writes outside the transaction, and waits on the transaction's locks. `ant.InTx(ctx, tx)` returns a `ctx` bound to `tx`. Any context on the same connection pool that is in no transaction of its own, such as `db` or a session made from it, then runs what it is given that `ctx` for in `tx`:
+
+```go
+type Signups struct {
+	db *AppDB
+}
+
+func (s Signups) Open(ctx context.Context, u *User) error {
+	return s.db.Users.Insert(ctx, u)
+}
+
+err := db.Tx(ctx, func(tx *AppDB) error {
+	// spot-next-line
+	ctx := ant.InTx(ctx, tx)
+
+	if err := signups.Open(ctx, bob); err != nil {
+		return err
+	}
+
+	return tx.Posts.Insert(ctx, &Post{UserID: bob.ID, Title: "First"})
+})
+// BEGIN
+// INSERT INTO "users" (...) VALUES (...) RETURNING "id"   -- signups.Open, through db
+// INSERT INTO "posts" (...) VALUES (...) RETURNING "id"
+// COMMIT
+```
+
+{/*
+```go
+var signups Signups
+```
+*/}
+
+A `SaveChanges`, `Tx` or `Begin` given the bound `ctx` takes a savepoint in `tx`, and the transaction's end settles the trackers of the sessions that saved, as it does for `tx`'s own. [Hooks](/lifecycle/hooks-and-observers#query-from-a-hook) get a bound `ctx` already.
+
+- A context in a transaction of its own, or on a connection from [`UseConn`](/transactions/connections#keep-work-on-one-connection), keeps to it.
+- `ant.InTx(ctx, db)`, with `db` in no transaction, returns a `ctx` bound to none, for a write that must stay if the transaction rolls back.
+- A bound `ctx` kept after the transaction ends runs nothing: its statements fail with `ant.ErrTxDone` or `sql.ErrTxDone`.
+- The transaction is one connection, so goroutines that share the bound `ctx` take turns, as with `tx`.
 
 ## Lock rows and move money
 

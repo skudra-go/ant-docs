@@ -52,7 +52,7 @@ summaries, err := ant.Project[Summary](
 // WHERE "posts"."published" = $1
 ```
 
-`IntoExpr` maps an [expression](/queries/expressions). A column that can be `NULL` needs a nullable destination.
+`IntoExpr` maps an [expression](/queries/expressions).
 
 ```go
 ant.Project[Summary](
@@ -61,6 +61,31 @@ ant.Project[Summary](
 )
 // SELECT UPPER("users"."name") AS "author" FROM "users" WHERE "users"."name" = $1
 ```
+
+### NULL in a plain field {#null-in-a-plain-field}
+
+A column of a left join's side with no match, or an aggregate over no rows, is `NULL`. `Project` reads it into a plain field as the field's zero value, as `MaxOf` returns one. To tell no row from a stored zero, wrap the expression in `ant.Nullable` and map it to an `sql.Null` field:
+
+```go
+type Newest struct {
+	Author string
+	PostID sql.Null[int64]
+}
+
+var Newests = ant.Fields[Newest]()
+
+newest, err := ant.Project[Newest](
+	db.Users.LeftJoinMany(&Users.Posts).GroupBy(&Users.Name),
+	ant.Into(&Newests.Author, &Users.Name),
+	// spot-next-line
+	ant.IntoExpr(&Newests.PostID, ant.Nullable(ant.Max(&Posts.ID))),
+).All(ctx)
+// SELECT "users"."name" AS "author", MAX("posts"."id") AS "post_id"
+// FROM "users" LEFT JOIN "posts" ON "users"."id" = "posts"."user_id"
+// GROUP BY "users"."name"
+```
+
+An author with no posts gets `PostID.Valid == false`. A pointer field does the same with an expression of the pointer type. A model read (`All`, `First`, `Find`) still refuses a `NULL` in a field that can't hold it, since there it means the model and the table disagree.
 
 `Project` is also how [grouped results](/queries/aggregates-and-grouping) and [window functions](/queries/window-functions) come back.
 
