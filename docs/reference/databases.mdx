@@ -19,8 +19,9 @@ ant runs on PostgreSQL, MySQL, MariaDB, SQLite and SQL Server. PostgreSQL has ev
 | Concurrency suite (`tests/concurrency`) | Yes | Yes | Yes | Yes | Yes |
 | Upsert | Yes | Yes | Yes | Yes | No |
 | `MERGE` | From 15 | No | No | No | Yes |
-| Row locks | Yes | Yes | `ForUpdate` only | No | No |
+| Row locks | Yes | Yes | `ForUpdate` only | [Held by the transaction](#row-locks) with `_txlock=immediate` | No |
 | `FULL JOIN` | Yes | No | No | Yes | Yes |
+| [`Explain`](/tooling/inspecting-queries#explain) | `EXPLAIN` | `EXPLAIN FORMAT=TREE`, from 8.0.16 | `EXPLAIN FORMAT=JSON`, from 10.1.2 | `EXPLAIN QUERY PLAN` | No |
 | Lateral joins | Yes | Yes | No | No | No |
 | `UpdateReturning` | Yes | No | No | Yes | Yes |
 | `DeleteReturning` | Yes | No | Yes | Yes | Yes |
@@ -72,7 +73,10 @@ Set these in the DSN:
 | --- | --- | --- |
 | MySQL, MariaDB | `parseTime=true` | `ant.Open` refuses the DSN, since times would come back as bytes. A pool given to `ant.Wrap` is not checked |
 | SQLite | `_pragma=foreign_keys(1)` | `ant.Open` refuses the DSN, since foreign keys wouldn't be enforced. `_pragma=foreign_keys(0)` keeps them off on purpose |
-| SQLite | `_pragma=busy_timeout(5000)&_txlock=immediate` | A second writer fails at once. See [writers at once](#sqlite-writers-at-once) |
+| SQLite | `_pragma=busy_timeout(5000)` | `ant.Open` refuses the DSN, since a second writer would fail at once. The driver's `_busy_timeout=5000` and `_timeout=5000` count too. `busy_timeout(0)` keeps the driver's no-wait default on purpose |
+| SQLite | `_txlock=immediate` | `ant.Open` refuses the DSN, since a transaction that reads and then writes could fail with `database is locked`. `_txlock=deferred` keeps the driver's default on purpose, and `_txlock=exclusive` also works. See [writers at once](#sqlite-writers-at-once) |
+
+An empty value, such as `_txlock=`, makes no choice, and is refused as if it were missing. A pool given to `ant.Wrap` is not checked.
 
 ## Generated keys
 
@@ -88,9 +92,11 @@ SQL Server reads a key back with `OUTPUT`, which it refuses on a table with trig
 
 It takes no condition either. An `Upsert` of a copy that carries a version still checks it: each assignment keeps the stored value unless the version matches. A stale copy changes nothing and returns `ErrConcurrency`. This reads the affected-row count, so leave the driver's `clientFoundRows` off, as it is by default.
 
+`InsertFrom` with `WithConflict` reads its rows from a derived table there, with its columns renamed. Otherwise the update would take a column of the `SELECT` that has the table's column name for the table's own.
+
 ## Upsert on SQL Server
 
-There is no `ON CONFLICT`. Use `ant.Merge`, which ant writes with `WITH (HOLDLOCK)` there. Without it, two `MERGE` statements at once can both find no row and both insert it.
+There is no `ON CONFLICT`, so `Upsert`, and `InsertMany` and `InsertFrom` with `WithConflict`, return `ErrUnsupported`. Use `ant.Merge`, which ant writes with `WITH (HOLDLOCK)` there. Without it, two `MERGE` statements at once can both find no row and both insert it.
 
 ## MERGE at once on PostgreSQL
 
@@ -124,6 +130,14 @@ On MySQL, MariaDB and SQL Server a deadlock ends the whole transaction, so ant m
 
 `ForUpdate` and `ForShare` lock the rows a query returns. `Count`, `Exists`, the aggregates and the total of `Page` read no rows to lock, and PostgreSQL refuses a lock on them, so they run without it on every database. With `IncludeJoined` the lock is on the query's own table, `FOR UPDATE OF`, since PostgreSQL refuses to lock the nullable side of a left join. MariaDB has no `OF`, and locks the related rows as well.
 
+SQLite has no row locks. A writable transaction on a database opened with `_txlock=immediate` or `_txlock=exclusive` begins with `BEGIN IMMEDIATE` or `BEGIN EXCLUSIVE`, which takes the database's write lock at once, so no other connection can change the rows until it ends. In such a transaction ant accepts `ForUpdate` and `ForShare` and leaves them out of the SQL, so the [transfer that locks both accounts](/transactions#lock-rows-and-move-money) runs on SQLite as it does on PostgreSQL:
+
+```sql
+SELECT ... FROM "accounts" WHERE "accounts"."id" = ? LIMIT ?
+```
+
+Elsewhere on SQLite the lock returns `ErrUnsupported`, since nothing would hold the rows: outside a transaction, in an `ant.ReadOnly()` one, which the driver begins with a plain `BEGIN`, with `_txlock=deferred`, on a pool given to `ant.Wrap`, whose DSN ant never sees, and in a transaction given to `UseTx`. `ToSQL` takes no context, so it shows the query as written outside a transaction, and refuses the lock. `ToSQLContext`, `Debug` and `Explain` show what runs in the context's transaction.
+
 ## Nested read-only transactions
 
 A `Tx` inside another is a savepoint. On PostgreSQL `ant.ReadOnly()` holds there until the savepoint ends. MySQL, MariaDB, SQLite and SQL Server can't make a transaction read-only once it has begun, so it returns `ant.ErrUnsupported`. `ant.Isolation` on a nested `Tx` is `ant.ErrNestedIsolation` everywhere.
@@ -140,12 +154,18 @@ SQLite has one writer at a time. A second connection that writes fails at once w
 dsn := "file:app.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
 ```
 
-Without `foreign_keys(1)`, SQLite accepts a row whose foreign key points at nothing. Without `busy_timeout` and `_txlock=immediate`, concurrent requests fail with `database is locked`.
+Without `foreign_keys(1)`, SQLite accepts a row whose foreign key points at nothing. Without `busy_timeout` and `_txlock=immediate`, concurrent requests fail with `database is locked`. `ant.Open` refuses a DSN that leaves out any of the three, and its error names what is missing:
+
+```text
+ant: sqlite: the data source name needs _pragma=busy_timeout(5000) and _txlock=immediate; without them concurrent writes can fail with SQLITE_BUSY. Use _pragma=busy_timeout(0) or _txlock=deferred to keep a default on purpose
+```
+
+A DSN that opened on v0.5.0 with only `foreign_keys(1)` is refused from v0.5.1. A test database that only one goroutine writes can keep the driver's defaults by naming them: `_pragma=busy_timeout(0)&_txlock=deferred`.
 
 An in-memory database, `:memory:`, is one per connection, so a table made on one connection is missing on the others in the pool. Keep the pool to one connection:
 
 ```go
-db, err := ant.Open[AppDB](ctx, sqlite.Dialect, ":memory:?_pragma=foreign_keys(1)")
+db, err := ant.Open[AppDB](ctx, sqlite.Dialect, ":memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate")
 if err != nil {
 	return err
 }
@@ -157,7 +177,13 @@ db.DB().SetMaxOpenConns(1)
 
 ## Paging on SQL Server
 
-`OFFSET ... FETCH` needs an `ORDER BY`, so ant adds a meaningless one if the query has none. SQL Server refuses a `Limit` of zero.
+`OFFSET ... FETCH` needs an `ORDER BY`, so ant adds a meaningless one if the query has none. After `Distinct` it adds `ORDER BY 1`, the first selected column, since SQL Server takes only items of the select list there. SQL Server refuses a `Limit` of zero.
+
+## Ordering on SQL Server
+
+SQL Server refuses an `ORDER BY` in a subquery, a derived table or a `WITH` unless it also pages (error 1033). There the order can't change which rows the nested query gives, so ant leaves it out of `Exists`, `InSub`, `SubOf`, `From`, `FromCTE`, `JoinSub` and every other nested query, and keeps it when the nested query has a `Limit` or an `Offset`, where it picks the rows. A query built once with an `OrderBy` can so be nested on every database.
+
+`NULLS FIRST` and `NULLS LAST` are written as a `CASE` before the value on MySQL, MariaDB and SQL Server, and only for the two orders that move NULLs from where these databases put them, below every value: `Asc().NullsLast()` and `Desc().NullsFirst()`. Under `Distinct` that `CASE` is outside the select list, which SQL Server refuses, so those two orders return `ErrUnsupported` there before anything is sent.
 
 ## Recursive queries on SQL Server
 
@@ -217,9 +243,29 @@ A time read back is held in UTC on every database, in each of those shapes, thou
 
 `ant.Past` and `ant.Future` compare with the server's own clock, so run the server in UTC. On SQLite and MySQL, `CURRENT_TIMESTAMP` has whole seconds.
 
+An aggregate of a time column on SQLite, such as `MaxOf`, `MinOf`, `Max`, `Min`, `MaxRelated` or `MinRelated`, comes back from the driver as text, since the result has no declared column type. ant reads that text into a `time.Time`, `*time.Time`, `sql.NullTime`, `sql.Null[time.Time]` or `ant.DeletedAt`, in UTC, as it does a time column.
+
+## Text comparison
+
+Each database compares text by the column's collation, and the defaults differ, so the same `Eq`, `Like` and unique index match different rows. Measured on each server's default, with `José` and `ant` stored:
+
+| | `Eq(&Name, "jose")` finds `José` | `Eq(&Name, "ANT")` finds `ant` | `Like(&Name, "JOS%")` finds `José` | A unique `ant@x.io` refuses `ANT@x.io` |
+|---|---|---|---|---|
+| PostgreSQL | No | No | No | No |
+| MySQL, `utf8mb4_0900_ai_ci` | Yes | Yes | Yes | Yes |
+| MariaDB, `utf8mb4_uca1400_ai_ci` | Yes | Yes | Yes | Yes |
+| SQLite, `BINARY` | No | No | Yes, ASCII letters only | No |
+| SQL Server, `SQL_Latin1_General_CP1_CI_AS` | No | Yes | Yes | Yes |
+
+`ILike` ignores case on every database: natively on PostgreSQL, and as `LOWER(column) LIKE LOWER(pattern)` on the others. SQLite's `LOWER` folds ASCII letters only, so there `ILike(&Name, "JOSÉ")` doesn't find `José`. Accents count on PostgreSQL, SQLite and SQL Server, and not under the MySQL and MariaDB defaults.
+
+For the same rows everywhere, give the column the collation you mean in its DDL, or store a normalized copy, such as an email in lower case, and compare that. `Collate` sets one for a single comparison, by a name each database spells its own way.
+
 ## Types
 
 `postgres.Array`, `postgres.JSONSet`, `postgres.Vector` and the rest of `dialect/postgres` need PostgreSQL. A `postgres.Array` holds plain values, so reading an array with a `NULL` element is an error, not the text `NULL`, `false` or zero. `Collate` quotes its name, which SQL Server doesn't accept.
+
+A `uuid.UUID` is sent as its text, so outside PostgreSQL its column must take text, such as `char(36)`. On SQL Server a `uniqueidentifier` reads back in another byte order, so the key read from a row isn't the one written: see [UUID columns outside PostgreSQL](/models/keys#uuid-columns-outside-postgresql).
 
 ## Rollbacks on SQL Server
 

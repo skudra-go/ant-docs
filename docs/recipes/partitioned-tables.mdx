@@ -27,7 +27,7 @@ Migrations create the parent table. Primary key and unique constraints must incl
 
 ## Create and drop months
 
-Partitions come and go on a schedule, so they aren't migrations and `drift` ignores them. `postgres.MonthlyPartitions` looks after them. A partition is named `events_2026_10` and runs from midnight UTC on the first of the month. Partitions with other names are left alone.
+Partitions come and go on a schedule, so they aren't migrations and `drift` ignores them. `postgres.MonthlyPartitions` looks after them. A partition it creates is named `events_2026_10` and runs from midnight UTC on the first of the month.
 
 ```go
 months, err := postgres.MonthlyPartitions[Event](db)
@@ -49,6 +49,14 @@ var cutoff time.Time
 */}
 
 `Ensure` is safe to repeat and to run from several instances. Run it at startup, since a row for a month with no partition is an error, and again on a schedule. `DropBefore` drops only months that ended at or before the cutoff.
+
+Each `postgres.Partition` that `List` returns has `Name` and `Month`, and encodes as `{"name":"events_2026_10","month":"2026-10-01T00:00:00Z"}`.
+
+### Months someone else made {#months-by-bounds}
+
+A month is found by its bounds, not its name: any partition that runs from midnight UTC on the first of a month to the first of the next is that month. So a table whose months were made before ant looked after it, such as Pagila's `payment_p2022_01`, is listed, `Ensure` doesn't make its months again, and `DropBefore` drops them on time. The partition column can be `timestamptz`, `timestamp` or `date`.
+
+A partition over any other span, such as a quarter, or a default partition, is not a month, and is left alone. If the name `Ensure` would give a month, such as `payment_2026_04`, is already taken by a partition over another span, `Ensure` returns an error that names it, rather than report the month covered.
 
 ## Relate two partitioned tables
 

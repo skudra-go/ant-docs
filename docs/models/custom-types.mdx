@@ -220,6 +220,46 @@ _, err := db.Devices.Where(ant.Eq(&Devices.ID, id)).
 // WHERE "devices"."id" = $3
 ```
 
+### JSON written before v0.6.0 {#json-keys-before-v060}
+
+From v0.6.0 a struct that embeds `ant.Base`, and a `postgres.Point`, encode with camelCase keys: `id` where they wrote `ID`, `x` where they wrote `X`. A document stored earlier keeps the old keys. It still reads, since decoding ignores case, and it takes the new keys the next time ant writes the column. Until then a condition that names a key is case-sensitive, so it misses those rows:
+
+```go
+// A snapshot saved by v0.5 holds {"ID": 7, ...}.
+// spot-next-line
+matches := postgres.JSONContains(&Snapshots.Doc, map[string]any{"id": 7}) // misses it
+```
+
+Rewrite the old documents once, in a migration. This one renames the three keys of `ant.Base` at the top of each document:
+
+```sql
+UPDATE snapshots
+SET doc = (doc - 'ID' - 'CreatedAt' - 'UpdatedAt') || jsonb_strip_nulls(jsonb_build_object(
+    'id', doc -> 'ID',
+    'createdAt', doc -> 'CreatedAt',
+    'updatedAt', doc -> 'UpdatedAt'
+))
+WHERE doc ?| array['ID', 'CreatedAt', 'UpdatedAt'];
+```
+
+A key deeper in the document, or a `postgres.Point`'s `X` and `Y`, needs its path in the same way. Or load each row through a session, `ant.MarkModified` it, and save it: a row with no change is otherwise not written, so it would keep the old keys.
+
+{/*
+```go
+type Snapshot struct {
+	ID  int64
+	Doc ant.JSON[Note]
+}
+
+type Note struct {
+	ant.Base
+	Title string
+}
+
+var Snapshots = ant.Fields[Snapshot]()
+```
+*/}
+
 ## Other stored forms
 
 | Type | Stores |
@@ -257,7 +297,7 @@ type Item struct {
 var Items = ant.Fields[Item]()
 ```
 
-An `Array` holds no `NULL` element, so reading an array that has one is an error that says so, rather than the text `"NULL"` or `false`. A quoted `"NULL"` is still the text.
+An `Array` holds no `NULL` element, so reading an array that has one is an error that says so, rather than the text `"NULL"` or `false`. A quoted `"NULL"` is still the text. A `Point` encodes to JSON as `{"x":1,"y":2}`.
 
 ### Standard Go types
 

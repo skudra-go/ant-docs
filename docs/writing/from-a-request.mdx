@@ -40,7 +40,7 @@ INSERT INTO "posts" ("created_at", "updated_at", "user_id", "title", "published"
 VALUES ($1, $2, $3, $4, $5) RETURNING "id"
 ```
 
-A body such as `{"Title": "Mine", "ID": 77, "User": {"Name": "Evil"}}` sets the title and nothing else, since `NewPost` has no other field.
+A body such as `{"Title": "Mine", "id": 77, "User": {"Name": "Evil"}}` sets the title and nothing else, since `NewPost` has no other field.
 
 ## What a body reaches in a model
 
@@ -51,7 +51,7 @@ import "encoding/json"
 
 var decoded Post
 
-err := json.Unmarshal(body, &decoded) // {"Title": "Mine", "ID": 77, "User": {"Name": "Evil", ...}}
+err := json.Unmarshal(body, &decoded) // {"Title": "Mine", "id": 77, "User": {"Name": "Evil", ...}}
 
 // spot-next-line
 err = db.Posts.Insert(ctx, &decoded)
@@ -61,12 +61,14 @@ err = db.Posts.Insert(ctx, &decoded)
 
 | In the body | What the insert does with it |
 | --- | --- |
-| A key, `"ID": 77` | Writes it: a non-zero key is inserted as given |
-| `"CreatedAt"` | Keeps it, as any [`CreatedAt` you set](/lifecycle/timestamps) |
+| A key, `"id": 77` | Writes it: a non-zero key is inserted as given |
+| `"createdAt"` | Keeps it, as any [`CreatedAt` you set](/lifecycle/timestamps) |
 | `"Version": 9` | Starts the row at that [version](/lifecycle/optimistic-concurrency) |
 | `"DeletedAt"` with a time | Inserts the row already [soft-deleted](/lifecycle/soft-deletes) |
 | A parent, `"User": {...}` | Inserts it, and links the post to it in place of `UserID` |
 | Children, `"Posts": [...]` on a user | Inserts them |
+
+`encoding/json` matches keys without regard to case, so `"ID"` and `"CreatedAt"` reach those fields too.
 
 `InsertOnly` leaves the relations out, and writes the rest as given.
 

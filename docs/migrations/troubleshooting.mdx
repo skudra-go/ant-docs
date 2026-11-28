@@ -65,15 +65,30 @@ The database differs from the snapshot. To match, it would need to:
   drop column people.nick
 ```
 
+## `drift` fails on a view
+
+A model mapped with `b.View` reads a view that migrations don't create. `drift` fails when the view is missing, or lacks a column the model reads, such as after renaming a field:
+
+```text
+The views the models read differ from the database:
+  view active_items has no column label
+```
+
+Change the view's SQL in its [repeatable migration](/migrations/hand-written#views-and-functions) to match, or put the view or `view.column` in `Config.Ignore`.
+
+## `drift` names types the models don't create
+
+The note after `drift`'s verdict lists domains, composite types and extension types that columns use. It doesn't fail `drift`. Create those types in a migration of your own before the tables that use them, so that a new database can run the migrations. See [adopting](/migrations/adopting#from-the-models).
+
 ## `diff` stops on a rename
 
-A `--rename` whose new name isn't a table or column in the models, or that the snapshot already has, writes nothing. The message lists the names that are new in the models:
+A `--rename` whose new name isn't a table, column or enum value in the models, or that the snapshot already has, writes nothing. The message lists the names that are new in the models:
 
 ```text
 Error: ant: rename "users=peple": models have no table peple; new tables in the models: people
 ```
 
-See [renames](/migrations/generated-sql#rename-a-column-or-table).
+See [renames](/migrations/generated-sql#rename-a-column-or-table) and [enum values](/migrations/generated-sql#rename-an-enum-value).
 
 ## `diff` refuses a name
 

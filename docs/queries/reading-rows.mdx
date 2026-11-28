@@ -49,6 +49,24 @@ user, err := db.Users.Find(ctx, id)
 
 With tracking on, a `Find` for a row the context already tracks sends no query and returns the tracked instance, unsaved changes included.
 
+A bulk delete doesn't know which rows it removed. So after `Delete`, `ForceDelete`, `DeleteReturning`, `Prune` or a `Merge` that deletes rows of a model, `Find` reads the row again for an instance tracked before the delete, and a deleted row is `ant.ErrNotFound`:
+
+```go
+session := ant.Session(db)
+
+post, err := session.Posts.Find(ctx, id)
+// SELECT ... FROM "posts" WHERE "posts"."id" = $1 LIMIT $2
+
+_, err = session.Posts.Where(ant.Eq(&Posts.Published, true)).Delete(ctx)
+// DELETE FROM "posts" WHERE "posts"."published" = $1
+
+// spot-next-line
+post, err = session.Posts.Find(ctx, id) // ant.ErrNotFound, if it was published
+// SELECT ... FROM "posts" WHERE "posts"."id" = $1 LIMIT $2
+```
+
+A row still there comes back as the same tracked instance. The instances stay tracked, and one tracked after the delete is answered without a query, as before. `DeleteByID` names its row and stops tracking it, so it costs no extra query. A delete through `Raw` or through another context isn't seen, so `Find` there can still return a row that is gone.
+
 ## Stream a large result {#each}
 
 `Each` is a Go iterator that yields rows one at a time. `break` releases the connection.

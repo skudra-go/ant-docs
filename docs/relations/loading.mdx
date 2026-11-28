@@ -148,6 +148,24 @@ posts, err := db.Posts.IncludeJoined(&Posts.User).OrderBy(&Posts.Title).All(ctx)
 // ORDER BY "posts"."title"
 ```
 
+It loads the same row `IncludeOne` does. A [scoped relation](/relations/advanced#scoped-relations-and-latest-of-many) keeps its `Where` and its `Morph` type in the join's `ON`, and a has-one with `Latest` or `Oldest` joins only the row it picks, so each parent comes back once:
+
+```go
+// Newest is HasOne(...).Latest(&Novels.Year)
+// spot-next-line
+novelists, err := db.Novelists.IncludeJoined(&Novelists.Newest).All(ctx)
+// SELECT "novelists"."id", ..., "ant_joined0"."id", ...
+// FROM "novelists" LEFT JOIN "novels" AS "ant_joined0"
+//   ON "novelists"."id" = "ant_joined0"."novelist_id"
+//   AND "ant_joined0"."id" = (
+//     SELECT "ant_joined0_pick"."id" FROM "novels" AS "ant_joined0_pick"
+//     WHERE "ant_joined0_pick"."novelist_id" = "novelists"."id"
+//     ORDER BY "ant_joined0_pick"."year" DESC, "ant_joined0_pick"."id" LIMIT $1
+//   )
+```
+
+The pick names its row by the target's key, so a picked has-one whose target has a composite key returns `ant.ErrNotImplemented`: load it with `IncludeOne`.
+
 To filter or order on the parent, use a [join](/queries/joins). `IncludeJoined` can't load where a query is not read as rows of its model, so `Each`, set operations, `From`, `FromCTE`, `Recursive` and `JoinSub` refuse it with `ant.ErrIncludeInEach` or `ant.ErrIncludeInSubquery`, as they refuse `Include`.
 
 ## Include and tracked entities
@@ -289,10 +307,31 @@ On a [session](/tracking/sessions) the rows stay tracked, so a change to a write
 ```go
 type PageDB struct {
 	ant.Context
-	Users   ant.Table[User]
-	Posts   ant.Table[Post]
-	Writers ant.Table[Writer]
+	Users     ant.Table[User]
+	Posts     ant.Table[Post]
+	Writers   ant.Table[Writer]
+	Novelists ant.Table[Novelist]
 }
+
+type Novelist struct {
+	ID     int64
+	Newest *Novel
+}
+
+func (Novelist) Configure(b *ant.ModelBuilder[Novelist]) {
+	b.HasOne(&Novelists.Newest).ForeignKey(&Novels.NovelistID).Latest(&Novels.Year)
+}
+
+type Novel struct {
+	ID         int64
+	NovelistID int64
+	Year       int
+}
+
+var (
+	Novelists = ant.Fields[Novelist]()
+	Novels    = ant.Fields[Novel]()
+)
 ```
 */}
 

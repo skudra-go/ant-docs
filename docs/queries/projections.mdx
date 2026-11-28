@@ -33,7 +33,7 @@ summaries, err := db.Posts.
 // WHERE "posts"."published" = $1
 ```
 
-The result has `All`, `First` and `Each`, and yields `[]Summary`, not a slice of pointers.
+The result has `All`, `First` and `Each`, and yields `[]Summary`, not a slice of pointers. It also has `Count` and `Exists`, which count the [joined rows](/queries/joins#count-joined-rows).
 
 ## Shape rows in SQL with Project
 
@@ -50,6 +50,23 @@ summaries, err := ant.Project[Summary](
 // SELECT "users"."name" AS "author", "posts"."title" AS "title"
 // FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
 // WHERE "posts"."published" = $1
+```
+
+A projection has `Count`, `Exists`, `ToSQL`, `ToSQLContext` and `Debug`. It always counts over a subquery of its columns, since an aggregate in its columns makes one row of many, and a set-returning function many of one:
+
+```go
+// spot-start
+total, err := ant.Project[Summary](
+	db.Posts.Join(&Posts.User).Where(ant.Eq(&Posts.Published, true)),
+	ant.Into(&Summaries.Author, &Users.Name),
+	ant.Into(&Summaries.Title, &Posts.Title),
+).Count(ctx)
+// spot-end
+// SELECT COUNT(*) FROM (
+//   SELECT "users"."name" AS "ant_1", "posts"."title" AS "ant_2"
+//   FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+//   WHERE "posts"."published" = $1
+// ) AS "ant_counted"
 ```
 
 `IntoExpr` maps an [expression](/queries/expressions).

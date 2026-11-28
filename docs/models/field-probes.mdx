@@ -136,4 +136,13 @@ errors.Is(err, ant.ErrNotColumn) // true: a relation is not a column
 // spot-end
 ```
 
+The error names the field, so a long chain of conditions shows which one is wrong:
+
+```text
+ant: field belongs to a model outside this query: User.Age in a query of Post
+ant: field is a relation, not a column: Post.User
+```
+
+A few cases name only the model, as in `User in a query of Post`: `Has` with another model's relation, the source of an `ant.Into`, and a column a subquery reads from outside it.
+
 <Tests path="model_definition/probes_test.go" />

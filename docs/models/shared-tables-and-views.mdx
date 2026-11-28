@@ -104,6 +104,8 @@ func (ActiveUser) Configure(b *ant.ModelBuilder[ActiveUser]) {
 
 A tracked row from a view can't be saved either: `SaveChanges` returns `ant.ErrReadOnly`.
 
+[`drift`](/migrations/commands#look-at-the-database) checks the view against the model: a missing view, or a column the model reads that the view lacks, fails it. A field renamed on the model then fails `drift`, rather than the first query. `b.View` also works for a materialized view or a foreign table.
+
 ## Put a table in a schema
 
 `b.Schema` places a table in a database schema. Migrations create the schema and qualify every name.

@@ -51,6 +51,8 @@ err := ant.Session(db).Tx(ctx, func(tx *AppDB) error {
 
 `Count`, `Exists`, `Page`'s total and the aggregates such as `SumOf` run without the lock, which PostgreSQL refuses on an aggregate, so one locked query can be counted and read. With `IncludeJoined`, the lock is `FOR UPDATE OF` the query's own table, so the joined parent stays unlocked; MariaDB has no `OF`, and locks both.
 
+SQLite has no row locks. In a writable transaction on a DSN with `_txlock=immediate`, the transaction holds the database's write lock from its start, so ant accepts the lock there and leaves it out of the SQL. Elsewhere on SQLite, and on SQL Server, a lock returns `ant.ErrUnsupported`. See [databases](/reference/databases#row-locks).
+
 ## Claim jobs from a queue
 
 `SkipLocked` lets each worker claim a row nobody else holds.

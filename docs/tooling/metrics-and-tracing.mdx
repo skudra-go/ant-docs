@@ -132,6 +132,8 @@ for _, s := range m.Snapshot() {
 }
 ```
 
+A `metrics.Sample` encodes as `{"kind":"SELECT","count":42,"errors":0,"duration":113000000}`, with the duration in nanoseconds, as a `time.Duration` encodes, so a health endpoint can return `m.Snapshot()` as it is.
+
 ### Use both
 
 Pass `WithInterceptor` once for each:

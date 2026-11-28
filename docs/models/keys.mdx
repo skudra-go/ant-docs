@@ -70,6 +70,10 @@ type DeskDB struct {
 	Orders    ant.Table[Order]
 	Readings  ant.Table[Reading]
 	Logs      ant.Table[LogLine]
+	Memos     ant.Table[Memo]
+	Customers ant.Table[Customer]
+	Vendors   ant.Table[Vendor]
+	Suppliers ant.Table[Supplier]
 }
 ```
 */}
@@ -124,21 +128,21 @@ err := db.Pages.Insert(ctx, &Page{Title: "Untitled"})
 errors.Is(err, ant.ErrZeroKey) // true
 ```
 
-For a `uuid.UUID` from `github.com/google/uuid`, call `ant.GenerateKey(b, &Docs.ID, uuid.New)` in `Configure`. On PostgreSQL a default works too: `ID uuid.UUID` tagged `ant:"default=gen_random_uuid()"`. A `BeforeInsert` hook that sets the key runs before the check.
+For a `uuid.UUID` from `github.com/google/uuid`, [generate it in Go](#generate-the-key-in-go) with `ant.GenerateKey(b, &Docs.ID, ids.UUIDv7[uuid.UUID])`. A database default or a `BeforeInsert` hook works too, and a hook runs before the check: see [a UUID key on every model](#a-uuid-key-on-every-model).
 
 ## Generate the key in Go
 
-`ant.GenerateKey` fills in a zero key before the insert and keeps a key you supply. If the insert fails, the generated key is cleared from the struct, so a retry makes a new one.
+`ant.GenerateKey` fills in a zero key before the insert and keeps a key you supply. If the insert fails, the generated key is cleared from the struct, so a retry makes a new one. It fills the key on every insert: `Insert`, `InsertMany`, `Upsert` and `SaveChanges`.
 
 ```go
 type Order struct {
-	ID    string
+	ID    uuid.UUID
 	Total int
 }
 
 func (Order) Configure(b *ant.ModelBuilder[Order]) {
 	// spot-next-line
-	ant.GenerateKey(b, &Orders.ID, ids.UUID)
+	ant.GenerateKey(b, &Orders.ID, ids.UUIDv7[uuid.UUID])
 }
 
 var Orders = ant.Fields[Order]()
@@ -147,10 +151,44 @@ order := &Order{Total: 5}
 
 err := db.Orders.Insert(ctx, order)
 // INSERT INTO "orders" ("id", "total") VALUES ($1, $2)
-// -- $1 = 01a1bbb9-b230-7eea-baf0-d1429fddc54f
+// -- $1 = 01a21f9d-64aa-7092-b2ba-5ea7ed9cdc62
 ```
 
-`ids.UUID` (version 7) and `ids.ULID` sort by creation time, so new rows land at the end of an index. For snowflake integers:
+`ids.UUIDv7[T]` returns a version 7 UUID as any type whose underlying type is `[16]byte`, so it fills a `uuid.UUID` of `github.com/google/uuid`, another library's UUID type, or a plain `[16]byte`. On PostgreSQL such a key is a `uuid` column, 16 bytes in the table and in each index, and so is every foreign key to it.
+
+`ids.UUID` returns the same UUID as text, for a `string` key. A `string` key is a `text` column, whatever fills it: 37 bytes a key, and any string is accepted as one. To keep `string` fields and still have a `uuid` column, give the key a type:
+
+```go
+type Memo struct {
+	ID   string
+	Body string
+}
+
+func (Memo) Configure(b *ant.ModelBuilder[Memo]) {
+	ant.GenerateKey(b, &Memos.ID, ids.UUID)
+	// spot-next-line
+	b.Column(&Memos.ID).Type("uuid")
+}
+
+var Memos = ant.Fields[Memo]()
+```
+
+A foreign key to it takes the type too. Changing a key's type later rewrites every table that holds it, so choose before the tables fill.
+
+### UUID columns outside PostgreSQL {#uuid-columns-outside-postgresql}
+
+Migrations are PostgreSQL only, so on the other databases you write the column. A `uuid.UUID` is sent as its text, so the column must take that text:
+
+| Database | Column | Refused, or wrong |
+| --- | --- | --- |
+| MySQL | `char(36)` | `binary(16)` refuses the text: `Data too long for column 'id'` |
+| MariaDB | `uuid` or `char(36)` | |
+| SQLite | `text` | |
+| SQL Server | `char(36)` | `uniqueidentifier`: see below |
+
+SQL Server stores the text in a `uniqueidentifier`, but the driver reads one back in SQL Server's own byte order, so a `uuid.UUID` read from the row differs from the one written: `01a21faf-0845-78f0-...` comes back as `af1fa201-4508-f078-...`. A `Find` with the key read back then returns `ant.ErrNotFound`, and saving a row loaded through a session returns `ant.ErrConcurrency`. Use `char(36)` there, or make the key the driver's own type, `mssql.UniqueIdentifier` from `github.com/microsoft/go-mssqldb`, filled by `ids.UUIDv7[mssql.UniqueIdentifier]`, which reads a `uniqueidentifier` in its order.
+
+`ids.UUIDv7`, `ids.UUID` and `ids.ULID` sort by creation time, so new rows land at the end of an index, where a random UUID such as `uuid.New` scatters them across it. For snowflake integers:
 
 ```go
 // spot-next-line
@@ -158,6 +196,104 @@ flakes, err := ids.NewSnowflake(1) // the node number
 
 next := flakes.Next()
 ```
+
+## A UUID key on every model
+
+`GenerateKey` goes in each model's `Configure`, since a builder is for one model. A base struct that every model embeds can't carry it, but it can carry a hook or a database default. Each way gives a model a key with no `Configure` of its own, and each covers different writes:
+
+| | `Insert`, `SaveChanges`, `Upsert` | `InsertMany` | Databases | UUID version |
+| --- | --- | --- | --- | --- |
+| `GenerateKey` in each model's `Configure` | Yes | Yes | All five | 7, from `ids.UUIDv7` |
+| A `BeforeInsert` hook on the base | Yes | No, `ant.ErrZeroKey`: it runs no hooks | All five | 7 |
+| A database default on the base | Yes | Writes the rows, but leaves the keys zero on the structs. SQLite refuses it | All but MySQL | What the default makes: 4 from PostgreSQL's `gen_random_uuid()`, 7 from its `uuidv7()` on 18 |
+
+Outside PostgreSQL the column must take a UUID's text: see [UUID columns outside PostgreSQL](#uuid-columns-outside-postgresql).
+
+### In each model
+
+The most certain way, since every insert fills it. A model with no `Configure` and a `uuid.UUID` key is refused with `ant.ErrZeroKey` on its first insert, so a forgotten one shows up in the first test that writes a row.
+
+```go
+type Customer struct {
+	ID   uuid.UUID
+	Name string
+}
+
+func (Customer) Configure(b *ant.ModelBuilder[Customer]) {
+	// spot-next-line
+	ant.GenerateKey(b, &Customers.ID, ids.UUIDv7[uuid.UUID])
+}
+
+var Customers = ant.Fields[Customer]()
+```
+
+### With a hook on the base
+
+A hook method on an embedded struct is promoted to every model that embeds it, and the key check runs after `BeforeInsert`:
+
+```go
+type Model struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// spot-start
+func (m *Model) BeforeInsert(ctx context.Context) error {
+	if m.ID == uuid.Nil {
+		m.ID = ids.UUIDv7[uuid.UUID]()
+	}
+
+	return nil
+}
+// spot-end
+
+type Vendor struct {
+	Model
+	Name string
+}
+
+err := db.Vendors.Insert(ctx, &Vendor{Name: "Acme"})
+// INSERT INTO "vendors" ("id", "created_at", "updated_at", "name") VALUES ($1, $2, $3, $4)
+```
+
+`InsertMany` runs no hooks, so it refuses these rows with `ant.ErrZeroKey`: set `ID` on each before the call. A model with a `BeforeInsert` of its own hides the base's, so it calls it:
+
+```go
+func (v *Vendor) BeforeInsert(ctx context.Context) error {
+	// spot-next-line
+	if err := v.Model.BeforeInsert(ctx); err != nil {
+		return err
+	}
+
+	v.Name = strings.TrimSpace(v.Name)
+
+	return nil
+}
+```
+
+### With a database default
+
+A default on the base's field makes the database fill the key, and ant reads it back with `RETURNING`:
+
+```go
+type Record struct {
+	// spot-next-line
+	ID uuid.UUID `ant:"default=gen_random_uuid()"`
+}
+
+type Supplier struct {
+	Record
+	Name string
+}
+
+supplier := &Supplier{Name: "Acme"}
+
+err := db.Suppliers.Insert(ctx, supplier)
+// INSERT INTO "suppliers" ("name") VALUES ($1) RETURNING "id"
+```
+
+`gen_random_uuid()` gives a version 4 UUID, which is random, so new rows scatter across the index. PostgreSQL 18 has `uuidv7()`, which sorts by time. `InsertMany` writes `DEFAULT` for these keys but doesn't read them back, so its structs keep the zero `uuid.UUID`: read the rows again, or generate the keys in Go. SQLite takes no `DEFAULT` in a `VALUES` list, so `InsertMany` returns `ant.ErrUnsupported` there. MariaDB, SQLite and SQL Server read the key back as PostgreSQL does, with `RETURNING` or `OUTPUT`. MySQL has neither, so an insert there returns `ant.ErrUnsupported`: `Supplier.Record.ID is a key the database fills, which mysql can only report through RETURNING`.
 
 ## Composite keys
 

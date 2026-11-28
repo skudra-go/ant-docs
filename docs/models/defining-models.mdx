@@ -48,6 +48,48 @@ fmt.Println(article.ID, article.CreatedAt, article.UpdatedAt) // all filled in
 
 Any model with a `time.Time` field named `CreatedAt` or `UpdatedAt` gets the same [timestamps](/lifecycle/timestamps).
 
+### In JSON {#base-json}
+
+`ant.Base` encodes with camelCase keys: `id`, `createdAt` and `updatedAt`. A model's own fields keep Go's names unless you tag them, so tag them to match:
+
+```go
+type Note struct {
+	ant.Base
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+out, err := json.Marshal(note)
+// {"id":1,"createdAt":"2026-11-01T09:00:00Z","updatedAt":"2026-11-01T09:00:00Z","title":"Hello","body":"..."}
+```
+
+Before v0.6.0 the keys were `ID`, `CreatedAt` and `UpdatedAt`. Decoding ignores case, so a body or a stored document with the old keys still reads. To keep sending the old keys, or to send others, such as `created_at`, embed a base of your own in place of `ant.Base`. A field named `ID` is the key and `CreatedAt` and `UpdatedAt` are stamped by convention, so it works the same:
+
+```go
+type Base struct {
+	// spot-start
+	ID        int64     `json:"ID"`
+	CreatedAt time.Time `json:"CreatedAt"`
+	UpdatedAt time.Time `json:"UpdatedAt"`
+	// spot-end
+}
+
+type Invoice struct {
+	Base
+	Total int64
+}
+```
+
+A response type per endpoint, filled from the model, decouples the API from the table, and is the way to rename or hide one model's fields only. `encoding/json` drops a key that two embedded structs at the same depth both give, so a model that embeds `ant.Base` beside another struct with a field tagged `json:"id"` encodes neither. A field the model declares itself wins over the embedded one.
+
+A document stored before the upgrade, such as an `ant.JSON[Note]` snapshot, keeps its old keys in the column. Reading it still works, but a [containment or path condition](/models/custom-types#query-inside-json-postgresql) with the new keys misses it: see [JSON written before v0.6.0](/models/custom-types#json-keys-before-v060).
+
+{/*
+```go
+var note *Note
+```
+*/}
+
 ## Table and column names
 
 | Go | Database |

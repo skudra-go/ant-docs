@@ -50,9 +50,34 @@ func noSpaces(s string) error {
 }
 ```
 
+## Fields the database fills {#fields-the-database-fills}
+
+A field with a `default=` tag left at its zero value is left out of an insert, and the database fills it, so its rules don't run there. `Insert` and the inserts of `SaveChanges` skip them. A value you set is still checked.
+
+```go
+type Plan struct {
+	ID     int64
+	Name   string
+	// spot-next-line
+	Status string `ant:"default='active'"`
+}
+
+func (Plan) Configure(b *ant.ModelBuilder[Plan]) {
+	b.Validate(&Plans.Status, validate.OneOf("active", "paused"))
+}
+
+var Plans = ant.Fields[Plan]()
+
+err := db.Plans.Insert(ctx, &Plan{Name: "Pro"})
+// INSERT INTO "plans" ("name") VALUES ($1) RETURNING "id", "status"
+// err == nil, and Status is "active"
+```
+
+An update writes the zero rather than the default, so updates still check it: saving a tracked `Plan` whose `Status` you set to `""` fails with `ant: Plan.Status: must be one of [active paused]`. So does an `Upsert`, whose update writes the zero too. A [`Validate` method](#check-rules-that-span-fields) sees the entity as you gave it, zero included.
+
 ## Check rules that span fields
 
-A rule across several fields goes in a `Validate` method on the model. It runs on insert and update.
+A rule across several fields goes in a `Validate` method on the model. It runs on insert and update, after the field rules, and only if they all pass.
 
 ```go
 // spot-start
@@ -68,10 +93,13 @@ func (s *Signup) Validate(ctx context.Context) error {
 
 ## Read the error
 
-Field rules do not stop at the first failing field. The write joins one `*ant.ValidationError` per failure. Each names the model and field, and wraps the rule's error, so `errors.Is` works with `validate.ErrRequired` and your own errors. `errors.As` reaches the first failure; the joined error's `Unwrap() []error` reaches all of them.
+Field rules don't stop at the first failing field. The write joins one `*ant.ValidationError` per failure, with `errors.Join`. Each names the model and field, and wraps the rule's error, so `errors.Is` works with `validate.ErrRequired` and your own errors.
 
 ```go
 err := db.Signups.Insert(ctx, &Signup{Email: "not-an-email", Age: 999})
+// ant: Signup.Name: is required
+// ant: Signup.Email: must be an email address
+// ant: Signup.Age: must be from 0 to 150
 
 // spot-start
 var invalid *ant.ValidationError
@@ -79,64 +107,101 @@ var invalid *ant.ValidationError
 if errors.As(err, &invalid) {
 	fmt.Println(invalid.Model, invalid.Field, invalid.Err) // Signup Name is required
 }
+// spot-end
 
-var joined interface{ Unwrap() []error }
+errors.Is(err, validate.ErrRequired) // true
+```
 
-if errors.As(err, &joined) {
-	for _, failure := range joined.Unwrap() {
-		if errors.As(failure, &invalid) {
-			fmt.Println(invalid.Model, invalid.Field, invalid.Err)
+`errors.As` finds the first failure. The error is joined even when only one rule fails, so a type assertion such as `err.(*ant.ValidationError)` never matches: use `errors.As`. To read every failure, walk the error tree. This helper collects them by field, through the join and through any `fmt.Errorf("...: %w", err)` your own code adds:
+
+```go
+// FieldErrors returns the message of each failed field rule in err, by field name.
+func FieldErrors(err error) map[string]string {
+	fields := map[string]string{}
+
+	var walk func(error)
+	walk = func(err error) {
+		switch e := err.(type) {
+		// spot-start
+		case *ant.ValidationError:
+			fields[e.Field] = e.Err.Error()
+		case interface{ Unwrap() []error }:
+			for _, inner := range e.Unwrap() {
+				walk(inner)
+			}
+			// spot-end
+		case interface{ Unwrap() error }:
+			walk(e.Unwrap())
 		}
 	}
+
+	walk(err)
+
+	return fields
 }
-// spot-end
 ```
+
+`Field` is the Go field's name, as in `Name`. `Model` is the model's type name, which tells apart two entities saved together.
 
 {/*
 ```go
 type SignupDB struct {
 	ant.Context
 	Signups ant.Table[Signup]
+	Plans   ant.Table[Plan]
 }
 ```
 */}
 
 An error from a `Validate` method is returned as it is, not wrapped.
 
-## Return validation errors to an API client
+## Return validation errors to an API client {#return-validation-errors-to-an-api-client}
 
-Map the validation failures to a 422 that names every field:
+Answer a write that fails its rules with a 422 that lists every field, using `FieldErrors` from above:
 
 ```go
-func create(w http.ResponseWriter, r *http.Request) {
-	signup := &Signup{Name: r.FormValue("name"), Email: r.FormValue("email")}
+func createSignup(w http.ResponseWriter, r *http.Request) {
+	var signup Signup
 
-	err := db.Signups.Insert(r.Context(), signup)
+	if err := json.NewDecoder(r.Body).Decode(&signup); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
 
-	var invalid *ant.ValidationError
+		return
+	}
+
+	err := db.Signups.Insert(r.Context(), &signup)
+
+	// spot-next-line
+	if fields := FieldErrors(err); len(fields) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{"errors": fields})
+
+		return
+	}
 
 	switch {
-	case errors.As(err, &invalid):
-		messages := []string{invalid.Field + ": " + invalid.Err.Error()}
-
-		var joined interface{ Unwrap() []error }
-		if errors.As(err, &joined) {
-			messages = messages[:0]
-			for _, failure := range joined.Unwrap() {
-				if errors.As(failure, &invalid) {
-					messages = append(messages, invalid.Field+": "+invalid.Err.Error())
-				}
-			}
-		}
-
-		http.Error(w, strings.Join(messages, "\n"), http.StatusUnprocessableEntity)
 	case ant.IsUniqueViolation(err):
 		http.Error(w, "that email is already registered", http.StatusConflict)
 	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(signup)
 	}
 }
 ```
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{"errors":{"Age":"must be from 0 to 150","Email":"must be an email address","Name":"is required"}}
+```
+
+A client that knows the fields by their JSON names needs a map from the Go name, which a framework's validator often has already. The same walk feeds any error format your service uses, such as a list of violations for gRPC's `BadRequest` or an RFC 9457 problem document.
+
+An error from a `Validate` method is not an `*ant.ValidationError`, so `FieldErrors` returns nothing for it, and it lands in the `err != nil` case. Return your own error type from `Validate` and match it with `errors.As` to answer it with a 422 too.
 
 Rules cannot replace a database constraint: a rule can pass while another request inserts the same value, and only the unique constraint catches it.
 

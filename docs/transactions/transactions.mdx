@@ -106,6 +106,8 @@ UPDATE "accounts" SET "balance" = $1, "updated_at" = $2, "version" = $3 WHERE "a
 
 The `UPDATE`s include `version` because `Account` has a [version column](/lifecycle/optimistic-concurrency). To run the transfer again after a deadlock, see [retries](/transactions/retries).
 
+SQLite has no row locks. On a DSN with `_txlock=immediate`, as the [quick start](/quick-start) opens it, the transaction holds the database's write lock from its first statement, so the transfer runs there too, and its `SELECT`s are sent without `FOR UPDATE`. SQL Server, and SQLite with `_txlock=deferred`, return `ant.ErrUnsupported`. See [row locks](/reference/databases#row-locks).
+
 {/*
 ```go
 type Account struct {

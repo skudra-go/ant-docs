@@ -26,6 +26,15 @@ last, err := ant.MaxOf(ctx, adults, &Users.Name) // string
 // SELECT MAX("users"."name") FROM "users" WHERE "users"."age" > $1
 ```
 
+`MinOf` and `MaxOf` of a time return a `time.Time` in UTC on every database:
+
+```go
+newest, err := ant.MaxOf(ctx, db.Users.Query(), &Users.CreatedAt) // time.Time
+// SELECT MAX("users"."created_at") FROM "users"
+```
+
+SQLite's driver gives an aggregate of a time column as text, since the result has no declared column type, so ant reads that text into the time field there. `Min`, `Max`, `MinRelated` and `MaxRelated` do the same, into a `time.Time`, `*time.Time`, `sql.NullTime`, `sql.Null[time.Time]` or `ant.DeletedAt`.
+
 `AvgOf` and `ant.Avg` of a `time.Duration` give its average in nanoseconds, from an `interval` column on PostgreSQL as from an integer one, so `time.Duration(average)` turns it back into a duration.
 
 Over no rows these calls return zero, not `NULL`, and nil for a pointer field. They take a field of any type, such as a nullable `*int`, a `decimal.Decimal` or a `*time.Time`, and the database says if it can't add one up. For a plain row count, see [`Count`](/queries/reading-rows#count-and-check).

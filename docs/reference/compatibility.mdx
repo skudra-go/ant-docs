@@ -29,7 +29,40 @@ ant runs on the `pgx` driver through `database/sql`. `pgxext` needs pgx. See [da
 
 ## Breaking changes so far
 
-The latest release is v0.5.0. Before it came v0.1.0, v0.2.0, v0.3.0, v0.3.1, v0.3.2 and v0.4.0.
+The latest release is v0.6.0. Before it came v0.1.0, v0.2.0, v0.3.0, v0.3.1, v0.3.2, v0.4.0, v0.5.0 and v0.5.1.
+
+### v0.6.0
+
+The JSON of ant's own structs changes, and two errors change shape:
+
+| Before | Now |
+| --- | --- |
+| `ant.Base` encoded as `{"ID":1,"CreatedAt":...,"UpdatedAt":...}` | `{"id":1,"createdAt":...,"updatedAt":...}`. `ant.Page` is `items`, `total`, `number`, `size`, and `ant.CursorPage` `items`, `next`. `postgres.Point`, `postgres.Partition` and `metrics.Sample` are camelCase too. Old keys still decode. To keep sending them, see [ant.Base in JSON](/models/defining-models#base-json) |
+| A JSON column holding one of those structs matched conditions on its old keys | Rows written before keep the old keys until written again, so `JSONContains` with the new keys misses them. See [JSON written before v0.6.0](/models/custom-types#json-keys-before-v060) |
+| A write that failed field rules returned the first failure, an `*ant.ValidationError` | It joins one per failing field, even for one. `errors.As` finds the first, and `err.(*ant.ValidationError)` never matches. See [read the error](/lifecycle/validation#read-the-error) |
+| `drift` left out `b.View` models | It fails on a missing view, or a column the model reads that the view lacks. See [drift](/migrations/commands#look-at-the-database) |
+
+The rest are additions and fixes:
+
+- `ids.UUIDv7[uuid.UUID]` fills a `uuid.UUID` key, a `uuid` column on PostgreSQL. See [keys](/models/keys#generate-the-key-in-go) and [a UUID key on every model](/models/keys#a-uuid-key-on-every-model).
+- Joins and projections have `Count`, `Exists`, `ToSQL`, `ToSQLContext` and `Debug`, and `Debug` logs every `SELECT` a query runs. See [count joined rows](/queries/joins#count-joined-rows).
+- `InsertFrom` takes `ant.WithConflict`. See [skip rows the target already has](/writing/bulk#insert-from-with-conflict).
+- `After` pages a column that can be NULL once its order says `NullsFirst` or `NullsLast`. See [page a column that can be NULL](/queries/ordering-and-paging#cursor-nulls).
+- `diff --rename item_status.banned=blocked` renames an enum value in place. `drift` lists the types the models use and don't create, and `db-show` lists materialized views. See [rename an enum value](/migrations/generated-sql#rename-an-enum-value).
+- `Explain` works on MySQL, MariaDB and SQLite, and plans `IncludeJoined`'s join. See [Explain](/tooling/inspecting-queries#explain).
+- On SQLite, `ForUpdate` and `ForShare` work in a writable transaction on a `_txlock=immediate` DSN. See [row locks](/reference/databases#row-locks).
+- [antvet](/tooling/antvet#queries-built-up-in-a-variable) follows a query built up in a variable.
+- `IncludeJoined` applies the relation's `Where`, `Morph` type and `Latest` or `Oldest`. On SQL Server an ordered subquery, and `Distinct` with paging, no longer fail. `Find` after a bulk delete reads the row again. Retyping a `bool` column to a number, or back, migrates. `Exists` honours `Distinct` and `Offset`. Monthly partitions are found by their bounds. Errors for a field of the wrong model or kind name the field.
+
+### v0.5.1
+
+A SQLite DSN must choose `busy_timeout` and `_txlock` as well as `foreign_keys`, as in `_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate`, or `ant.Open` refuses it. `busy_timeout(0)` and `_txlock=deferred` keep the driver's defaults on purpose. See [the DSN settings](/reference/databases#import-a-driver).
+
+- Field rules skip a zero `default=` field on insert, where the database fills it, and still check it on update and `Upsert`. See [fields the database fills](/lifecycle/validation#fields-the-database-fills).
+- A row added to a scoped relation gets the values of the scope's `Eq` conditions. See [add to a scoped relation](/relations/advanced#add-to-a-scoped-relation).
+- On SQLite, `MinOf`, `MaxOf` and the other aggregates of a time read into a time field.
+- `drift` reports a serial column that draws from another sequence than the models'.
+- antvet reports a field pointer that isn't a probe in `Latest`, `Oldest`, `Load` and `Recursive`.
 
 ### v0.5.0
 
@@ -70,7 +103,7 @@ On PostgreSQL, standard Go types take PostgreSQL's own column, and ant reads the
 
 The rest of the changes are refusals of what ant used to misread, and fixes:
 
-- `ant.Open` resolves every relation and refuses an unknown tag key, a flag key with a value, two fields on one column, `[]*Post`, an embedded `*Base`, func and chan fields, a many-to-many with no `Through` or with one column for both sides, and a SQLite DSN that doesn't set `foreign_keys`. It reports every broken model at once.
+- `ant.Open` resolves every relation and refuses an unknown tag key, a flag key with a value, two fields on one column, `[]*Post`, an embedded `*Base`, func and chan fields, a many-to-many with no `Through` or with one column for both sides, and a SQLite DSN that doesn't set `foreign_keys` (from v0.5.1, also `busy_timeout` and `_txlock`). It reports every broken model at once.
 - An update reads back `readonly` columns, an after hook's edit to its entity is saved by the next `SaveChanges`, an upsert's update writes the zero a `default` field holds, and an upsert repeats a partial unique index's condition.
 - `ant.SchemaOf` takes options, and `migrate.Config.Options` passes the application's to the migrate program. `ant.ErrNoTracking` and `schema.Repartition` are new.
 - Migrations refuse a file with its own `BEGIN` or `COMMIT` that runs in ant's transaction, a `-- ant:no-transaction` below the first statement, a missing versions folder, `up --to` an unknown version, and `baseline` with no version when more than one migration is left. `repair` refuses a version applied as another migration, and `diff` and `check` a snapshot written for a file that is gone. `status --check` fails while anything waits.

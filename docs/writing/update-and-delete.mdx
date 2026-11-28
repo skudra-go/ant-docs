@@ -66,7 +66,7 @@ n, err := db.Users.Where(ant.Lt(&Users.Age, 18)).Delete(ctx)
 // DELETE FROM "users" WHERE "users"."age" < $1
 ```
 
-On a model with [soft deletes](/lifecycle/soft-deletes), this marks the rows instead of removing them.
+On a model with [soft deletes](/lifecycle/soft-deletes), this marks the rows instead of removing them. Entities the context tracks stay tracked, and `Find` reads their rows again, so a deleted one is `ant.ErrNotFound`. See [find by primary key](/queries/reading-rows#find-by-primary-key).
 
 ### Delete by relation
 

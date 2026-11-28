@@ -1,10 +1,10 @@
 {
 	"module": "github.com/skudra-go/ant",
-	"version": "v0.4.0",
+	"version": "v0.6.0",
 	"packages": {
 		"ant": {
 			"path": "github.com/skudra-go/ant",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0",
 			"symbols": {
 				"Action": {
 					"kind": "type",
@@ -121,17 +121,17 @@
 				},
 				"Avg": {
 					"kind": "func",
-					"decl": "func Avg[V Number](field *V) Expr[float64]",
-					"doc": "Avg averages a column."
+					"decl": "func Avg[V any](field *V) Expr[float64]",
+					"doc": "Avg averages a column of any type the database averages, as a float64."
 				},
 				"AvgOf": {
 					"kind": "func",
-					"decl": "func AvgOf[T any, V Number](ctx context.Context, q *Query[T], field *V) (float64, error)",
+					"decl": "func AvgOf[T, V any](ctx context.Context, q *Query[T], field *V) (float64, error)",
 					"doc": "AvgOf averages a column over matching rows, giving zero if there are none."
 				},
 				"AvgRelated": {
 					"kind": "func",
-					"decl": "func AvgRelated[R any, V Number](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[float64]]",
+					"decl": "func AvgRelated[R, V any](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[float64]]",
 					"doc": "AvgRelated averages a field of the related rows."
 				},
 				"Base": {
@@ -193,7 +193,7 @@
 				},
 				"Between": {
 					"kind": "func",
-					"decl": "func Between[V Ordered](field *V, low, high V) Cond",
+					"decl": "func Between[V any](field *V, low, high V) Cond",
 					"doc": "Between matches rows where field is within low and high, inclusive."
 				},
 				"BulkRows": {
@@ -297,7 +297,7 @@
 				},
 				"Collate": {
 					"kind": "func",
-					"decl": "func Collate[V ~string](field *V, collation string) Expr[V]",
+					"decl": "func Collate[V any](field *V, collation string) Expr[V]",
 					"doc": "Collate applies a collation to a text column."
 				},
 				"ColumnBuilder": {
@@ -549,13 +549,13 @@
 				},
 				"DatePart": {
 					"kind": "func",
-					"decl": "func DatePart(field *time.Time, part string) Expr[float64]",
+					"decl": "func DatePart[V any](field *V, part string) Expr[float64]",
 					"doc": "DatePart extracts part of a date column, such as \"year\" or \"month\"."
 				},
 				"Dec": {
 					"kind": "func",
-					"decl": "func Dec[V Number](field *V, n V) Assignment",
-					"doc": "Dec subtracts n from a numeric column, in the database."
+					"decl": "func Dec[V, N any](field *V, n N) Assignment",
+					"doc": "Dec subtracts n from a column, in the database, as Inc adds it: a NULL counts from zero."
 				},
 				"Deleted": {
 					"kind": "const",
@@ -566,6 +566,18 @@
 					"kind": "type",
 					"decl": "type DeletedAt = meta.DeletedAt",
 					"doc": "DeletedAt is the type of a soft delete field."
+				},
+				"DeletedAt.MarshalJSON": {
+					"kind": "method",
+					"decl": "func (d DeletedAt) MarshalJSON() ([]byte, error)",
+					"doc": "MarshalJSON writes null for a live row and the time for a deleted one.",
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/meta#DeletedAt.MarshalJSON"
+				},
+				"DeletedAt.UnmarshalJSON": {
+					"kind": "method",
+					"decl": "func (d *DeletedAt) UnmarshalJSON(data []byte) error",
+					"doc": "UnmarshalJSON reads null, which makes the row live, a time, or the {\"V\":...,\"Valid\":...} object DeletedAt was written as before it had MarshalJSON.",
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/meta#DeletedAt.UnmarshalJSON"
 				},
 				"DenseRank": {
 					"kind": "func",
@@ -745,7 +757,7 @@
 				"ErrNoRows": {
 					"kind": "var",
 					"decl": "var ErrNoRows = errors.New(\"ant: no rows given\")",
-					"doc": "ErrNoRows reports an operation given no rows to work on."
+					"doc": "ErrNoRows reports PrepareBulk or Values given no rows."
 				},
 				"ErrNoTracking": {
 					"kind": "var",
@@ -802,6 +814,16 @@
 					"decl": "var ErrNotTracked = errors.New(\"ant: entity is not tracked\")",
 					"doc": "ErrNotTracked reports an operation on an entity the context is not tracking."
 				},
+				"ErrPaging": {
+					"kind": "var",
+					"decl": "var ErrPaging = errors.New(\"ant: invalid paging\")",
+					"doc": "ErrPaging reports a page number, or a page or chunk size, below 1, or a negative Limit or Offset."
+				},
+				"ErrQueryInEach": {
+					"kind": "var",
+					"decl": "var ErrQueryInEach = errors.New( \"ant: a statement cannot run while Each streams rows on the same connection; \" + \"fi...",
+					"doc": "ErrQueryInEach reports a statement inside an Each loop on a transaction, or on a context from UseConn, whose one connection is still streaming the loop's rows."
+				},
 				"ErrReadOnly": {
 					"kind": "var",
 					"decl": "var ErrReadOnly = errors.New(\"ant: model is read-only\")",
@@ -836,6 +858,11 @@
 					"kind": "var",
 					"decl": "var ErrWrongModel = errors.New(\"ant: field belongs to a model outside this query\")",
 					"doc": "ErrWrongModel reports a probe from a model the query does not use."
+				},
+				"ErrZeroKey": {
+					"kind": "var",
+					"decl": "var ErrZeroKey = errors.New(\"ant: the key is zero and nothing generates it\")",
+					"doc": "ErrZeroKey reports an insert of an entity whose key is its type's zero value when nothing fills it: a uuid.UUID or string key with no GenerateKey and no default."
 				},
 				"Events": {
 					"kind": "type",
@@ -1029,6 +1056,16 @@
 					"decl": "type FieldRef struct{ … }",
 					"doc": "FieldRef names a column of any type, from F."
 				},
+				"FieldRef.Asc": {
+					"kind": "method",
+					"decl": "func (r FieldRef) Asc() Sort",
+					"doc": "Asc orders by the column, ascending, as Col(field).Asc() does."
+				},
+				"FieldRef.Desc": {
+					"kind": "method",
+					"decl": "func (r FieldRef) Desc() Sort",
+					"doc": "Desc orders by the column, descending."
+				},
 				"Fields": {
 					"kind": "func",
 					"decl": "func Fields[T any]() *T",
@@ -1081,7 +1118,7 @@
 				},
 				"Future": {
 					"kind": "func",
-					"decl": "func Future(field *time.Time) Cond",
+					"decl": "func Future[V any](field *V) Cond",
 					"doc": "Future matches rows where a time column is after the database's current time."
 				},
 				"GenerateKey": {
@@ -1165,12 +1202,12 @@
 				},
 				"Gt": {
 					"kind": "func",
-					"decl": "func Gt[V Ordered](field *V, v V) Cond",
+					"decl": "func Gt[V any](field *V, v V) Cond",
 					"doc": "Gt matches rows where field is greater than v."
 				},
 				"Gte": {
 					"kind": "func",
-					"decl": "func Gte[V Ordered](field *V, v V) Cond",
+					"decl": "func Gte[V any](field *V, v V) Cond",
 					"doc": "Gte matches rows where field is greater than or equal to v."
 				},
 				"Handle": {
@@ -1196,7 +1233,7 @@
 				},
 				"ILike": {
 					"kind": "func",
-					"decl": "func ILike[V ~string](\n\tfield *V,\n\tpattern V,\n) Cond",
+					"decl": "func ILike[V any, P ~string](\n\tfield *V,\n\tpattern P,\n) Cond",
 					"doc": "ILike is Like ignoring case."
 				},
 				"In": {
@@ -1214,10 +1251,15 @@
 					"decl": "func InTuples(fields []FieldRef, tuples ...[]any) Cond",
 					"doc": "InTuples matches rows whose columns, taken together, equal one of the tuples:"
 				},
+				"InTx": {
+					"kind": "func",
+					"decl": "func InTx(ctx context.Context, h Handle) context.Context",
+					"doc": "InTx returns ctx bound to the transaction h is in."
+				},
 				"Inc": {
 					"kind": "func",
-					"decl": "func Inc[V Number](field *V, n V) Assignment",
-					"doc": "Inc adds n to a numeric column, in the database."
+					"decl": "func Inc[V, N any](field *V, n N) Assignment",
+					"doc": "Inc adds n to a column, in the database."
 				},
 				"IncrementBy": {
 					"kind": "func",
@@ -1287,7 +1329,7 @@
 				"InsertOption": {
 					"kind": "type",
 					"decl": "type InsertOption func(*insertOptions)",
-					"doc": "InsertOption configures InsertMany."
+					"doc": "InsertOption configures InsertMany and InsertFrom."
 				},
 				"Interceptor": {
 					"kind": "type",
@@ -1298,12 +1340,12 @@
 				"Interceptor.After": {
 					"kind": "method",
 					"decl": "After(ctx context.Context, s *Statement, o Outcome)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Interceptor.After"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Interceptor.After"
 				},
 				"Interceptor.Before": {
 					"kind": "method",
 					"decl": "Before(ctx context.Context, s *Statement) (context.Context, error)",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Interceptor.Before"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Interceptor.Before"
 				},
 				"Into": {
 					"kind": "func",
@@ -1399,10 +1441,25 @@
 					"decl": "type Join2[] struct{ … }",
 					"doc": "Join2 is a query across two joined models."
 				},
+				"Join2.Count": {
+					"kind": "method",
+					"decl": "func (j *Join2[A, B]) Count(ctx context.Context) (int64, error)",
+					"doc": "Count returns the number of joined rows."
+				},
+				"Join2.Debug": {
+					"kind": "method",
+					"decl": "func (j *Join2[A, B]) Debug() *Join2[A, B]",
+					"doc": "Debug logs the SQL and values of each SELECT the join runs."
+				},
 				"Join2.Distinct": {
 					"kind": "method",
 					"decl": "func (j *Join2[A, B]) Distinct() *Join2[A, B]",
 					"doc": "Distinct removes duplicate rows."
+				},
+				"Join2.Exists": {
+					"kind": "method",
+					"decl": "func (j *Join2[A, B]) Exists(ctx context.Context) (bool, error)",
+					"doc": "Exists reports whether the join has any row."
 				},
 				"Join2.GroupBy": {
 					"kind": "method",
@@ -1461,18 +1518,28 @@
 				},
 				"Join2.OrderBy": {
 					"kind": "method",
-					"decl": "func (j *Join2[A, B]) OrderBy[V Ordered](field *V) *Join2[A, B]",
+					"decl": "func (j *Join2[A, B]) OrderBy[V any](field *V) *Join2[A, B]",
 					"doc": "OrderBy orders results by a field of any joined model, ascending, replacing any earlier ordering."
 				},
 				"Join2.OrderByDesc": {
 					"kind": "method",
-					"decl": "func (j *Join2[A, B]) OrderByDesc[V Ordered](field *V) *Join2[A, B]",
+					"decl": "func (j *Join2[A, B]) OrderByDesc[V any](field *V) *Join2[A, B]",
 					"doc": "OrderByDesc orders results by a field of any joined model, descending, replacing any earlier ordering."
 				},
 				"Join2.Select": {
 					"kind": "method",
 					"decl": "func (j *Join2[A, B]) Select[R any](f func(*A, *B) R) *Projection[R]",
 					"doc": "Select projects each joined row through f."
+				},
+				"Join2.ToSQL": {
+					"kind": "method",
+					"decl": "func (j *Join2[A, B]) ToSQL() (string, []any, error)",
+					"doc": "ToSQL returns the SELECT that Select runs for the join."
+				},
+				"Join2.ToSQLContext": {
+					"kind": "method",
+					"decl": "func (j *Join2[A, B]) ToSQLContext(ctx context.Context) (string, []any, error)",
+					"doc": "ToSQLContext is ToSQL with global filters resolved against ctx."
 				},
 				"Join2.Where": {
 					"kind": "method",
@@ -1484,10 +1551,25 @@
 					"decl": "type Join3[] struct{ … }",
 					"doc": "Join3 is a query across three joined models."
 				},
+				"Join3.Count": {
+					"kind": "method",
+					"decl": "func (j *Join3[A, B, C]) Count(ctx context.Context) (int64, error)",
+					"doc": "Count returns the number of joined rows."
+				},
+				"Join3.Debug": {
+					"kind": "method",
+					"decl": "func (j *Join3[A, B, C]) Debug() *Join3[A, B, C]",
+					"doc": "Debug logs the SQL and values of each SELECT the join runs."
+				},
 				"Join3.Distinct": {
 					"kind": "method",
 					"decl": "func (j *Join3[A, B, C]) Distinct() *Join3[A, B, C]",
 					"doc": "Distinct removes duplicate rows."
+				},
+				"Join3.Exists": {
+					"kind": "method",
+					"decl": "func (j *Join3[A, B, C]) Exists(ctx context.Context) (bool, error)",
+					"doc": "Exists reports whether the join has any row."
 				},
 				"Join3.GroupBy": {
 					"kind": "method",
@@ -1546,18 +1628,28 @@
 				},
 				"Join3.OrderBy": {
 					"kind": "method",
-					"decl": "func (j *Join3[A, B, C]) OrderBy[V Ordered](field *V) *Join3[A, B, C]",
+					"decl": "func (j *Join3[A, B, C]) OrderBy[V any](field *V) *Join3[A, B, C]",
 					"doc": "OrderBy orders results by a field of any joined model, ascending, replacing any earlier ordering."
 				},
 				"Join3.OrderByDesc": {
 					"kind": "method",
-					"decl": "func (j *Join3[A, B, C]) OrderByDesc[V Ordered](field *V) *Join3[A, B, C]",
+					"decl": "func (j *Join3[A, B, C]) OrderByDesc[V any](field *V) *Join3[A, B, C]",
 					"doc": "OrderByDesc orders results by a field of any joined model, descending, replacing any earlier ordering."
 				},
 				"Join3.Select": {
 					"kind": "method",
 					"decl": "func (j *Join3[A, B, C]) Select[R any](f func(*A, *B, *C) R) *Projection[R]",
 					"doc": "Select projects each joined row through f."
+				},
+				"Join3.ToSQL": {
+					"kind": "method",
+					"decl": "func (j *Join3[A, B, C]) ToSQL() (string, []any, error)",
+					"doc": "ToSQL returns the SELECT that Select runs for the join."
+				},
+				"Join3.ToSQLContext": {
+					"kind": "method",
+					"decl": "func (j *Join3[A, B, C]) ToSQLContext(ctx context.Context) (string, []any, error)",
+					"doc": "ToSQLContext is ToSQL with global filters resolved against ctx."
 				},
 				"Join3.Where": {
 					"kind": "method",
@@ -1569,10 +1661,25 @@
 					"decl": "type Join4[] struct{ … }",
 					"doc": "Join4 is a query across four joined models."
 				},
+				"Join4.Count": {
+					"kind": "method",
+					"decl": "func (j *Join4[A, B, C, D]) Count(ctx context.Context) (int64, error)",
+					"doc": "Count returns the number of joined rows."
+				},
+				"Join4.Debug": {
+					"kind": "method",
+					"decl": "func (j *Join4[A, B, C, D]) Debug() *Join4[A, B, C, D]",
+					"doc": "Debug logs the SQL and values of each SELECT the join runs."
+				},
 				"Join4.Distinct": {
 					"kind": "method",
 					"decl": "func (j *Join4[A, B, C, D]) Distinct() *Join4[A, B, C, D]",
 					"doc": "Distinct removes duplicate rows."
+				},
+				"Join4.Exists": {
+					"kind": "method",
+					"decl": "func (j *Join4[A, B, C, D]) Exists(ctx context.Context) (bool, error)",
+					"doc": "Exists reports whether the join has any row."
 				},
 				"Join4.GroupBy": {
 					"kind": "method",
@@ -1601,18 +1708,28 @@
 				},
 				"Join4.OrderBy": {
 					"kind": "method",
-					"decl": "func (j *Join4[A, B, C, D]) OrderBy[V Ordered](field *V) *Join4[A, B, C, D]",
+					"decl": "func (j *Join4[A, B, C, D]) OrderBy[V any](field *V) *Join4[A, B, C, D]",
 					"doc": "OrderBy orders results by a field of any joined model, ascending, replacing any earlier ordering."
 				},
 				"Join4.OrderByDesc": {
 					"kind": "method",
-					"decl": "func (j *Join4[A, B, C, D]) OrderByDesc[V Ordered](field *V) *Join4[A, B, C, D]",
+					"decl": "func (j *Join4[A, B, C, D]) OrderByDesc[V any](field *V) *Join4[A, B, C, D]",
 					"doc": "OrderByDesc orders results by a field of any joined model, descending, replacing any earlier ordering."
 				},
 				"Join4.Select": {
 					"kind": "method",
 					"decl": "func (j *Join4[A, B, C, D]) Select[R any](f func(*A, *B, *C, *D) R) *Projection[R]",
 					"doc": "Select projects each joined row through f."
+				},
+				"Join4.ToSQL": {
+					"kind": "method",
+					"decl": "func (j *Join4[A, B, C, D]) ToSQL() (string, []any, error)",
+					"doc": "ToSQL returns the SELECT that Select runs for the join."
+				},
+				"Join4.ToSQLContext": {
+					"kind": "method",
+					"decl": "func (j *Join4[A, B, C, D]) ToSQLContext(ctx context.Context) (string, []any, error)",
+					"doc": "ToSQLContext is ToSQL with global filters resolved against ctx."
 				},
 				"Join4.Where": {
 					"kind": "method",
@@ -1661,12 +1778,12 @@
 				},
 				"Length": {
 					"kind": "func",
-					"decl": "func Length[V ~string](field *V) Expr[int]",
+					"decl": "func Length[V any](field *V) Expr[int]",
 					"doc": "Length returns the length of a text column, in characters."
 				},
 				"Like": {
 					"kind": "func",
-					"decl": "func Like[V ~string](field *V, pattern V) Cond",
+					"decl": "func Like[V any, P ~string](\n\tfield *V,\n\tpattern P,\n) Cond",
 					"doc": "Like matches rows where field matches a SQL LIKE pattern, in which % matches any text and _ matches one character."
 				},
 				"Link": {
@@ -1686,17 +1803,17 @@
 				},
 				"Lower": {
 					"kind": "func",
-					"decl": "func Lower[V ~string](field *V) Expr[V]",
+					"decl": "func Lower[V any](field *V) Expr[V]",
 					"doc": "Lower lowercases a text column."
 				},
 				"Lt": {
 					"kind": "func",
-					"decl": "func Lt[V Ordered](field *V, v V) Cond",
+					"decl": "func Lt[V any](field *V, v V) Cond",
 					"doc": "Lt matches rows where field is less than v."
 				},
 				"Lte": {
 					"kind": "func",
-					"decl": "func Lte[V Ordered](field *V, v V) Cond",
+					"decl": "func Lte[V any](field *V, v V) Cond",
 					"doc": "Lte matches rows where field is less than or equal to v."
 				},
 				"Mapping": {
@@ -1711,17 +1828,17 @@
 				},
 				"Max": {
 					"kind": "func",
-					"decl": "func Max[V Ordered](field *V) Expr[V]",
+					"decl": "func Max[V any](field *V) Expr[V]",
 					"doc": "Max returns a column's largest value."
 				},
 				"MaxOf": {
 					"kind": "func",
-					"decl": "func MaxOf[T any, V Ordered](ctx context.Context, q *Query[T], field *V) (V, error)",
+					"decl": "func MaxOf[T, V any](ctx context.Context, q *Query[T], field *V) (V, error)",
 					"doc": "MaxOf returns a column's largest value, or zero if there are no rows."
 				},
 				"MaxRelated": {
 					"kind": "func",
-					"decl": "func MaxRelated[R any, V Ordered](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]",
+					"decl": "func MaxRelated[R, V any](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]",
 					"doc": "MaxRelated returns the largest value of a field of the related rows."
 				},
 				"Merge": {
@@ -1761,17 +1878,17 @@
 				},
 				"Min": {
 					"kind": "func",
-					"decl": "func Min[V Ordered](field *V) Expr[V]",
+					"decl": "func Min[V any](field *V) Expr[V]",
 					"doc": "Min returns a column's smallest value."
 				},
 				"MinOf": {
 					"kind": "func",
-					"decl": "func MinOf[T any, V Ordered](ctx context.Context, q *Query[T], field *V) (V, error)",
-					"doc": "MinOf returns a column's smallest value, or zero if there are no rows."
+					"decl": "func MinOf[T, V any](ctx context.Context, q *Query[T], field *V) (V, error)",
+					"doc": "MinOf returns a column's smallest value, or the zero value of V if there are no rows."
 				},
 				"MinRelated": {
 					"kind": "func",
-					"decl": "func MinRelated[R any, V Ordered](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]",
+					"decl": "func MinRelated[R, V any](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]",
 					"doc": "MinRelated returns the smallest value of a field of the related rows."
 				},
 				"Mixin": {
@@ -2005,7 +2122,7 @@
 				"Ne": {
 					"kind": "func",
 					"decl": "func Ne[V comparable](field *V, v V) Cond",
-					"doc": "Ne matches rows where field does not equal v."
+					"doc": "Ne matches rows where field does not equal v, as Go's != does: on a column that can hold NULL, a NULL matches a non-NULL v, as column \u003c\u003e v OR column IS NULL."
 				},
 				"NoAction": {
 					"kind": "const",
@@ -2037,10 +2154,15 @@
 					"decl": "func NotInSub[V any](field *V, sub Sub[V]) Cond",
 					"doc": "NotInSub matches rows where field is none of the subquery's values."
 				},
+				"Nullable": {
+					"kind": "func",
+					"decl": "func Nullable[V any](e Expr[V]) Expr[sql.Null[V]]",
+					"doc": "Nullable reads e as an sql.Null[V], for an expression that can be NULL where V can't hold it: Max over no rows, or a column of a left join's side."
+				},
 				"Number": {
 					"kind": "type",
 					"decl": "type Number interface{ … }",
-					"doc": "Number is a type that SUM and AVG accept.",
+					"doc": "Number is a Go number type.",
 					"interface": true
 				},
 				"Observe": {
@@ -2093,7 +2215,7 @@
 				"Ordered": {
 					"kind": "type",
 					"decl": "type Ordered interface{ … }",
-					"doc": "Ordered is a type with a database ordering.",
+					"doc": "Ordered is cmp.Ordered with time.Time.",
 					"interface": true
 				},
 				"OrderedBy": {
@@ -2114,12 +2236,12 @@
 				"Outcome.Duration": {
 					"kind": "field",
 					"decl": "Duration time.Duration",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Outcome.Duration"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Outcome.Duration"
 				},
 				"Outcome.Err": {
 					"kind": "field",
 					"decl": "Err error",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Outcome.Err"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Outcome.Err"
 				},
 				"Page": {
 					"kind": "type",
@@ -2160,7 +2282,7 @@
 				},
 				"Past": {
 					"kind": "func",
-					"decl": "func Past(field *time.Time) Cond",
+					"decl": "func Past[V any](field *V) Cond",
 					"doc": "Past matches rows where a time column is before the database's current time."
 				},
 				"Pluck": {
@@ -2193,15 +2315,40 @@
 					"decl": "func (p *Projection[R]) All(ctx context.Context) (out []R, err error)",
 					"doc": "All returns every projected row, as an empty slice if there are none."
 				},
+				"Projection.Count": {
+					"kind": "method",
+					"decl": "func (p *Projection[R]) Count(ctx context.Context) (int64, error)",
+					"doc": "Count returns the number of rows the projection returns, counted over a subquery of its SELECT, so that Limit, Offset, Distinct, GroupBy and the columns themselves, such as an aggregate with no GroupBy, decide them."
+				},
+				"Projection.Debug": {
+					"kind": "method",
+					"decl": "func (p *Projection[R]) Debug() *Projection[R]",
+					"doc": "Debug logs the SQL and values of each SELECT the projection runs."
+				},
 				"Projection.Each": {
 					"kind": "method",
 					"decl": "func (p *Projection[R]) Each(ctx context.Context) iter.Seq2[R, error]",
 					"doc": "Each streams projected rows, stopping after the first error."
 				},
+				"Projection.Exists": {
+					"kind": "method",
+					"decl": "func (p *Projection[R]) Exists(ctx context.Context) (bool, error)",
+					"doc": "Exists reports whether the projection returns any row."
+				},
 				"Projection.First": {
 					"kind": "method",
 					"decl": "func (p *Projection[R]) First(ctx context.Context) (*R, error)",
 					"doc": "First returns the first projected row, or ErrNotFound."
+				},
+				"Projection.ToSQL": {
+					"kind": "method",
+					"decl": "func (p *Projection[R]) ToSQL() (string, []any, error)",
+					"doc": "ToSQL returns the SELECT the projection runs."
+				},
+				"Projection.ToSQLContext": {
+					"kind": "method",
+					"decl": "func (p *Projection[R]) ToSQLContext(ctx context.Context) (string, []any, error)",
+					"doc": "ToSQLContext is ToSQL with global filters resolved against ctx."
 				},
 				"Query": {
 					"kind": "type",
@@ -2251,7 +2398,7 @@
 				"Query.Debug": {
 					"kind": "method",
 					"decl": "func (q *Query[T]) Debug() *Query[T]",
-					"doc": "Debug logs this query's SQL and values when it runs, at info level, through slog's default logger."
+					"doc": "Debug logs the SQL and values of each SELECT this query runs, at info level, through slog's default logger: its rows, Count, Exists and the aggregates, and those of a join or a projection made from it."
 				},
 				"Query.Delete": {
 					"kind": "method",
@@ -2296,7 +2443,7 @@
 				"Query.Explain": {
 					"kind": "method",
 					"decl": "func (q *Query[T]) Explain(ctx context.Context) (string, error)",
-					"doc": "Explain returns the database's plan for this query."
+					"doc": "Explain returns the database's plan for the statement All runs, one line per row the database returns: EXPLAIN on PostgreSQL, EXPLAIN FORMAT=TREE on MySQL, EXPLAIN FORMAT=JSON on MariaDB, and the details of EXPLAIN QUERY PLAN on SQLite."
 				},
 				"Query.Find": {
 					"kind": "method",
@@ -2400,7 +2547,7 @@
 				},
 				"Query.Latest": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) Latest(field *time.Time) *Query[T]",
+					"decl": "func (q *Query[T]) Latest[V any](field *V) *Query[T]",
 					"doc": "Latest orders by a time column, newest first."
 				},
 				"Query.LeftJoin": {
@@ -2445,7 +2592,7 @@
 				},
 				"Query.Oldest": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) Oldest(field *time.Time) *Query[T]",
+					"decl": "func (q *Query[T]) Oldest[V any](field *V) *Query[T]",
 					"doc": "Oldest orders by a time column, oldest first."
 				},
 				"Query.Omit": {
@@ -2465,12 +2612,12 @@
 				},
 				"Query.OrderBy": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) OrderBy[V Ordered](field *V) *Query[T]",
+					"decl": "func (q *Query[T]) OrderBy[V any](field *V) *Query[T]",
 					"doc": "OrderBy orders results by field, ascending, replacing any earlier ordering."
 				},
 				"Query.OrderByDesc": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) OrderByDesc[V Ordered](field *V) *Query[T]",
+					"decl": "func (q *Query[T]) OrderByDesc[V any](field *V) *Query[T]",
 					"doc": "OrderByDesc orders results by field, descending, replacing any earlier ordering."
 				},
 				"Query.OrderByRandom": {
@@ -2525,12 +2672,12 @@
 				},
 				"Query.ThenBy": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) ThenBy[V Ordered](field *V) *Query[T]",
+					"decl": "func (q *Query[T]) ThenBy[V any](field *V) *Query[T]",
 					"doc": "ThenBy adds an ascending ordering after OrderBy."
 				},
 				"Query.ThenByDesc": {
 					"kind": "method",
-					"decl": "func (q *Query[T]) ThenByDesc[V Ordered](field *V) *Query[T]",
+					"decl": "func (q *Query[T]) ThenByDesc[V any](field *V) *Query[T]",
 					"doc": "ThenByDesc adds a descending ordering after OrderBy."
 				},
 				"Query.ToSQL": {
@@ -2665,7 +2812,7 @@
 				},
 				"RelationBuilder.Latest": {
 					"kind": "method",
-					"decl": "func (r *RelationBuilder) Latest[V Ordered](field *V) *RelationBuilder",
+					"decl": "func (r *RelationBuilder) Latest[V any](field *V) *RelationBuilder",
 					"doc": "Latest makes a has-one relation the newest of many, by field: Include reads that row for each parent."
 				},
 				"RelationBuilder.Morph": {
@@ -2685,7 +2832,7 @@
 				},
 				"RelationBuilder.Oldest": {
 					"kind": "method",
-					"decl": "func (r *RelationBuilder) Oldest[V Ordered](field *V) *RelationBuilder",
+					"decl": "func (r *RelationBuilder) Oldest[V any](field *V) *RelationBuilder",
 					"doc": "Oldest makes a has-one relation the oldest of many, by field."
 				},
 				"RelationBuilder.OnDelete": {
@@ -2843,7 +2990,7 @@
 					"kind": "method",
 					"decl": "func (s State) String() string",
 					"doc": "String returns the state's name.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/track#State.String"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/track#State.String"
 				},
 				"Statement": {
 					"kind": "type",
@@ -2853,18 +3000,18 @@
 				"Statement.Args": {
 					"kind": "field",
 					"decl": "Args []any",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.Args"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Statement.Args"
 				},
 				"Statement.Replica": {
 					"kind": "field",
 					"decl": "Replica bool",
 					"doc": "read from a replica",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.Replica"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Statement.Replica"
 				},
 				"Statement.SQL": {
 					"kind": "field",
 					"decl": "SQL string",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/exec#Statement.SQL"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/exec#Statement.SQL"
 				},
 				"Sub": {
 					"kind": "type",
@@ -2888,17 +3035,17 @@
 				},
 				"Sum": {
 					"kind": "func",
-					"decl": "func Sum[V Number](field *V) Expr[V]",
-					"doc": "Sum adds up a column."
+					"decl": "func Sum[V any](field *V) Expr[V]",
+					"doc": "Sum adds up a column of any type the database adds up, such as a number, a decimal, or a pointer or sql.Null of one."
 				},
 				"SumOf": {
 					"kind": "func",
-					"decl": "func SumOf[T any, V Number](ctx context.Context, q *Query[T], field *V) (V, error)",
-					"doc": "SumOf adds up a column over matching rows, giving zero if there are none."
+					"decl": "func SumOf[T, V any](ctx context.Context, q *Query[T], field *V) (V, error)",
+					"doc": "SumOf adds up a column over matching rows, giving the zero value of V if there are none or all are NULL: 0 for a number, nil for a pointer."
 				},
 				"SumRelated": {
 					"kind": "func",
-					"decl": "func SumRelated[R any, V Number](rel *[]R, field *V, conds ...Cond) Expr[V]",
+					"decl": "func SumRelated[R, V any](rel *[]R, field *V, conds ...Cond) Expr[V]",
 					"doc": "SumRelated adds up a field of the related rows, giving zero if there are none."
 				},
 				"SyncLinks": {
@@ -3018,7 +3165,7 @@
 				},
 				"Table.InsertFrom": {
 					"kind": "method",
-					"decl": "func (t *Table[T]) InsertFrom(ctx context.Context, rows *Projection[T]) (int64, error)",
+					"decl": "func (t *Table[T]) InsertFrom(\n\tctx context.Context,\n\trows *Projection[T],\n\toptions ...InsertOption,\n) (int64, error)",
 					"doc": "InsertFrom inserts the rows of a projection, and returns how many."
 				},
 				"Table.InsertMany": {
@@ -3108,12 +3255,12 @@
 				},
 				"Table.OrderBy": {
 					"kind": "method",
-					"decl": "func (t *Table[T]) OrderBy[V Ordered](field *V) *Query[T]",
+					"decl": "func (t *Table[T]) OrderBy[V any](field *V) *Query[T]",
 					"doc": "OrderBy starts a query ordered by field, ascending."
 				},
 				"Table.OrderByDesc": {
 					"kind": "method",
-					"decl": "func (t *Table[T]) OrderByDesc[V Ordered](\n\tfield *V,\n) *Query[T]",
+					"decl": "func (t *Table[T]) OrderByDesc[V any](\n\tfield *V,\n) *Query[T]",
 					"doc": "OrderByDesc starts a query ordered by field, descending."
 				},
 				"Table.Prune": {
@@ -3159,7 +3306,7 @@
 				"Table.UpdateMany": {
 					"kind": "method",
 					"decl": "func (t *Table[T]) UpdateMany(\n\tctx context.Context,\n\tentities []*T,\n\tfields ...FieldRef,\n) (int64, error)",
-					"doc": "UpdateMany writes the named columns of each entity to its own row, in one transaction, and returns how many rows changed."
+					"doc": "UpdateMany writes the named columns of each entity to its own row, in one transaction, and returns how many rows changed, which on MySQL and MariaDB leaves out a row that already held the values, as Update does."
 				},
 				"Table.Upsert": {
 					"kind": "method",
@@ -3193,7 +3340,7 @@
 				},
 				"Today": {
 					"kind": "func",
-					"decl": "func Today(field *time.Time) Cond",
+					"decl": "func Today[V any](field *V) Cond",
 					"doc": "Today matches rows where a time column falls on the database's current date."
 				},
 				"Toggle": {
@@ -3230,19 +3377,19 @@
 					"kind": "method",
 					"decl": "func (UnixTime) ColumnType(string) string",
 					"doc": "ColumnType implements schema.Typed.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.ColumnType"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/meta#UnixTime.ColumnType"
 				},
 				"UnixTime.Scan": {
 					"kind": "method",
 					"decl": "func (t *UnixTime) Scan(src any) error",
 					"doc": "Scan implements sql.Scanner.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.Scan"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/meta#UnixTime.Scan"
 				},
 				"UnixTime.Value": {
 					"kind": "method",
 					"decl": "func (t UnixTime) Value() (driver.Value, error)",
 					"doc": "Value implements driver.Valuer.",
-					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/internal/meta#UnixTime.Value"
+					"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/internal/meta#UnixTime.Value"
 				},
 				"Unlink": {
 					"kind": "func",
@@ -3251,7 +3398,7 @@
 				},
 				"Upper": {
 					"kind": "func",
-					"decl": "func Upper[V ~string](field *V) Expr[V]",
+					"decl": "func Upper[V any](field *V) Expr[V]",
 					"doc": "Upper uppercases a text column."
 				},
 				"UseConn": {
@@ -3328,7 +3475,7 @@
 				"WithConflict": {
 					"kind": "func",
 					"decl": "func WithConflict(c *Conflict) InsertOption",
-					"doc": "WithConflict applies a Conflict to every row of InsertMany."
+					"doc": "WithConflict applies a Conflict to every row of InsertMany or InsertFrom."
 				},
 				"WithConvention": {
 					"kind": "func",
@@ -3419,7 +3566,7 @@
 		},
 		"anttest": {
 			"path": "github.com/skudra-go/ant/anttest",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/anttest",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/anttest",
 			"symbols": {
 				"Factory": {
 					"kind": "type",
@@ -3495,7 +3642,7 @@
 		},
 		"dialect": {
 			"path": "github.com/skudra-go/ant/dialect",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect",
 			"symbols": {
 				"AppendNumbered": {
 					"kind": "func",
@@ -3528,10 +3675,32 @@
 					"decl": "func Arg(d Dialect, v any) any",
 					"doc": "Arg returns v as Render binds it for d: by pointer if only its pointer converts itself, and in UTC where d's database drops a time's zone."
 				},
+				"BeginLocker": {
+					"kind": "type",
+					"decl": "type BeginLocker interface{ … }",
+					"doc": "BeginLocker is implemented by a dialect whose writable transactions can hold the database's write lock from their start, as SQLite's do with _txlock=immediate or exclusive.",
+					"interface": true
+				},
+				"BeginLocker.BeginLocks": {
+					"kind": "method",
+					"decl": "BeginLocks(dsn string) bool",
+					"doc": "BeginLocks reports whether a writable transaction on a pool opened with dsn holds the write lock from its start."
+				},
 				"Bind": {
 					"kind": "func",
 					"decl": "func Bind(d Dialect, query string, args []any) (string, []any, error)",
 					"doc": "Bind prepares raw SQL for d."
+				},
+				"ChangedRowsOnly": {
+					"kind": "type",
+					"decl": "type ChangedRowsOnly interface{ … }",
+					"doc": "ChangedRowsOnly is implemented by a dialect whose driver counts only the rows an UPDATE altered, not the rows it matched.",
+					"interface": true
+				},
+				"ChangedRowsOnly.CountsChangedRows": {
+					"kind": "method",
+					"decl": "CountsChangedRows() bool",
+					"doc": "CountsChangedRows reports whether affected counts changed rows only."
 				},
 				"ConflictWhere": {
 					"kind": "const",
@@ -3599,6 +3768,16 @@
 					"kind": "method",
 					"decl": "SupportsReturning() bool",
 					"doc": "SupportsReturning reports whether an INSERT can hand back columns, through RETURNING or an equivalent."
+				},
+				"DistinctNullsOrder": {
+					"kind": "const",
+					"decl": "const DistinctNullsOrder Feature",
+					"doc": "DistinctNullsOrder is NULLS FIRST or NULLS LAST that moves NULLs in a SELECT DISTINCT, which emulating it puts outside the select list."
+				},
+				"ExplainPlan": {
+					"kind": "const",
+					"decl": "const ExplainPlan Feature",
+					"doc": "ExplainPlan is a statement that returns a query's plan as rows, which SQL Server has only as a session setting."
 				},
 				"Feature": {
 					"kind": "type",
@@ -3720,6 +3899,16 @@
 					"decl": "EmptyValues bool",
 					"doc": "EmptyValues writes VALUES () in place of DEFAULT VALUES."
 				},
+				"Syntax.Explain": {
+					"kind": "field",
+					"decl": "Explain string",
+					"doc": "Explain is the command put before a query to read its plan, such as EXPLAIN QUERY PLAN."
+				},
+				"Syntax.ExplainCommand": {
+					"kind": "method",
+					"decl": "func (s *Syntax) ExplainCommand() string",
+					"doc": "ExplainCommand returns the command put before a query to read its plan."
+				},
 				"Syntax.FloatAvg": {
 					"kind": "field",
 					"decl": "FloatAvg bool",
@@ -3785,10 +3974,15 @@
 					"decl": "NoLockOf bool",
 					"doc": "NoLockOf leaves the OF table off a row lock, for a database that has no such clause."
 				},
+				"Syntax.NoNestedOrder": {
+					"kind": "field",
+					"decl": "NoNestedOrder bool",
+					"doc": "NoNestedOrder leaves the ORDER BY off a subquery, derived table or CTE with no paging, for a database that refuses one there."
+				},
 				"Syntax.NoNullsOrder": {
 					"kind": "field",
 					"decl": "NoNullsOrder bool",
-					"doc": "NoNullsOrder turns NULLS FIRST and NULLS LAST into a CASE before the value."
+					"doc": "NoNullsOrder turns NULLS FIRST and NULLS LAST into a CASE before the value, for a database that sorts NULL below every value, as MySQL, MariaDB and SQL Server do."
 				},
 				"Syntax.NoRowIn": {
 					"kind": "field",
@@ -3810,6 +4004,11 @@
 					"decl": "func (s *Syntax) ParameterLimit() int",
 					"doc": "ParameterLimit returns the most bound values in one statement."
 				},
+				"Syntax.PlainValues": {
+					"kind": "field",
+					"decl": "PlainValues bool",
+					"doc": "PlainValues says the driver writes and reads only what database/sql converts, where pgx converts slices, maps and structs itself."
+				},
 				"Syntax.RecursiveUnionAll": {
 					"kind": "field",
 					"decl": "RecursiveUnionAll bool",
@@ -3819,6 +4018,11 @@
 					"kind": "field",
 					"decl": "RetryEndsTx bool",
 					"doc": "RetryEndsTx says a deadlock or serialization failure rolls back the whole transaction, not only the statement, so a savepoint cannot recover from it."
+				},
+				"Syntax.RunsWhileStreaming": {
+					"kind": "field",
+					"decl": "RunsWhileStreaming bool",
+					"doc": "RunsWhileStreaming says a connection can run a statement while it streams the rows of another, as an Each loop does."
 				},
 				"Syntax.SavepointCommands": {
 					"kind": "method",
@@ -3864,7 +4068,7 @@
 		},
 		"ids": {
 			"path": "github.com/skudra-go/ant/ids",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/ids",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/ids",
 			"symbols": {
 				"NewSnowflake": {
 					"kind": "func",
@@ -3890,12 +4094,17 @@
 					"kind": "func",
 					"decl": "func UUID() string",
 					"doc": "UUID returns a version 7 UUID in its usual text form: a millisecond timestamp followed by random bits, so values sort by time."
+				},
+				"UUIDv7": {
+					"kind": "func",
+					"decl": "func UUIDv7[T ~[16]byte]() T",
+					"doc": "UUIDv7 returns a version 7 UUID as any 16-byte type: a millisecond timestamp followed by random bits, so values sort by time."
 				}
 			}
 		},
 		"metrics": {
 			"path": "github.com/skudra-go/ant/metrics",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/metrics",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/metrics",
 			"symbols": {
 				"Metrics": {
 					"kind": "type",
@@ -3962,7 +4171,7 @@
 		},
 		"migrate": {
 			"path": "github.com/skudra-go/ant/migrate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/migrate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/migrate",
 			"symbols": {
 				"Absorbed": {
 					"kind": "const",
@@ -4419,7 +4628,7 @@
 		},
 		"mysql": {
 			"path": "github.com/skudra-go/ant/dialect/mysql",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/mysql",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect/mysql",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -4476,7 +4685,7 @@
 		},
 		"pgxext": {
 			"path": "github.com/skudra-go/ant/dialect/postgres/pgxext",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/postgres/pgxext",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect/postgres/pgxext",
 			"symbols": {
 				"Batch": {
 					"kind": "type",
@@ -4532,7 +4741,7 @@
 		},
 		"postgres": {
 			"path": "github.com/skudra-go/ant/dialect/postgres",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/postgres",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect/postgres",
 			"symbols": {
 				"Array": {
 					"kind": "type",
@@ -4611,8 +4820,13 @@
 				},
 				"Match": {
 					"kind": "func",
-					"decl": "func Match[V ~string](field *V, config, query string) ant.Cond",
+					"decl": "func Match[V any](field *V, config, query string) ant.Cond",
 					"doc": "Match matches rows whose text column meets a full-text search, in websearch syntax, using the given text search configuration, such as \"english\"."
+				},
+				"MatchVector": {
+					"kind": "func",
+					"decl": "func MatchVector[V any](field *V, config, query string) ant.Cond",
+					"doc": "MatchVector matches rows whose precomputed tsvector column meets a full-text search, in websearch syntax, using the given text search configuration."
 				},
 				"MonthlyPartitions": {
 					"kind": "func",
@@ -4710,7 +4924,7 @@
 		},
 		"qb": {
 			"path": "github.com/skudra-go/ant/qb",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/qb",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/qb",
 			"symbols": {
 				"Aliased": {
 					"kind": "func",
@@ -5566,7 +5780,7 @@
 		},
 		"schema": {
 			"path": "github.com/skudra-go/ant/schema",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/schema",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/schema",
 			"symbols": {
 				"AddCheck": {
 					"kind": "type",
@@ -6306,6 +6520,41 @@
 					"decl": "var ErrUnsupported = errors.New(\"ant: dialect does not support migrations\")",
 					"doc": "ErrUnsupported reports a dialect with no migration support."
 				},
+				"ExternalType": {
+					"kind": "type",
+					"decl": "type ExternalType struct{ … }",
+					"doc": "ExternalType is a type that columns use and the schema does not create."
+				},
+				"ExternalType.Columns": {
+					"kind": "field",
+					"decl": "Columns []string",
+					"doc": "Columns are the columns that use it, as table.column."
+				},
+				"ExternalType.Extension": {
+					"kind": "field",
+					"decl": "Extension string",
+					"doc": "Extension is the extension that makes it, or \"\"."
+				},
+				"ExternalType.Kind": {
+					"kind": "field",
+					"decl": "Kind string",
+					"doc": "Kind says what it is: \"a domain\", \"a composite type\", or the like."
+				},
+				"ExternalType.Name": {
+					"kind": "field",
+					"decl": "Name string",
+					"doc": "Name is the type as the columns name it, without an array's brackets."
+				},
+				"ExternalTypes": {
+					"kind": "type",
+					"decl": "type ExternalTypes interface{ … }",
+					"doc": "ExternalTypes is implemented by a dialect that can tell which types the columns of a schema use that neither the schema nor the database itself makes, such as a domain, a composite type, or an extension's type.",
+					"interface": true
+				},
+				"ExternalTypes.ExternalTypes": {
+					"kind": "method",
+					"decl": "ExternalTypes(ctx context.Context, q Querier, s *Schema) ([]ExternalType, error)"
+				},
 				"Facets": {
 					"kind": "type",
 					"decl": "type Facets struct{ … }",
@@ -6412,6 +6661,11 @@
 					"decl": "Column string",
 					"doc": "Column is empty when the hint is about the table itself."
 				},
+				"Hint.Enum": {
+					"kind": "field",
+					"decl": "Enum string",
+					"doc": "Enum is set when the hint is about Value, a value of that enum, which would be renamed To."
+				},
 				"Hint.Flag": {
 					"kind": "method",
 					"decl": "func (h Hint) Flag() string",
@@ -6434,6 +6688,10 @@
 				"Hint.To": {
 					"kind": "field",
 					"decl": "To string"
+				},
+				"Hint.Value": {
+					"kind": "field",
+					"decl": "Value string"
 				},
 				"Index": {
 					"kind": "type",
@@ -6641,6 +6899,17 @@
 					"decl": "func (r Ref) String() string",
 					"doc": "String returns the name as schema.table, or table in the default schema."
 				},
+				"RelationColumns": {
+					"kind": "type",
+					"decl": "type RelationColumns interface{ … }",
+					"doc": "RelationColumns is implemented by a dialect that can read the columns of a table or view by name, which drift compares with the views that read-only models read.",
+					"interface": true
+				},
+				"RelationColumns.RelationColumns": {
+					"kind": "method",
+					"decl": "RelationColumns(ctx context.Context, q Querier, ref Ref) (columns []string, ok bool, err error)",
+					"doc": "RelationColumns returns the columns of the relation ref names, found as a query of it would find it, in their order."
+				},
 				"RemoveEnumValue": {
 					"kind": "type",
 					"decl": "type RemoveEnumValue struct{ … }",
@@ -6715,6 +6984,32 @@
 				"RenameConstraint.Warning": {
 					"kind": "method",
 					"decl": "func (RenameConstraint) Warning() string"
+				},
+				"RenameEnumValue": {
+					"kind": "type",
+					"decl": "type RenameEnumValue struct{ … }",
+					"doc": "RenameEnumValue renames a value of an enum."
+				},
+				"RenameEnumValue.Enum": {
+					"kind": "field",
+					"decl": "Enum string"
+				},
+				"RenameEnumValue.From": {
+					"kind": "field",
+					"decl": "From string"
+				},
+				"RenameEnumValue.String": {
+					"kind": "method",
+					"decl": "func (c RenameEnumValue) String() string",
+					"doc": "String implements Change."
+				},
+				"RenameEnumValue.To": {
+					"kind": "field",
+					"decl": "To string"
+				},
+				"RenameEnumValue.Warning": {
+					"kind": "method",
+					"decl": "func (RenameEnumValue) Warning() string"
 				},
 				"RenameIndex": {
 					"kind": "type",
@@ -6884,6 +7179,11 @@
 					"decl": "Unmanaged []Ref",
 					"doc": "Unmanaged tables exist, but migrations leave them alone."
 				},
+				"Schema.Views": {
+					"kind": "field",
+					"decl": "Views []*View",
+					"doc": "Views are the views that read-only models read."
+				},
 				"Script": {
 					"kind": "func",
 					"decl": "func Script(d Dialect, p *Plan) (string, error)",
@@ -6964,6 +7264,10 @@
 					"decl": "type Summary struct{ … }",
 					"doc": "Summary is a short description of a live database."
 				},
+				"Summary.MaterializedViews": {
+					"kind": "field",
+					"decl": "MaterializedViews []TableSummary"
+				},
 				"Summary.Name": {
 					"kind": "field",
 					"decl": "Name string"
@@ -7038,7 +7342,7 @@
 				"TableSummary": {
 					"kind": "type",
 					"decl": "type TableSummary struct{ … }",
-					"doc": "TableSummary is one table in a Summary."
+					"doc": "TableSummary is one table or materialized view in a Summary."
 				},
 				"TableSummary.Name": {
 					"kind": "field",
@@ -7066,12 +7370,34 @@
 					"kind": "func",
 					"decl": "func UniqueName(d Dialect, table string, columns ...string) string",
 					"doc": "UniqueName returns the default name of a unique constraint."
+				},
+				"View": {
+					"kind": "type",
+					"decl": "type View struct{ … }",
+					"doc": "View is a view, or another relation a read-only model reads, with the columns the model reads from it."
+				},
+				"View.Columns": {
+					"kind": "field",
+					"decl": "Columns []string"
+				},
+				"View.Name": {
+					"kind": "field",
+					"decl": "Name string"
+				},
+				"View.Ref": {
+					"kind": "method",
+					"decl": "func (v *View) Ref() Ref",
+					"doc": "Ref returns the view's name."
+				},
+				"View.Schema": {
+					"kind": "field",
+					"decl": "Schema string"
 				}
 			}
 		},
 		"secure": {
 			"path": "github.com/skudra-go/ant/secure",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/secure",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/secure",
 			"symbols": {
 				"ErrNoKeys": {
 					"kind": "var",
@@ -7141,7 +7467,7 @@
 		},
 		"sqlite": {
 			"path": "github.com/skudra-go/ant/dialect/sqlite",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/sqlite",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect/sqlite",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -7152,7 +7478,7 @@
 		},
 		"sqlserver": {
 			"path": "github.com/skudra-go/ant/dialect/sqlserver",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/dialect/sqlserver",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/dialect/sqlserver",
 			"symbols": {
 				"Dialect": {
 					"kind": "var",
@@ -7163,7 +7489,7 @@
 		},
 		"validate": {
 			"path": "github.com/skudra-go/ant/validate",
-			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.4.0/validate",
+			"url": "https://pkg.go.dev/github.com/skudra-go/ant@v0.6.0/validate",
 			"symbols": {
 				"All": {
 					"kind": "func",

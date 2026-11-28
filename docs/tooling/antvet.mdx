@@ -32,7 +32,7 @@ Add the vet line to CI to fail the build on a report.
 | A `Find` key of the wrong type | `db.Users.Find(ctx, "1")` |
 | A change saved through a context that did not load it | `user` from `db.Users.Find`, changed, then `session.SaveChanges(ctx)` |
 
-The second check covers a query's conditions, ordering, grouping, columns, includes and updates, and aggregates such as `ant.SumOf`. The key in the third check comes from the model's `Configure` when it sets one with `Key` or `GenerateKey`, so a model with a `Code string` key is judged against `string`, not against the field named `ID`.
+The second check covers a query's conditions, ordering, grouping, columns, includes and updates, `Latest` and `Oldest`, `Load`, `LoadOne`, `LoadMissing`, `Recursive` and `RecursiveOne`, and aggregates such as `ant.SumOf`. The key in the third check comes from the model's `Configure` when it sets one with `Key` or `GenerateKey`, so a model with a `Code string` key is judged against `string`, not against the field named `ID`.
 
 The fourth check follows an entity within one function, from a `Find` or `First` on one context to a `SaveChanges` on another, and names it: `user was loaded through db and changed, but session.SaveChanges saves only what session tracks`. It stays quiet when the entity is attached, passed to another function, or also saved through the context that loaded it. See [load and save through one session](/tracking/sessions#one-session).
 
@@ -41,6 +41,29 @@ Every field pointer passed to an ant function or builder method must come from a
 ## Subqueries may name the outer model
 
 A subquery can refer to a column of the outer query, so a condition on another model is not always a mistake. `antvet` judges a query only where it runs, as in `.All(ctx)` or `ant.SumOf(ctx, q, ...)`, or inside the query it belongs to. Where it cannot tell, it reports nothing.
+
+## Queries built up in a variable
+
+A filter endpoint often builds its query in steps. `antvet` follows a query held in a variable of the function, through every `q = q.Where(...)`, and judges it where it runs:
+
+```go
+func search(ctx context.Context, db *AppDB, name string, minAge int) ([]*User, error) {
+	q := db.Users.OrderBy(&Users.Name)
+
+	if name != "" {
+		q = q.Where(ant.ILike(&Users.Name, name+"%"))
+	}
+
+	if minAge > 0 {
+		// spot-next-line
+		q = q.Where(ant.Gte(&Posts.UserID, int64(minAge))) // antvet: condition on Post in a query of User
+	}
+
+	return q.All(ctx)
+}
+```
+
+The variable's type says which models the query reads: a `*ant.Query[User]` reads `User`, and a join's type carries the joined models. Each use must run the query, such as `q.All(ctx)` or `ant.SumOf(ctx, q, ...)`, or build it up into a variable followed the same way. Any other use may put the query where conditions on other models are valid, so then the variable isn't judged at all: a subquery such as `ant.Exists(q)`, a join added later, an argument to a function of your own, a return, a struct field, or its address. A parameter, a named result and a package variable aren't followed either, since code elsewhere gives or takes them.
 
 ## Silence a report
 

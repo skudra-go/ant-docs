@@ -55,7 +55,7 @@ session := ant.Session(db)
 err = session.SaveChanges(ctx) // nil, and nothing is written
 ```
 
-Load it through the session that saves it, or `ant.Attach(ctx, session, user)` before changing it. `session.HasChanges(ctx)` tells whether a save would write anything, and [antvet](/tooling/antvet) reports this slip within a function.
+Load it through the session that saves it, or `ant.Attach(ctx, session, user)` before changing it. A `Find` on the session answers from what it tracks without a query, except for a row a bulk `Delete` on the session may have removed, which it reads again: see [find by primary key](/queries/reading-rows#find-by-primary-key). `session.HasChanges(ctx)` tells whether a save would write anything, and [antvet](/tooling/antvet) reports this slip within a function.
 
 :::warning[Close the root only]
 

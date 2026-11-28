@@ -66,13 +66,13 @@ if errors.Is(err, ant.ErrNotFound) {
 | Error | Means |
 | --- | --- |
 | `ant.ErrNotProbe` | A pointer that does not come from a [probe](/models/field-probes) |
-| `ant.ErrWrongModel` | A field pointer from another model's probe |
-| `ant.ErrNotColumn` | A relation used as a column |
-| `ant.ErrNotRelation` | A field that is not a relation, used as one |
+| `ant.ErrWrongModel` | A field pointer from another model's probe, as in `Post.Title in a query of User`, or `Post.User is not a relation of User` |
+| `ant.ErrNotColumn` | A relation used as a column: `field is a relation, not a column: User.Posts` |
+| `ant.ErrNotRelation` | A field that is not a relation, used as one: `field is not a relation: User.Bio` |
 | `ant.ErrNoKey` | A key operation on a model with no primary key. A field spelled `Id` is not the key, and the error says to name it `ID` |
 | `ant.ErrKeyType` | A key whose type does not match the primary key |
 
-[`antvet`](/tooling/antvet) finds most of these at build time.
+The message names the field, and `errors.Is` matches the sentinel. [`antvet`](/tooling/antvet) finds most of these at build time.
 
 ## Setup
 
@@ -155,7 +155,23 @@ Naming a version field in any of those is refused too, since ant moves it on by 
 
 ## Validation errors
 
-[Field rules](/lifecycle/validation) do not stop at the first failing field. The write joins one `*ant.ValidationError` per failure. Each carries `Model`, `Field` and `Err`, and unwraps to the rule's error. `errors.As` reaches the first failure; [read all of them](/lifecycle/validation#read-the-error) through the joined error's `Unwrap() []error`.
+[Field rules](/lifecycle/validation) don't stop at the first failing field. The write joins one `*ant.ValidationError` per failure with `errors.Join`, even when only one fails. Each carries `Model`, `Field` and `Err`, and unwraps to the rule's error.
+
+```go
+err := db.Users.Insert(ctx, user)
+
+// spot-start
+var invalid *ant.ValidationError
+
+if errors.As(err, &invalid) { // the first failure
+	fmt.Println(invalid.Field, invalid.Err)
+}
+// spot-end
+
+_, ok := err.(*ant.ValidationError) // false, even for one failure
+```
+
+A type assertion never matches, so use `errors.As`. To answer an API client with every field, walk the joined error: see [return validation errors to an API client](/lifecycle/validation#return-validation-errors-to-an-api-client).
 
 ## Database errors
 

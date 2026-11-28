@@ -3,8 +3,9 @@ module example.com/app
 go 1.27
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/skudra-go/ant v0.4.0
+	github.com/skudra-go/ant v0.6.0
 	github.com/skudra-go/ant/contrib/otel v0.0.0-20261114185136-81cd820c78ca
 	go.opentelemetry.io/otel/trace v1.47.0
 	modernc.org/sqlite v1.62.0
@@ -14,8 +15,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/go-sql-driver/mysql v1.10.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
+	github.com/go-sql-driver/mysql v1.10.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect

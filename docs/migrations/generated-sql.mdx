@@ -261,6 +261,14 @@ ALTER TABLE "orgs" ALTER COLUMN "code" TYPE text;
 ALTER TABLE "members" ADD CONSTRAINT "members_org_code_fkey" FOREIGN KEY ("org_code") REFERENCES "orgs" ("code");
 ```
 
+PostgreSQL casts a boolean only to and from `integer`. So a `boolean` that becomes another number type goes through `integer`, and a number that becomes a `boolean` is true where it isn't zero:
+
+```sql
+ALTER TABLE "items" ALTER COLUMN "flag" TYPE bigint USING "flag"::integer::bigint;
+
+ALTER TABLE "items" ALTER COLUMN "hidden" TYPE boolean USING ("hidden" <> 0);
+```
+
 A column that moves from one enum to another goes through text, because PostgreSQL has no cast between enums:
 
 ```sql
@@ -364,6 +372,32 @@ PostgreSQL can't remove an enum value or reorder the existing ones. `diff` write
 ```sql
 -- WARNING: PostgreSQL cannot reorder the values of enum ticket_status to waiting, open, closed. Rebuild the type by hand: create a new one, move the columns over, and drop the old one.
 ```
+
+## Rename an enum value
+
+A value renamed in the models looks like one value removed and another added, as a renamed column does. In a terminal `diff` asks whether it is a rename. In a script it adds the new value, warns that the old one can't be removed, and gives the statement that keeps the data in a comment:
+
+```sql
+-- WARNING: value banned of enum item_status was removed and blocked was added. If this is a rename, keep the data by
+-- replacing the added value below with:
+--   ALTER TYPE "item_status" RENAME VALUE 'banned' TO 'blocked';
+
+ALTER TYPE "item_status" ADD VALUE IF NOT EXISTS 'blocked';
+
+-- WARNING: PostgreSQL cannot remove value banned from enum item_status. Rebuild the type by hand: create a new one, move the columns over, and drop the old one.
+```
+
+`--rename enum.value=new` says it is one, and the rows that held `banned` read `blocked`. PostgreSQL rewrites no row for it:
+
+```bash
+go run ./cmd/migrate diff rename_status --rename item_status.banned=blocked
+```
+
+```sql
+ALTER TYPE "item_status" RENAME VALUE 'banned' TO 'blocked';
+```
+
+The new name must be a value the models' enum has. Two values can swap names, through a temporary `ant_rename_1`. A renamed value can be used in the same file, unlike an added one, so the file keeps its transaction. Renames run before any `ADD VALUE`, since an added value may be placed `BEFORE` a renamed one.
 
 ## Change a sequence
 

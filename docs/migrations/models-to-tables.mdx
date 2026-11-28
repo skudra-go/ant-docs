@@ -33,6 +33,8 @@ A column is `NOT NULL` unless its Go type can hold nothing: a pointer, `sql.Null
 
 Before v0.4.0, a `time.Duration` was `bigint`, and a `net.IP` and a `json.RawMessage` were `bytea`. The next `diff` changes such a column, and converts its values as ant stored them: nanoseconds to an interval, the bytes of an address to `inet`, and JSON text to `jsonb`. Its warning says how it reads the old values, so check the file if a `bigint` held something other than a `time.Duration`, such as seconds. To keep the column as it is, name its type, as `b.Column(&Jobs.Timeout).Type("bigint")`: its values read back as before.
 
+A field whose type changes changes its column, with a cast. A `bool` that becomes an `int64`, or back, goes through `integer`, the only number PostgreSQL casts a boolean to: see [change a column's type](/migrations/generated-sql#change-a-columns-type).
+
 ## When there is no obvious column
 
 If a type has no obvious column, `diff` stops and names the field. Set the type in [`Configure`](/models/configure#columns), or have the type declare its own column, which suits a library type.
@@ -116,6 +118,7 @@ CREATE SEQUENCE "org_numbers" START WITH 1000;
 ```
 
 - A new enum value is one `ALTER TYPE ... ADD VALUE`, placed `BEFORE` the value after it in the models. A file that adds a value and also uses it runs without a transaction.
+- A value renamed in the models is a rename hint, as a column is. `--rename item_status.banned=blocked`, or a yes at the prompt, writes `ALTER TYPE ... RENAME VALUE`, and the rows keep their data.
 - Removing a value, or reordering the existing ones, needs a person. `diff` writes a warning and no statement.
 - A sequence whose increment or start changes is altered in place and keeps its current value.
 - A name that isn't plain lower case, such as `UserStatus`, is quoted wherever a column uses it, as in `"status" "UserStatus"` and `nextval('"MySeq"')`, since PostgreSQL folds a name without quotes to lower case.

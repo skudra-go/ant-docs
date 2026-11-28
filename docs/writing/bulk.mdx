@@ -76,15 +76,66 @@ n, err := db.Archives.InsertFrom(ctx, ant.Project[Archive](
 // FROM "posts" WHERE "posts"."published" = $1
 ```
 
-Mapping one column twice returns an error before anything runs.
+Mapping one column twice returns an error before anything runs. A column the projection doesn't map gets its default, so it needs one in the table: a `string` field with no `default=` is `NOT NULL` with none, and the insert fails with a not-null violation.
+
+### Skip rows the target already has {#insert-from-with-conflict}
+
+`InsertFrom` takes `ant.WithConflict`, as `InsertMany` does. Adding everyone a query finds to a list then skips those already on it, in the same statement, where a `NotExists` filter could still race another insert into a unique violation:
+
+```go
+type Membership struct {
+	ID     int64
+	UserID int64
+	Label  string
+	Note   string `ant:"default=''"`
+}
+
+func (Membership) Configure(b *ant.ModelBuilder[Membership]) {
+	b.Index(&Memberships.UserID).And(&Memberships.Label).Unique()
+}
+
+var Memberships = ant.Fields[Membership]()
+
+adults := ant.Project[Membership](
+	db.Users.Where(ant.Gte(&Users.Age, 18)),
+	ant.Into(&Memberships.UserID, &Users.ID),
+	ant.IntoExpr(&Memberships.Label, ant.SQL[string]("?", "news")),
+)
+
+byPair := ant.OnConflict(&Memberships.UserID).And(ant.F(&Memberships.Label))
+
+// spot-next-line
+n, err := db.Memberships.InsertFrom(ctx, adults, ant.WithConflict(byPair.DoNothing()))
+// INSERT INTO "memberships" ("user_id", "label")
+// SELECT "users"."id" AS "user_id", $1 AS "label" FROM "users" WHERE "users"."age" >= $2
+// ON CONFLICT ("user_id", "label") DO NOTHING
+```
+
+`n` counts the rows inserted. Without `DoNothing`, the update overwrites only the columns the projection maps, outside the conflict's own, since the row an `INSERT ... SELECT` offers holds the default in every other column. Here that leaves nothing to update, so it is `DO NOTHING` too, and a stored `Note` is kept. `DoUpdate` naming a column the projection doesn't map returns an error: `ant: DoUpdate names Membership.Note, which the projection does not map`. `Set` assigns what you give it:
+
+{/*
+```go
+var adults *ant.Projection[Membership]
+
+var byPair *ant.Conflict
+```
+*/}
+
+```go
+n, err := db.Memberships.InsertFrom(ctx, adults, ant.WithConflict(byPair.Set(ant.Set(&Memberships.Note, "again"))))
+// ... ON CONFLICT ("user_id", "label") DO UPDATE SET "note" = $3
+```
+
+An update stamps `UpdatedAt` and moves a version on, as `InsertMany`'s does. `BatchSize` has no effect, since `InsertFrom` is one statement. SQL Server has no conflict clause, so `WithConflict` returns `ant.ErrUnsupported` there, and SQLite gets `WHERE (1 = 1)` after a `SELECT` with no condition, which its parser needs before `ON CONFLICT`.
 
 {/*
 ```go
 type PageDB struct {
 	ant.Context
-	Users    ant.Table[User]
-	Posts    ant.Table[Post]
-	Archives ant.Table[Archive]
+	Users       ant.Table[User]
+	Posts       ant.Table[Post]
+	Archives    ant.Table[Archive]
+	Memberships ant.Table[Membership]
 }
 ```
 */}

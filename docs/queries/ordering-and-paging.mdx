@@ -30,6 +30,8 @@ users, err := db.Users.
 // SELECT ... FROM "users" ORDER BY "users"."bio" NULLS LAST, LOWER("users"."name") DESC
 ```
 
+PostgreSQL has `NULLS FIRST` and `NULLS LAST`. MySQL, MariaDB and SQL Server put NULLs below every value, so ant writes a `CASE` before the value there, and only for the two orders that move them: `Asc().NullsLast()` and `Desc().NullsFirst()`. Under `Distinct` that `CASE` is outside the select list, which SQL Server refuses, so those two return `ant.ErrUnsupported` there. See [databases](/reference/databases#ordering-on-sql-server).
+
 ## Sort by a column the request names {#sort-from-a-request}
 
 A request names its sort as text. List the names it may use in a map of `ant.FieldRef`, and order by the entry's `Asc` or `Desc`:
@@ -108,6 +110,51 @@ fmt.Println(page.HasNext()) // is there another?
 
 Order the query, or pages may overlap. The count ignores the ordering. Counting and skipping rows gets slow on large tables; use a cursor there.
 
+### Send a page as JSON {#page-json}
+
+`ant.Page` encodes with camelCase keys, as `ant.Base` does, so a handler can write it as it is. `Pages()` and `HasNext()` are methods, so they aren't in the JSON:
+
+```go
+page, err := db.Users.OrderBy(&Users.Name).Page(ctx, 1, 20)
+if err != nil {
+	return err
+}
+
+err = json.NewEncoder(w).Encode(page)
+// {"items":[{"id":1,"createdAt":"2026-11-01T09:00:00Z","updatedAt":"2026-11-01T09:00:00Z","Name":"Ann",...}],
+//  "total":2,"number":1,"size":20}
+```
+
+The model's own fields keep Go's names, `Name` and `Age`, unless they have `json` tags. To send other keys, such as `page` and `perPage`, or the page count, copy the page into a response type of your own:
+
+```go
+type UserList struct {
+	Users   []*User `json:"users"`
+	Page    int     `json:"page"`
+	PerPage int     `json:"perPage"`
+	Pages   int     `json:"pages"`
+	Total   int64   `json:"total"`
+}
+
+// spot-start
+list := UserList{
+	Users:   page.Items,
+	Page:    page.Number,
+	PerPage: page.Size,
+	Pages:   page.Pages(),
+	Total:   page.Total,
+}
+// spot-end
+```
+
+{/*
+```go
+var w http.ResponseWriter
+
+var page *ant.Page[User]
+```
+*/}
+
 ## Cursors for infinite scroll
 
 `After` pages by position in the ordering. Every page costs the same however deep it goes, and rows added meanwhile don't shift pages. Pass `""` for the first page. Hand `Next` to the client and take it back as the cursor.
@@ -126,7 +173,52 @@ next, err := query.After(ctx, page.Next, 20)
 
 `After` asks for one row more than the page size to detect another page. `Next` is empty on the last page. The key is added to the ordering as a tie-breaker, so no row is lost at a page boundary. With no ordering it pages by key.
 
-The ordering must use plain columns of this table that cannot hold `NULL`: no pointer or `sql.Null` field, unless its column is configured `NotNull`. Anything else returns `ant.ErrCursor` before reading a row, because no seek comparison matches `NULL` and the pages would end where the `NULL` rows begin. A query with its own `Limit` or `Offset` is `ant.ErrCursor` too, since a cursor has no count of the rows before it, and so is a tampered cursor. `After` reads the key and the ordering columns even when `Column` or `Omit` left them out.
+The ordering must use plain columns of this table. A query with its own `Limit` or `Offset` is `ant.ErrCursor`, since a cursor has no count of the rows before it, and so is a tampered cursor. `After` reads the key and the ordering columns even when `Column` or `Omit` left them out. `CursorPage` encodes as `{"items":[...],"next":"WyJBbm4iLDFd"}`.
+
+### Page a column that can be NULL {#cursor-nulls}
+
+A pointer or `sql.Null` field can hold `NULL`, and `published_at < $1` never matches a `NULL`, so the pages would end where the `NULL` rows begin. Say where the `NULL`s go with `NullsFirst` or `NullsLast`, and `After` seeks past them with `IS NULL` and `IS NOT NULL`. Here the newest published stories come first, and the drafts after them:
+
+```go
+type Story struct {
+	ant.Base
+	Title       string
+	PublishedAt *time.Time
+}
+
+var Stories = ant.Fields[Story]()
+
+// spot-next-line
+feed := db.Stories.Order(ant.Col(&Stories.PublishedAt).Desc().NullsLast())
+
+page, err := feed.After(ctx, "", 20)
+// SELECT ... FROM "stories" ORDER BY "stories"."published_at" DESC NULLS LAST, "stories"."id" LIMIT $1
+
+next, err := feed.After(ctx, page.Next, 20)
+// SELECT ... FROM "stories"
+// WHERE ((("stories"."published_at" < $1 OR "stories"."published_at" IS NULL))
+//   OR ("stories"."published_at" = $2 AND "stories"."id" > $3))
+// ORDER BY "stories"."published_at" DESC NULLS LAST, "stories"."id" LIMIT $4
+```
+
+Once the cursor reaches the drafts, its value is `NULL`, and the next page reads `WHERE (("stories"."published_at" IS NULL AND "stories"."id" > $1))`. Without `NullsFirst` or `NullsLast`, `After` returns `ant.ErrCursor` before reading a row:
+
+```text
+ant: invalid cursor: PublishedAt can be NULL, and each database puts NULLs in its own place: order it with NullsFirst or NullsLast
+```
+
+The databases put `NULL`s in different places, PostgreSQL after every value and the other four before, so naming the place gives the same pages on all five. A column that can't hold `NULL`, such as one configured `NotNull`, has none to place, and `After` leaves the `NULLS LAST` out of its SQL. A `Where(ant.IsNotNull(...))` doesn't count as a place.
+
+{/*
+```go
+type FeedDB struct {
+	ant.Context
+	Users   ant.Table[User]
+	Posts   ant.Table[Post]
+	Stories ant.Table[Story]
+}
+```
+*/}
 
 ```go
 func listUsers(w http.ResponseWriter, r *http.Request) {

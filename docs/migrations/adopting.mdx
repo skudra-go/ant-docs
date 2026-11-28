@@ -33,7 +33,7 @@ The database differs from the models. To match, it would need to:
 Error: ant: database differs from the migrations: 3 differences
 ```
 
-Each line is something the models get wrong. `accounts.name` is `varchar(50)`, so the model gets `Length(50)`. The database has no unique constraint on `email`, so the tag comes off.
+Each line is something the models get wrong. `accounts.name` is `varchar(50)`, so the model gets `Length(50)`. The database has no unique constraint on `email`, so the tag comes off. A column that draws from a sequence is compared by the sequence it names, so a serial column the models give another sequence is a difference: `change column invoices.number: default nextval('legacy_numbers'::regclass) to nextval('invoice_numbers'::regclass)`.
 
 ```go
 type Account struct {
@@ -100,6 +100,16 @@ If the models cover everything:
 ```bash
 go run ./cmd/migrate diff baseline
 ```
+
+The baseline holds only what the models describe: tables, keys, indexes, enums and sequences. It has no triggers, functions or views, and no domain or other type that a column names but the models don't create. A column typed `.Type("year")` after a domain matches the old database, so `drift` passes, and the baseline then fails on a new database with `type "year" does not exist`. `drift` lists such types after its verdict, without failing:
+
+```text
+The models name types they do not create, which an empty database lacks:
+  year, a domain: items.year
+A migration made from the models alone fails without them: create them in one of your own (diff --empty) before the tables that use them, or adopt the database's dump.
+```
+
+If the database has any of these, start from the dump, or create them in a migration of your own before the baseline's tables.
 
 ### From your existing files
 

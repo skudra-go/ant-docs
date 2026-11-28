@@ -171,7 +171,26 @@ novelists, err := db.Novelists.Include(&Novelists.Live).IncludeOne(&Novelists.Ne
 // ) AS "ant_partition" WHERE "ant_partition"."ant_row" > $2 AND "ant_partition"."ant_row" <= $3
 ```
 
-Counts, `Has` and joins follow the scope. `.Oldest` is the opposite of `.Latest`. For a one-off filter that isn't part of the model, use a [shaped `Include`](/relations/loading#filter-and-order-what-loads) instead.
+Counts, `Has`, joins and [`IncludeJoined`](/relations/loading#load-a-parent-in-the-same-statement) follow the scope. `.Oldest` is the opposite of `.Latest`. For a one-off filter that isn't part of the model, use a [shaped `Include`](/relations/loading#filter-and-order-what-loads) instead.
+
+### Add to a scoped relation {#add-to-a-scoped-relation}
+
+A row added to a scoped relation gets the values of the scope's `Eq` conditions on the target, so it is stored inside the relation it joined. A novel appended to `Live` is saved as published:
+
+```go
+session := ant.Session(db)
+
+novelist, err := session.Novelists.Include(&Novelists.Live).Find(ctx, id)
+
+// spot-next-line
+novelist.Live = append(novelist.Live, Novel{Year: 2026})
+
+err = session.SaveChanges(ctx)
+// INSERT INTO "novels" ("novelist_id", "year", "published") VALUES ($1, $2, $3) RETURNING "id"
+// -- $3 = true, from the scope
+```
+
+Without it the novel would be saved with `published = false`, and the next load of `Live` would leave it out. Only an `Eq` with a value implies a value to write. `Ne`, `In`, `Or`, `Latest` and the rest still only filter what loads, so a row added under them is written as you gave it. A row already in the loaded relation isn't stamped again, so changing its scoped column moves it out. A [many-to-many](/relations/many-to-many) relation changes only its pivot rows. `Morph` relations write their type column the same way.
 
 ## Fill the way back
 

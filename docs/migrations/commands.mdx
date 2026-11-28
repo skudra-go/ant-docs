@@ -30,8 +30,8 @@ Run each with `go run ./cmd/migrate <command>`.
 | `up --dry-run` | Print what would run |
 | `status` | List every migration and where it stands |
 | `status --check` | Also fail while anything waits, or `up` would refuse to run, for a deploy gate |
-| `drift` | Compare the live database with the snapshot, `--sql` for the fix |
-| `db-show` | Summarize the live database: version, size, and tables |
+| `drift` | Compare the live database with the snapshot, and the views that view models read. `--sql` for the fix |
+| `db-show` | Summarize the live database: version, size, tables, and materialized views |
 | `baseline [version]` | Record migrations as applied without running them, through the version; with none, only when one is left to record |
 | `repair` | Accept changed files, clear failed runs, and forget missing files |
 | `seed [name...]` | Run seeders |
@@ -99,6 +99,35 @@ ALTER TABLE "people" ALTER COLUMN "name" TYPE text;
 ```
 
 Before the first snapshot exists, `drift` compares with the models instead. That is how [adopting a database](/migrations/adopting) works. Names in `Config.Ignore` are left out of the comparison.
+
+Migrations don't create views, so `drift` asks the database for the views that [`b.View`](/models/shared-tables-and-views#map-a-model-to-a-view) models read. A missing view, or one without a column the model reads, is a difference, and fails `drift`:
+
+```text
+The views the models read differ from the database:
+  view active_items has no column label
+Error: ant: database differs from the migrations: 1 difference
+```
+
+A view may have more columns than the model reads. `Config.Ignore` leaves out a view by its name, and a column as `view.column`.
+
+After its verdict, `drift` lists the types columns use that the models don't create, such as a domain, a composite type or an extension's type. They aren't differences, so the exit status stays the same, but a migration made from the models alone would fail without them:
+
+```text
+The models name types they do not create, which an empty database lacks:
+  year, a domain: items.year
+A migration made from the models alone fails without them: create them in one of your own (diff --empty) before the tables that use them, or adopt the database's dump.
+```
+
+`db-show` lists materialized views after the tables, when there are any:
+
+```text
+TABLE           ROWS (ESTIMATE)  SIZE
+ant_migrations  0                32 kB
+items           0                16 kB
+
+MATERIALIZED VIEW  ROWS (ESTIMATE)  SIZE
+item_counts        0                0 bytes
+```
 
 ## Fix the history table
 

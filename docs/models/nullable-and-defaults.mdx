@@ -86,6 +86,8 @@ err = db.Accounts.Insert(ctx, &Account{Status: "vip"})
 // INSERT INTO "accounts" ("status") VALUES ($1) RETURNING "id"
 ```
 
+[Field rules](/lifecycle/validation#fields-the-database-fills) on such a field skip its zero on insert, since the database supplies the value, and still check it on update and `Upsert`, which write the zero.
+
 The expression is also the column's `DEFAULT` in migrations. It can instead be set in `Configure`, leaving the tag bare:
 
 ```go

@@ -36,6 +36,54 @@ A join gives one flat row per match. To load whole models with their relations a
 
 :::
 
+## Count joined rows
+
+A join has `Count` and `Exists`, so a page of joined rows can show its total from the same conditions.
+
+```go
+published := db.Posts.
+	Join(&Posts.User).
+	Where(ant.Eq(&Posts.Published, true))
+
+// spot-next-line
+total, err := published.Count(ctx)
+// SELECT COUNT(*) FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "posts"."published" = $1
+
+rows, err := published.
+	OrderBy(&Posts.Title).
+	Limit(20).
+	Offset(40).
+	Select(func(p *Post, u *User) string { return u.Name + ": " + p.Title }).
+	All(ctx)
+
+// spot-next-line
+found, err := published.Where(ant.Eq(&Users.Name, "Carol")).Exists(ctx)
+// SELECT EXISTS (SELECT 1 FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+// WHERE "posts"."published" = $1 AND "users"."name" = $2)
+```
+
+`Count` counts joined rows, one per match: a user with three published posts counts three times. To count users, use `db.Users.Where(ant.Has(...)).Count(ctx)`. `Limit`, `Offset`, `Distinct` and `GroupBy` decide which rows there are, so with any of them `Count` counts over a subquery of the select list:
+
+{/*
+```go
+var published *ant.Join2[Post, User]
+```
+*/}
+
+```go
+n, err := published.Limit(20).Count(ctx)
+// SELECT COUNT(*) FROM (
+//   SELECT "posts"."id" AS "ant_1", "posts"."created_at" AS "ant_2", ...
+//   FROM "posts" JOIN "users" ON "posts"."user_id" = "users"."id"
+//   WHERE "posts"."published" = $1 LIMIT $2
+// ) AS "ant_counted"
+```
+
+The columns are renamed `ant_1`, `ant_2` and on, since both sides have an `id`, which a derived table refuses on MySQL, MariaDB and SQL Server.
+
+`ToSQL` shows the `SELECT` that `Select` runs, and `Debug` logs it: see [inspecting queries](/tooling/inspecting-queries).
+
 ## Keep rows with no match {#left-joins}
 
 `LeftJoin` and `LeftJoinMany` keep rows with no match, and the missing side is `nil`.

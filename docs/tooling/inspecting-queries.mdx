@@ -18,22 +18,67 @@ SELECT "users"."id", ... FROM "users" WHERE "users"."age" > $1 ORDER BY "users".
 
 `args` is `[18 5]`. `ToSQLContext` applies [global filters](/lifecycle/global-filters) from a context. `UpdateSQL` and `DeleteSQL` do the same for writes.
 
+A [join](/queries/joins) and a [projection](/queries/projections) have `ToSQL` and `ToSQLContext` too. A join's is the `SELECT` its `Select` runs, with every column of every model, and a projection's is what its `All` runs.
+
+```go
+// spot-next-line
+text, args, err := db.Posts.Join(&Posts.User).Where(ant.Eq(&Users.Name, "Ann")).ToSQL()
+```
+
+```sql
+SELECT "posts"."id", ..., "users"."id", "users"."created_at", ... FROM "posts"
+JOIN "users" ON "posts"."user_id" = "users"."id" WHERE "users"."name" = $1
+```
+
 ## Explain
 
-`Explain` returns the database's query plan as text.
+`Explain` returns the database's query plan as text, one line per row of the plan. It plans the statement `All` would run, joins of [`IncludeJoined`](/relations/loading#load-a-parent-in-the-same-statement) included.
 
 ```go
 // spot-next-line
 plan, err := db.Users.Where(ant.Gt(&Users.Age, 18)).Explain(ctx)
+// EXPLAIN SELECT ... FROM "users" WHERE "users"."age" > $1
+
+fmt.Println(plan)
+// Seq Scan on users  (cost=0.00..16.50 rows=173 width=128)
+//   Filter: (age > '18'::bigint)
 ```
+
+Each database writes its plan its own way, and `Explain` returns the text as the database prints it:
+
+| Database | Sends | Returns |
+| --- | --- | --- |
+| PostgreSQL | `EXPLAIN` | The `QUERY PLAN` lines |
+| MySQL 8.0.16 and later | `EXPLAIN FORMAT=TREE` | The tree |
+| MariaDB | `EXPLAIN FORMAT=JSON` | One JSON document |
+| SQLite | `EXPLAIN QUERY PLAN` | The `detail` column of each step |
+| SQL Server | Nothing | `ant.ErrUnsupported` |
+
+SQL Server shows a plan only through `SET SHOWPLAN_TEXT ON`, a setting of the whole session that changes what every later statement on the connection does, so ant doesn't send it. Run it yourself in SQL Server Management Studio on the text `ToSQL` gives.
 
 ## Debug
 
-`Debug` logs one query's SQL and values through slog's default logger. Remove it before committing, since it logs values.
+`Debug` logs a query's SQL and values through slog's default logger. Remove it before committing, since it logs values.
 
 ```go
 // spot-next-line
 users, err := db.Users.Where(ant.Eq(&Users.Name, "Alice")).Debug().All(ctx)
+```
+
+It logs every `SELECT` the query runs, not only the one that reads rows: `Count`, `Exists`, `Pluck`, the aggregates such as `SumOf`, `Each`, and both statements of `Page`. A join or a projection made from a query with `Debug` keeps it, and they have `Debug` of their own.
+
+```go
+q := db.Posts.Where(ant.Eq(&Posts.Published, true)).Debug()
+
+total, err := q.Count(ctx)
+// level=DEBUG msg="ant: query" sql="SELECT COUNT(*) FROM \"posts\" WHERE \"posts\".\"published\" = $1" values=[true]
+
+// spot-start
+titles, err := q.Join(&Posts.User).
+	Select(func(p *Post, u *User) string { return u.Name + ": " + p.Title }).
+	All(ctx)
+	// spot-end
+// level=DEBUG msg="ant: query" sql="SELECT \"posts\".\"id\", ... FROM \"posts\" JOIN \"users\" ..." values=[true]
 ```
 
 ## DryRun

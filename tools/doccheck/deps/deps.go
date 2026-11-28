@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	_ "net/http"
 
+	_ "github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "go.opentelemetry.io/otel/trace"
 	_ "modernc.org/sqlite"
