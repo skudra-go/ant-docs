@@ -155,7 +155,7 @@ Naming a version field in any of those is refused too, since ant moves it on by 
 
 ## Validation errors
 
-A failed [field rule](/lifecycle/validation) is an `*ant.ValidationError` with `Model`, `Field` and `Err`. It unwraps to the rule's error.
+[Field rules](/lifecycle/validation) do not stop at the first failing field. The write joins one `*ant.ValidationError` per failure. Each carries `Model`, `Field` and `Err`, and unwraps to the rule's error. `errors.As` reaches the first failure; [read all of them](/lifecycle/validation#read-the-error) through the joined error's `Unwrap() []error`.
 
 ## Database errors
 

@@ -68,16 +68,26 @@ func (s *Signup) Validate(ctx context.Context) error {
 
 ## Read the error
 
-A failed field rule returns an `*ant.ValidationError` naming the model and field. It wraps the rule's error, so `errors.Is` works with `validate.ErrRequired` and your own errors.
+Field rules do not stop at the first failing field. The write joins one `*ant.ValidationError` per failure. Each names the model and field, and wraps the rule's error, so `errors.Is` works with `validate.ErrRequired` and your own errors. `errors.As` reaches the first failure; the joined error's `Unwrap() []error` reaches all of them.
 
 ```go
-err := db.Signups.Insert(ctx, &Signup{Email: "a@example.com"})
+err := db.Signups.Insert(ctx, &Signup{Email: "not-an-email", Age: 999})
 
 // spot-start
 var invalid *ant.ValidationError
 
 if errors.As(err, &invalid) {
 	fmt.Println(invalid.Model, invalid.Field, invalid.Err) // Signup Name is required
+}
+
+var joined interface{ Unwrap() []error }
+
+if errors.As(err, &joined) {
+	for _, failure := range joined.Unwrap() {
+		if errors.As(failure, &invalid) {
+			fmt.Println(invalid.Model, invalid.Field, invalid.Err)
+		}
+	}
 }
 // spot-end
 ```
@@ -95,7 +105,7 @@ An error from a `Validate` method is returned as it is, not wrapped.
 
 ## Return validation errors to an API client
 
-Map a `ValidationError` to a 422 that names the field:
+Map the validation failures to a 422 that names every field:
 
 ```go
 func create(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +117,19 @@ func create(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case errors.As(err, &invalid):
-		http.Error(w, invalid.Field+": "+invalid.Err.Error(), http.StatusUnprocessableEntity)
+		messages := []string{invalid.Field + ": " + invalid.Err.Error()}
+
+		var joined interface{ Unwrap() []error }
+		if errors.As(err, &joined) {
+			messages = messages[:0]
+			for _, failure := range joined.Unwrap() {
+				if errors.As(failure, &invalid) {
+					messages = append(messages, invalid.Field+": "+invalid.Err.Error())
+				}
+			}
+		}
+
+		http.Error(w, strings.Join(messages, "\n"), http.StatusUnprocessableEntity)
 	case ant.IsUniqueViolation(err):
 		http.Error(w, "that email is already registered", http.StatusConflict)
 	case err != nil:
