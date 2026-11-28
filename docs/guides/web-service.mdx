@@ -321,12 +321,6 @@ func (s *Accounts) Transfer(ctx context.Context, db *AppDB, in Transfer) error {
 	return nil
 }
 
-func (s *Accounts) Move(ctx context.Context, in Transfer) error {
-	return s.db.Tx(ctx, func(tx *AppDB) error {
-		return s.Transfer(ctx, tx, in)
-	})
-}
-
 func (s *UserService) List(ctx context.Context, number, size int) (*ant.Page[User], error) {
 	return s.db.Users.OrderBy(&Users.Name).Page(ctx, number, size)
 }
