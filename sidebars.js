@@ -24,6 +24,7 @@ const sidebars = {
       'guides/migrating-from-gorm',
       'guides/ant-vs-gorm-ent-sqlc',
       'guides/type-safe-sql-in-go',
+      'guides/web-service',
     ]),
 
     group('Build'),

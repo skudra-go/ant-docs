@@ -1,0 +1,392 @@
+---
+title: ant in a web service
+sidebar_label: In a web service
+description: How ant, the typed Go ORM, fits into an HTTP service, from opening the pool to the error mapping, the list responses and the tests.
+api_links: qualified
+---
+
+The quick start is one program that does everything in `main`. A service spreads the same work over handlers, services, a config and a test suite, and a handful of decisions follow from only where ant sits: the pool, the `*DB`, the transaction, the error list. This page walks through them in the order a service meets them, on `net/http`, so the handlers can go under any router. Where a framework has its own hook, the [error section](#errors) says where it takes over.
+
+## Open once
+
+`ant.Open` runs in `main`, from the config the app already reads, and `Close` at shutdown.
+
+```go
+func main() {
+	cfg := loadConfig()
+
+	// spot-next-line
+	db, err := ant.Open[AppDB](ctx, postgres.Dialect, cfg.DatabaseURL, ant.WithTracking(false))
+	if err != nil {
+		slog.Error("open database", "err", err)
+
+		os.Exit(1)
+	}
+
+	defer db.Close()
+
+	app := newServer(newServices(db))
+	runUntilSignal(app)
+}
+```
+
+Tracking is on by default, and a service turns it off on the root: a handler that loaded an entity then cannot save a half-changed one by accident, and a route that needs to save takes `db.Session(ctx)` of its own. `ant.WithTracking(false)` is the option that does it, and it sits in the `Open` call above so the reason stays next to the pool.
+
+A health route asks the pool rather than the models, and stays a `net/http` handler because no service is involved:
+
+```go
+func health(db *AppDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// spot-next-line
+		if err := db.DB().PingContext(r.Context()); err != nil {
+			http.Error(w, "database", http.StatusServiceUnavailable)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+```
+
+## Where the `*DB` lives
+
+The services hold it, and `main` builds and wires them once, as above. Handlers get the services, never the `*DB`, so a query has one place to live.
+
+A transaction that spans services starts in the service that owns the request's unit of work, because the handler has no `*DB` to start one with:
+
+```go
+func transfer(accounts *Accounts) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		in := Transfer{
+			From:   r.FormValue("from"),
+			To:     r.FormValue("to"),
+			Amount: r.FormValue("amount"),
+		}
+
+		// spot-start
+		err := accounts.Move(r.Context(), in)
+		// spot-end
+		if err != nil {
+			fail(w, r, err)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+```
+
+```go
+func (s *Accounts) Move(ctx context.Context, in Transfer) error {
+	return s.db.Tx(ctx, func(tx *AppDB) error {
+		return s.Transfer(ctx, tx, in)
+	})
+}
+```
+
+Every service call inside takes `tx` typed as the `*DB`, and each of them runs its statements on it. A service that is itself a transaction takes `db.Tx` the same way, so the two nest as savepoints. A `Session` per request is needed only where tracking is, which is where a written entity and its relations are changed across several calls; the [change tracking](/tracking/sessions) page covers it.
+
+## Request bodies
+
+Build the model from an input struct that names the fields a client may set, and let the server fill the rest. `id` and `createdAt` come from `ant.Base`, so nothing reads them off the request:
+
+```go
+func createUser(users *UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		in := CreateUser{Name: r.FormValue("name"), Email: r.FormValue("email")}
+
+		user := &User{Name: in.Name, Email: in.Email}
+
+		err := users.Create(r.Context(), user)
+		if err != nil {
+			fail(w, r, err)
+
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, newUserResponse(user))
+	}
+}
+```
+
+The struct is what a JSON decoder fills just as well, and it is where a field that is required on create and optional on update changes shape: `""` cannot be told from "not sent", so the create input makes it a value and the update input a `*string`, and [nullable and defaults](/models/nullable-and-defaults) covers the pointer. A PUT that copies every input field onto a loaded model writes the fields the client left out as `NULL`, and the rule that a PUT replaces the whole resource is not what most of these handlers mean.
+
+## Create unless it exists
+
+`Insert` and `ant.IsUniqueViolation` turn a taken value into the service's own error. `FirstOrCreate` looks right and then forces the caller to compare a message:
+
+```go
+var ErrEmailTaken = errors.New("email taken")
+
+func (s *UserService) Create(ctx context.Context, user *User) error {
+	// spot-next-line
+	if err := s.db.Users.Insert(ctx, user); err != nil {
+		if ant.IsUniqueViolation(err) {
+			return ErrEmailTaken
+		}
+
+		return err
+	}
+
+	return nil
+}
+```
+
+The comparison holds on every database, because each dialect translates its codes to SQLSTATE. `err.Error()` from `FirstOrCreate` does not.
+
+A rule on the field moves the common case to a 422 before the insert, and the constraint still catches the race between two requests: see [validation](/lifecycle/validation#return-validation-errors-to-an-api-client).
+
+## List routes
+
+A list route reads its paging from the query string. `pageSize` and `pageNumber` turn the two values into a number and a size, defaulting the missing ones and rejecting the rest, so `Page` never sees a value below 1. That matters because `Page` answers such a value with an error of its own, and the mapping below has no arm for it: it would reach the default and log as a bug.
+
+```go
+func listUsers(users *UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		size := pageSize(r)
+		number := pageNumber(r)
+
+		// spot-next-line
+		page, err := users.List(r.Context(), number, size)
+		if err != nil {
+			fail(w, r, err)
+
+			return
+		}
+
+		writeJSON(w, http.StatusOK, newUserPage(page))
+	}
+}
+```
+
+`After` refuses a cursor it cannot use with `ant.ErrCursor`, which the mapping answers 400.
+
+For a large table the offset in `Page` gets slow. `After` replaces it with a key seek, and takes the cursor the previous page returned. It answers a `*ant.CursorPage[T]`, which carries `Items` and the `Next` cursor instead of a total, because counting the rows is the cost it avoids:
+
+```go
+size := 20
+
+page, err := db.Users.OrderBy(&Users.Name).After(r.Context(), r.FormValue("after"), size)
+```
+
+The `Page` call and the `After` call each order by a fixed column. To let the client pick, a switch turns the key into a field pointer, so an unknown key falls back instead of naming a column that does not exist:
+
+```go
+q := db.Users.OrderBy(&Users.Name)
+
+switch r.FormValue("sort") {
+case "email":
+	q = db.Users.OrderBy(&Users.Email)
+case "age":
+	q = db.Users.OrderBy(&Users.Age)
+}
+```
+
+`Page` or `After` then runs on `q` in place of the query in the service. These are the lines inside `List`, which is where the `*DB` stays, the same as `Create` above.
+
+None of `Page`'s fields has a JSON tag, so encoding a page as it is answers `{"Items":[...],"Total":42,"Number":1,"Size":20}`, and the page count is not in it. A response type carries the fields under the names a client expects:
+
+```go
+func newUserPage(page *ant.Page[User]) UserPage {
+	out := UserPage{Page: page.Number, Pages: page.Pages(), Total: page.Total}
+
+	for _, user := range page.Items {
+		out.Items = append(out.Items, newUserResponse(user))
+	}
+
+	return out
+}
+```
+
+`Page` has a `Pages` method for exactly this count. Every model in a response goes through a type of its own for the same reason: `ant.Base` embeds `ID` and `CreatedAt`, and both arrive under those names.
+
+## Errors
+
+One function maps ant's errors to responses, and every handler calls it:
+
+```go
+func fail(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrEmailTaken):
+		http.Error(w, ErrEmailTaken.Error(), http.StatusConflict)
+	case errors.Is(err, ant.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ant.ErrCursor):
+		http.Error(w, "bad cursor", http.StatusBadRequest)
+	case ant.IsUniqueViolation(err):
+		http.Error(w, "taken", http.StatusConflict)
+	case ant.IsForeignKeyViolation(err):
+		http.Error(w, "refers to something missing", http.StatusUnprocessableEntity)
+	case ant.IsNotNullViolation(err), ant.IsCheckViolation(err):
+		http.Error(w, "invalid", http.StatusUnprocessableEntity)
+	case errors.Is(err, ant.ErrConcurrency):
+		http.Error(w, "changed", http.StatusPreconditionFailed)
+	case errors.As(err, new(*ant.ValidationError)):
+		http.Error(w, "invalid", http.StatusUnprocessableEntity)
+	case errors.Is(err, context.Canceled):
+		// The client hung up; nobody is left to read a body.
+		return
+	case ant.IsRetryable(err):
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+	default:
+		slog.ErrorContext(r.Context(), "request failed", "path", r.URL.Path, "err", err, "sql", ant.FailedSQL(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+```
+
+Everything ant does not know about lands in the default arm, which treats it as a bug and logs it. That is what keeps a bad `uuid`, a foreign key of a user that is gone and a lost update from being a 500 with nothing in the log; the [errors](/tooling/errors#database-errors) page has the classifiers and the SQLSTATE each one stands for.
+
+A framework with an error hook holds this function instead of calling it in every handler. azugo's `RouterOptions().ErrorHandler`, echo's `HTTPErrorHandler` and chi's `chi.Middlewares` all receive the error and write the response; the switch goes there as a `func(err error) (int, string)` and the handler only returns.
+
+`err.Error()` never goes to the client. It can quote a value, and it names tables and columns.
+
+## Migrations
+
+`cmd/migrate` sits beside `cmd/server` and reads the same config, so both point at the same database. `Config.DSN` is how the migrate binary gets the app's DSN:
+
+```go
+func main() {
+	cfg := loadConfig()
+
+	// spot-next-line
+	migrate.Main[AppDB](postgres.Dialect, migrate.Config{DSN: cfg.DatabaseURL})
+}
+```
+
+`Config.DSN` is the last resort: a `--dsn` flag and a `DATABASE_URL` in the environment each come before it, so the value here applies only when neither is set. That is the point of putting it here, since the server reads the same `cfg.DatabaseURL` and a deployment that moves the database changes one value. [Deploying](/migrations/deploying) has the embedded and startup forms and the pooler warning.
+
+## Tests
+
+Open one database in `TestMain`, and wrap it per test with `anttest.Isolate`, which rolls back what the test wrote:
+
+```go
+var db *AppDB
+
+func TestMain(m *testing.M) {
+	var err error
+
+	db, err = ant.Open[AppDB](context.Background(), postgres.Dialect, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic(err)
+	}
+
+	code := m.Run()
+
+	db.Close()
+
+	os.Exit(code)
+}
+
+func TestCreateUser(t *testing.T) {
+	// spot-next-line
+	tx := anttest.Isolate(t, db)
+
+	// a service or an httptest server over tx
+
+	_ = tx
+}
+```
+
+`Isolate` returns the same type as `db`, so it passes for the services' argument without an interface. Two tests of a real commit, through a second connection or a concurrent request, need a database each, since the transaction is not visible to them.
+
+<Tests path="developer_tooling" />
+
+{/*
+```go
+func (s *Accounts) Transfer(ctx context.Context, db *AppDB, in Transfer) error {
+	return nil
+}
+
+func (s *Accounts) Move(ctx context.Context, in Transfer) error {
+	return s.db.Tx(ctx, func(tx *AppDB) error {
+		return s.Transfer(ctx, tx, in)
+	})
+}
+
+func (s *UserService) List(ctx context.Context, number, size int) (*ant.Page[User], error) {
+	return s.db.Users.OrderBy(&Users.Name).Page(ctx, number, size)
+}
+
+func pageSize(r *http.Request) int {
+	var size int
+
+	if _, err := fmt.Sscanf(r.FormValue("size"), "%d", &size); err != nil || size < 1 || size > 100 {
+		return 20
+	}
+
+	return size
+}
+
+func pageNumber(r *http.Request) int {
+	var number int
+
+	if _, err := fmt.Sscanf(r.FormValue("page"), "%d", &number); err != nil || number < 1 {
+		return 1
+	}
+
+	return number
+}
+
+func newServices(db *AppDB) *Accounts { return &Accounts{db: db} }
+
+func newServer(s *Accounts) http.Handler { return nil }
+
+func runUntilSignal(app http.Handler) {}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {}
+
+func loadConfig() *Config { return &Config{} }
+
+func newUserResponse(u *User) *UserResponse {
+	return &UserResponse{ID: u.ID, Name: u.Name, Email: u.Email}
+}
+
+type Config struct {
+	DatabaseURL string
+}
+
+type AppDB struct {
+	ant.Context
+	Users ant.Table[User]
+}
+
+type UserService struct {
+	db *AppDB
+}
+
+type Accounts struct {
+	db *AppDB
+}
+
+type CreateUser struct {
+	Name  string
+	Email string
+}
+
+type UserPage struct {
+	Items []*UserResponse `json:"items"`
+	Page  int             `json:"page"`
+	Pages int             `json:"pages"`
+	Total int64           `json:"total"`
+}
+
+type UserResponse struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+type Transfer struct {
+	From, To string
+	Amount   string
+}
+
+var Users = ant.Fields[User]()
+
+var r *http.Request
+```
+*/}
