@@ -284,14 +284,34 @@ func TestMain(m *testing.M) {
 func TestCreateUser(t *testing.T) {
 	// spot-next-line
 	tx := anttest.Isolate(t, db)
+	users := &UserService{db: tx}
 
-	// a service or an httptest server over tx
+	if err := users.Create(context.Background(), &User{Name: "Ann", Email: "ann@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	_ = tx
+func TestCreateUserTaken(t *testing.T) {
+	tx := anttest.Isolate(t, db)
+	users := &UserService{db: tx}
+
+	if err := users.Create(context.Background(), &User{Name: "Ann", Email: "ann@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := users.Create(context.Background(), &User{Name: "Bob", Email: "ann@example.com"})
+
+	// spot-start
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("err %v, want ErrEmailTaken", err)
+	}
+	// spot-end
 }
 ```
 
-`Isolate` returns the same type as `db`, so it passes for the services' argument without an interface. Two tests of a real commit, through a second connection or a concurrent request, need a database each, since the transaction is not visible to them.
+The two tests above are the pair every service method wants: one that the write goes through, and one that the error a handler branches on is the error that comes back. `TestCreateUserTaken` is the one that matters, because the 409 in `fail` is only correct if `Create` answers `ErrEmailTaken` and not the driver's error.
+
+`Isolate` returns the same type as `db`, so it passes for the services' argument without an interface. Handlers are reachable from the same tests: `createUser(users)` is an `http.HandlerFunc`, and a recorder from `net/http/httptest` drives it without a server. Two tests of a real commit, through a second connection or a concurrent request, need a database each, since the transaction is not visible to them.
 
 <Tests path="developer_tooling" />
 
